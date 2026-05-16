@@ -1,0 +1,41 @@
+# ─── Core RAG stack ────────────────────────────────────────────────────────
+langchain>=0.3.0
+langchain-community>=0.3.0
+langchain-ollama>=0.2.0
+
+# ─── Vektorová databáze ─────────────────────────────────────────────────────
+qdrant-client>=1.12.0
+
+# ─── Embeddings & reranking ─────────────────────────────────────────────────
+sentence-transformers>=3.3.0
+torch>=2.2.0
+transformers>=4.44.0
+
+# ─── Sparse retrieval (BM25) ────────────────────────────────────────────────
+rank-bm25>=0.2.2
+
+# ─── PDF zpracování ──────────────────────────────────────────────────────────
+pymupdf>=1.24.0          # Rychlý parser; import jako fitz
+pdfplumber>=0.11.0       # Záloha pro složité layouty
+
+# ─── Utility ────────────────────────────────────────────────────────────────
+python-dotenv>=1.0.0
+requests>=2.32.0
+tqdm>=4.66.0
+numpy>=1.26.0
+
+# ─── CLI & výstup ───────────────────────────────────────────────────────────
+rich>=13.9.0
+typer>=0.12.0
+
+# ─── REST API ────────────────────────────────────────────────────────────────
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+
+# ─── Web scraping ───────────────────────────────────────────────────────────
+beautifulsoup4>=4.12.0
+lxml>=5.2.0
+
+# ─── Volitelné: akcelerace CPU inference ────────────────────────────────────
+# Odkomentujte pro GPU prostředí:
+# torch>=2.2.0+cu121  --index-url https://download.pytorch.org/whl/cu121

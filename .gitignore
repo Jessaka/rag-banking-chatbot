@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtuální prostředí
+.venv/
+venv/
+env/
+
+# Prostředí a secrets
+.env
+*.env.local
+
+# Data – stažené soubory a indexy (velké binární soubory)
+data/raw/*.pdf
+data/raw/*.txt
+data/indexes/*.pkl
+data/processed/
+
+# Qdrant lokální storage
+data/qdrant_storage/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Pytest / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Model cache (sentence-transformers / HuggingFace)
+.cache/

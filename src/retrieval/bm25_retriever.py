@@ -1,0 +1,83 @@
+"""
+Sparse retrieval pomocí BM25 (Best Match 25).
+
+BM25 je TF-IDF varianta optimalizovaná pro kratší dokumenty.
+Dobře funguje pro přesné shody klíčových slov (čísla produktů,
+konkrétní výrazy jako „ČSOB", „úrok", „RPSN", apod.).
+
+Index je načten z disku (vytvořen během ingestion).
+"""
+
+from __future__ import annotations
+
+import pickle
+from functools import lru_cache
+
+from langchain_core.documents import Document
+
+import config
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
+
+@lru_cache(maxsize=1)
+def _load_bm25_index():
+    """Načte BM25 index z disku (singleton, cachovaný)."""
+    if not config.BM25_INDEX_PATH.exists():
+        raise FileNotFoundError(
+            f"BM25 index nenalezen: {config.BM25_INDEX_PATH}\n"
+            "Spusťte nejprve: python scripts/ingest.py"
+        )
+    with open(config.BM25_INDEX_PATH, "rb") as f:
+        return pickle.load(f)
+
+
+@lru_cache(maxsize=1)
+def _load_documents() -> list[Document]:
+    """Načte uložené dokumenty (singleton, cachovaný)."""
+    if not config.DOCS_STORE_PATH.exists():
+        raise FileNotFoundError(
+            f"Dokumenty nenalezeny: {config.DOCS_STORE_PATH}\n"
+            "Spusťte nejprve: python scripts/ingest.py"
+        )
+    with open(config.DOCS_STORE_PATH, "rb") as f:
+        return pickle.load(f)
+
+
+def bm25_search(query: str, top_k: int = config.BM25_TOP_K) -> list[Document]:
+    """
+    Vyhledá top_k nejrelevantnějších chunků pomocí BM25.
+
+    Args:
+        query: Uživatelský dotaz v přirozeném jazyce.
+        top_k: Počet výsledků.
+
+    Returns:
+        Seřazený seznam Document objektů (nejlepší první).
+    """
+    bm25 = _load_bm25_index()
+    documents = _load_documents()
+
+    tokenized_query = query.lower().split()
+    scores = bm25.get_scores(tokenized_query)
+
+    # Seřadíme indexy sestupně podle skóre
+    ranked_indices = sorted(
+        range(len(scores)), key=lambda i: scores[i], reverse=True
+    )[:top_k]
+
+    results = []
+    for idx in ranked_indices:
+        doc = documents[idx]
+        enriched = Document(
+            page_content=doc.page_content,
+            metadata={**doc.metadata, "bm25_score": float(scores[idx])},
+        )
+        results.append(enriched)
+
+    logger.debug(
+        f"BM25: '{query[:40]}…' → {len(results)} výsledků "
+        f"(top score: {scores[ranked_indices[0]]:.3f})"
+    )
+    return results
