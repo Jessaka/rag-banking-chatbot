@@ -93,8 +93,19 @@ class HealthResponse(BaseModel):
         description="Celkový stav: ok | degraded (část komponent nefunguje) | error."
     )
     qdrant: ComponentStatus
-    ollama: ComponentStatus
+    ollama: ComponentStatus = Field(
+        description="Stav Ollama – vždy kontroluje embedding model; "
+                    "LLM model jen pokud LLM_BACKEND='ollama'."
+    )
     bm25_index: ComponentStatus
+    anthropic: ComponentStatus | None = Field(
+        None,
+        description="Stav Anthropic API – přítomno pouze pokud LLM_BACKEND='anthropic'.",
+    )
+    gemini: ComponentStatus | None = Field(
+        None,
+        description="Stav Google Gemini API – přítomno pouze pokud LLM_BACKEND='gemini'.",
+    )
 
 
 class CollectionInfo(BaseModel):
@@ -202,7 +213,11 @@ def _check_qdrant() -> ComponentStatus:
 
 
 def _check_ollama() -> ComponentStatus:
-    """Zkontroluje, zda Ollama běží a má načteny potřebné modely."""
+    """
+    Zkontroluje Ollama:
+      - Vždy ověří embedding model (nomic-embed-text) – ten je potřeba vždy.
+      - LLM model ověří pouze pokud LLM_BACKEND == 'ollama'.
+    """
     try:
         resp = http_requests.get(
             f"{config.OLLAMA_BASE_URL}/api/tags",
@@ -211,26 +226,56 @@ def _check_ollama() -> ComponentStatus:
         resp.raise_for_status()
         available = [m["name"] for m in resp.json().get("models", [])]
 
-        # Modely v Ollama mají formát "mistral:latest"; porovnáváme prefix
         def _model_present(name: str) -> bool:
             return any(tag == name or tag.startswith(f"{name}:") for tag in available)
 
-        missing = [
-            m for m in (config.LLM_MODEL, config.EMBED_MODEL)
-            if not _model_present(m)
-        ]
+        # Embedding model je vždy potřeba; LLM jen při ollama backendu
+        required = [config.EMBED_MODEL]
+        if config.LLM_BACKEND == "ollama":
+            required.append(config.LLM_MODEL)
+
+        missing = [m for m in required if not _model_present(m)]
         if missing:
             return ComponentStatus(
                 status="degraded",
                 detail=(
                     f"Chybí modely: {missing}. "
-                    f"Dostupné: {available}. "
                     f"Spusťte: ollama pull {' '.join(missing)}"
                 ),
             )
+
+        scope = "LLM + embeddings" if config.LLM_BACKEND == "ollama" else "embeddings"
         return ComponentStatus(
             status="ok",
-            detail=f"Modely OK: {available}",
+            detail=f"{scope} OK: {available}",
+        )
+    except Exception as exc:
+        return ComponentStatus(status="error", detail=str(exc))
+
+
+def _check_anthropic() -> ComponentStatus:
+    """
+    Ověří Anthropic API – jen pokud LLM_BACKEND == 'anthropic'.
+
+    Pošle minimální test request (count_tokens) aby ověřil klíč
+    bez zbytečných nákladů na generování.
+    """
+    if not config.ANTHROPIC_API_KEY:
+        return ComponentStatus(
+            status="error",
+            detail="ANTHROPIC_API_KEY není nastavený v .env",
+        )
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+        # count_tokens je levný způsob ověření API klíče
+        result = client.messages.count_tokens(
+            model=config.ANTHROPIC_MODEL,
+            messages=[{"role": "user", "content": "test"}],
+        )
+        return ComponentStatus(
+            status="ok",
+            detail=f"Model {config.ANTHROPIC_MODEL} dostupný ({result.input_tokens} tokenů/test)",
         )
     except Exception as exc:
         return ComponentStatus(status="error", detail=str(exc))
@@ -256,6 +301,44 @@ def _check_bm25() -> ComponentStatus:
         status="ok",
         detail=f"{config.BM25_INDEX_PATH.name} ({size_mb:.1f} MB)",
     )
+
+
+def _check_gemini() -> ComponentStatus:
+    """
+    Ověří Google Gemini API – jen pokud LLM_BACKEND == 'gemini'.
+
+    Postup:
+      1. Zavolá discover_gemini_model() → zjistí nejlepší dostupný model
+      2. Ověří ho přes count_tokens (levné, bez generování tokenů)
+    """
+    if not config.GEMINI_API_KEY:
+        return ComponentStatus(
+            status="error",
+            detail="GEMINI_API_KEY není nastavený v .env",
+        )
+    try:
+        from google import genai
+        from src.generation.chain import discover_gemini_model
+
+        client = genai.Client(api_key=config.GEMINI_API_KEY)
+
+        # Auto-discovery: najdeme nejlepší dostupný model
+        model_name = (
+            discover_gemini_model(config.GEMINI_API_KEY)
+            if config.GEMINI_MODEL == "gemini-2.0-flash"
+            else config.GEMINI_MODEL
+        )
+
+        result = client.models.count_tokens(
+            model=model_name,
+            contents="test",
+        )
+        return ComponentStatus(
+            status="ok",
+            detail=f"Model '{model_name}' dostupný ({result.total_tokens} tokenů/test)",
+        )
+    except Exception as exc:
+        return ComponentStatus(status="error", detail=str(exc))
 
 
 def _get_collection_info() -> CollectionInfo:
@@ -303,15 +386,31 @@ async def lifespan(app: FastAPI):
     ale chybějící komponenty nahlásí /health.
     """
     logger.info("Raiffeisenbank RAG API startuje…")
+    logger.info(f"  LLM backend: [bold]{config.LLM_BACKEND}[/bold]")
 
-    # Paralelní health checks při startu
-    qdrant, ollama = await asyncio.gather(
+    # Paralelní health checks
+    checks = [
         asyncio.to_thread(_check_qdrant),
         asyncio.to_thread(_check_ollama),
-    )
+    ]
+    if config.LLM_BACKEND == "anthropic":
+        checks.append(asyncio.to_thread(_check_anthropic))
+    elif config.LLM_BACKEND == "gemini":
+        checks.append(asyncio.to_thread(_check_gemini))
+
+    results = await asyncio.gather(*checks)
+    qdrant, ollama = results[0], results[1]
+    anthropic_status = results[2] if config.LLM_BACKEND == "anthropic" else None
+    gemini_status = results[2] if config.LLM_BACKEND == "gemini" else None
     bm25 = _check_bm25()
 
-    for name, comp in [("Qdrant", qdrant), ("Ollama", ollama), ("BM25", bm25)]:
+    checks_to_log = [("Qdrant", qdrant), ("Ollama", ollama), ("BM25", bm25)]
+    if anthropic_status:
+        checks_to_log.append(("Anthropic", anthropic_status))
+    if gemini_status:
+        checks_to_log.append(("Gemini", gemini_status))
+
+    for name, comp in checks_to_log:
         icon = "✓" if comp.status == "ok" else "⚠" if comp.status == "degraded" else "✗"
         logger.info(f"  {icon} {name}: {comp.status} – {comp.detail}")
 
@@ -415,21 +514,35 @@ async def chat(request: ChatRequest) -> ChatResponse:
     summary="Stav komponent",
     description=(
         "Vrátí 200 vždy – i při `degraded` / `error` stavu. "
-        "Sledujte pole `status` a sub-komponenty pro alerting."
+        "Sledujte pole `status` a sub-komponenty pro alerting. "
+        "Pole `anthropic` je přítomno pouze pokud LLM_BACKEND='anthropic'."
     ),
 )
 async def health() -> HealthResponse:
-    # Qdrant a Ollama paralelně (obě síťové I/O operace)
-    qdrant, ollama = await asyncio.gather(
+    # Qdrant a Ollama paralelně; Anthropic check jen při příslušném backendu
+    gather_tasks = [
         asyncio.to_thread(_check_qdrant),
         asyncio.to_thread(_check_ollama),
-    )
+    ]
+    if config.LLM_BACKEND == "anthropic":
+        gather_tasks.append(asyncio.to_thread(_check_anthropic))
+    elif config.LLM_BACKEND == "gemini":
+        gather_tasks.append(asyncio.to_thread(_check_gemini))
+
+    results = await asyncio.gather(*gather_tasks)
+    qdrant, ollama = results[0], results[1]
+    anthropic_status: ComponentStatus | None = results[2] if config.LLM_BACKEND == "anthropic" else None
+    gemini_status: ComponentStatus | None = results[2] if config.LLM_BACKEND == "gemini" else None
     bm25 = _check_bm25()
 
-    statuses = {qdrant.status, ollama.status, bm25.status}
-    if "error" in statuses:
+    all_statuses = {qdrant.status, ollama.status, bm25.status}
+    for extra in (anthropic_status, gemini_status):
+        if extra:
+            all_statuses.add(extra.status)
+
+    if "error" in all_statuses:
         overall: Literal["ok", "degraded", "error"] = "error"
-    elif "degraded" in statuses:
+    elif "degraded" in all_statuses:
         overall = "degraded"
     else:
         overall = "ok"
@@ -439,6 +552,8 @@ async def health() -> HealthResponse:
         qdrant=qdrant,
         ollama=ollama,
         bm25_index=bm25,
+        anthropic=anthropic_status,
+        gemini=gemini_status,
     )
 
 
