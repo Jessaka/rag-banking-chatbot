@@ -45,6 +45,29 @@ def _load_documents() -> list[Document]:
         return pickle.load(f)
 
 
+def _tokenize(text: str) -> list[str]:
+    """
+    Tokenizuje text pro BM25 vyhledávání.
+
+    Rozdíl oproti prostému .split():
+      - Odstraňuje interpunkci ze začátku/konce tokenů
+        ("hypotéku?" → "hypotéku", "účtu," → "účtu")
+      - Zachovává česká diakritická znaménka (á, č, ě, í, ...)
+      - Přeskočí prázdné tokeny vzniklé po odebrání interpunkce
+
+    BUG bez tohoto: query "hypotéku?" neodpovídá indexovanému "hypotéku"
+    → BM25 vrací zcela irelevantní dokumenty s nulovým overlappem.
+    """
+    import re
+    tokens = []
+    for raw in text.lower().split():
+        # Odstraníme interpunkci z okrajů, ponecháme písmena + číslice + diakritiku
+        clean = re.sub(r'^[^\wÀ-ɏ]+|[^\wÀ-ɏ]+$', '', raw)
+        if clean:
+            tokens.append(clean)
+    return tokens
+
+
 def bm25_search(query: str, top_k: int = config.BM25_TOP_K) -> list[Document]:
     """
     Vyhledá top_k nejrelevantnějších chunků pomocí BM25.
@@ -59,7 +82,7 @@ def bm25_search(query: str, top_k: int = config.BM25_TOP_K) -> list[Document]:
     bm25 = _load_bm25_index()
     documents = _load_documents()
 
-    tokenized_query = query.lower().split()
+    tokenized_query = _tokenize(query)
     scores = bm25.get_scores(tokenized_query)
 
     # Seřadíme indexy sestupně podle skóre

@@ -78,6 +78,11 @@ RRF_K: int = 60            # Konstanta pro Reciprocal Rank Fusion
 # ---------------------------------------------------------------------------
 RERANKER_MODEL: str = os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
 RERANKER_DEVICE: str = os.getenv("RERANKER_DEVICE", "cpu")  # "cuda" pro GPU
+# Minimální sigmoid skóre cross-encoderu pro zachování dokumentu ve výsledcích.
+# BGE reranker vrací sigmoid(logit): relevantní ≈ 0.5–1.0, irelevantní ≈ 0.0.
+# Hodnota 0.01 odfiltruje dokumenty s rerank_score = 0 (např. dluhopisy pro
+# dotaz na hypotéku), ale zachová i vzdáleně relevantní dokumenty (> 0.01).
+RERANK_MIN_SCORE: float = float(os.getenv("RERANK_MIN_SCORE", "0.01"))
 
 # ---------------------------------------------------------------------------
 # Persistence lokálních indexů

@@ -15,6 +15,8 @@ Výhoda hybridního přístupu:
 
 from __future__ import annotations
 
+from collections import defaultdict
+
 from langchain_core.documents import Document
 
 import config
@@ -23,6 +25,11 @@ from src.retrieval.vector_retriever import vector_search
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# Maximální počet chunků ze stejného zdrojového souboru v RRF výsledcích.
+# Brání tomu, aby jeden dokument s mnoha podobnými chunky (např. 516×
+# BlueChipBond s cosine ≈ 0.72) zaplnil celý výsledkový seznam.
+MAX_CHUNKS_PER_SOURCE: int = 2
 
 
 def _rrf_score(rank: int, k: int = config.RRF_K) -> float:
@@ -81,17 +88,29 @@ def hybrid_search(
     # Seřadíme podle RRF skóre
     ranked = sorted(scores.values(), key=lambda x: x[1], reverse=True)
 
+    # Deduplication: max MAX_CHUNKS_PER_SOURCE chunků z jednoho zdrojového souboru.
+    # Bez tohoto může jeden soubor s mnoha podobnými chunky (napr. 516 chunků
+    # BlueChipBond) obsadit všechna místa ve výsledcích přesto, že relevantní
+    # dokumenty z jiných souborů mají celkově vyšší pokrytí dotazu.
+    source_counts: dict[str, int] = defaultdict(int)
     results = []
-    for doc, score in ranked[:top_k]:
+    for doc, score in ranked:
+        source = doc.metadata.get("file_name", "")
+        if source_counts[source] >= MAX_CHUNKS_PER_SOURCE:
+            continue
+        source_counts[source] += 1
         enriched = Document(
             page_content=doc.page_content,
             metadata={**doc.metadata, "hybrid_score": round(score, 6)},
         )
         results.append(enriched)
+        if len(results) >= top_k:
+            break
 
     logger.debug(
         f"Hybrid RRF: '{query[:40]}…' → {len(results)} výsledků "
-        f"(top RRF: {ranked[0][1]:.4f})" if ranked else
+        f"(top RRF: {ranked[0][1]:.4f}, unikátních zdrojů: {len(source_counts)})"
+        if ranked else
         f"Hybrid RRF: '{query[:40]}…' → 0 výsledků"
     )
     return results

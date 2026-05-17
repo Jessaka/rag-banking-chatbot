@@ -41,6 +41,7 @@ def rerank(
     query: str,
     documents: list[Document],
     top_k: int = config.RERANK_TOP_K,
+    min_score: float = config.RERANK_MIN_SCORE,
 ) -> list[Document]:
     """
     Přeřadí dokumenty podle cross-encoder relevance pro daný dotaz.
@@ -49,9 +50,16 @@ def rerank(
         query:     Uživatelský dotaz.
         documents: Kandidáti z hybridního vyhledávání.
         top_k:     Počet finálních výsledků.
+        min_score: Minimální sigmoid skóre pro zachování dokumentu.
+                   BGE reranker: relevantní ≈ 0.5–1.0, irelevantní ≈ 0.0.
+                   Výchozí hodnota (RERANK_MIN_SCORE=0.01) odfiltruje dokumenty
+                   jejichž rerank_score se zaokrouhlí na 0.0000 — ty jsou pro
+                   daný dotaz prakticky irelevantní.
 
     Returns:
-        Top-k Document objektů s metadatem `rerank_score` (sestupně).
+        Dokumenty s rerank_score ≥ min_score, seřazené sestupně (max top_k).
+        Pokud žádný dokument neprojde prahem, vrátí nejlepší dokument bez ohledu
+        na skóre (záruka neprázdného výsledku pro chain.py).
     """
     if not documents:
         return []
@@ -69,14 +77,31 @@ def rerank(
 
     results = []
     for doc, score in ranked[:top_k]:
+        if score < min_score:
+            # Výsledky jsou sestupně seřazeny — zbytek bude ještě nižší
+            break
         enriched = Document(
             page_content=doc.page_content,
             metadata={**doc.metadata, "rerank_score": round(score, 4)},
         )
         results.append(enriched)
 
+    # Fallback: vrátíme alespoň nejlepší dokument, aby chain nikdy nedostal prázdný seznam
+    # od rerankeru (prázdný seznam → generická "nenalezena" odpověď bez pokusu o retrieval)
+    if not results and ranked:
+        best_doc, best_score = ranked[0]
+        logger.warning(
+            f"Všechny rerank skóre pod prahem {min_score:.4f} "
+            f"(nejlepší: {best_score:.4f}). Vracím nejlepší kandidát."
+        )
+        results.append(Document(
+            page_content=best_doc.page_content,
+            metadata={**best_doc.metadata, "rerank_score": round(best_score, 4)},
+        ))
+
     logger.debug(
-        f"Rerank: {len(documents)} → {len(results)} "
-        f"(top score: {ranked[0][1]:.4f})" if ranked else "Rerank: 0 výsledků"
+        f"Rerank: {len(documents)} kandidátů → {len(results)} výsledků "
+        f"(top: {ranked[0][1]:.4f}, práh: {min_score})"
+        if ranked else "Rerank: 0 výsledků"
     )
     return results
