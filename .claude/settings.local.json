@@ -21,7 +21,25 @@
       "Bash(GEMINI_API_KEY=AIzaSyDOQ4cQM-PWZkl8M3qPG2K21h2jhpLGTcs python3 -c ' *)",
       "Bash(pkill -9 -f uvicorn)",
       "Bash(fuser -k 8000/tcp)",
-      "Bash(echo \"Nový server PID: $!\")"
+      "Bash(echo \"Nový server PID: $!\")",
+      "Bash(PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=0 python3 -m playwright install chromium --dry-run)",
+      "Bash(dpkg -l)",
+      "Bash(PLAYWRIGHT_CHROMIUM_SKIP_VALIDATE=1 python3 -m playwright install chromium)",
+      "Bash(PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=1 python3 -m playwright install chromium)",
+      "Bash(npm install *)",
+      "Bash(npx playwright *)",
+      "Bash(PLAYWRIGHT_SKIP_BROWSER_VALIDATION=1 /home/kalin/.local/lib/python3.14/site-packages/playwright/driver/node /home/kalin/.local/lib/python3.14/site-packages/playwright/driver/package/bin/playwright.js install chromium)",
+      "Bash(chromium --version)",
+      "Bash(chromium-browser --version)",
+      "Bash(curl -s https://playwright.azureedge.net/builds/chromium-headless-shell/1223/chromium-headless-shell-linux.zip -o /tmp/chromium-shell.zip --max-time 60 -w '%{http_code}')",
+      "Bash(curl *)",
+      "Bash(unzip -q /tmp/chromium-linux.zip -d /tmp/chromium-linux/)",
+      "Bash(chmod +x /tmp/chromium-linux/chrome-linux/chrome)",
+      "Bash(/tmp/chromium-linux/chrome-linux/chrome --version)",
+      "Bash(ldd /tmp/chromium-linux/chrome-linux/chrome)",
+      "Bash(/tmp/chromium-linux/chrome-linux/chrome --headless --version)",
+      "Bash(apt-get install *)",
+      "Bash(ldconfig -p)"
     ]
   }
 }
