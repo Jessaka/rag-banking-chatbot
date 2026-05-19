@@ -173,29 +173,49 @@ _CONSENT_BUTTON_SELECTORS = [
 # Selektory pro hlavní obsah
 # ---------------------------------------------------------------------------
 
-# Selektory v prioritním pořadí – první nalezený se použije
+# Selektory obsahu v prioritním pořadí – specifické pro rb.cz Angular SPA.
+# rb.cz nepoužívá <main>/<article> – hlavní obsah je v .page-wrapper/.content.
 _CONTENT_SELECTORS = [
-    "main",
+    ".page-wrapper",             # primární obsah produktových stránek rb.cz
+    ".content",                  # obecný content blok
+    ".content-block",            # blokový obsah
+    ".additional-content",       # doplňkový obsah
+    "main",                      # HTML5 fallback (některé podstránky)
     "[role='main']",
-    "#main-content",
-    ".page-content",
-    ".content-area",
     "article",
-    ".wysiwyg",
     "#content",
+    "app-root",                  # poslední záloha: celý Angular kořen
 ]
 
-# Elementy k odstranění před extrakcí textu
+# Elementy k odstranění před extrakcí – Angular navigace rb.cz
 _REMOVE_SELECTORS = [
+    # Angular komponenty navigace
+    "app-navigation", "app-header", "app-footer",
+    ".main-nav", ".product-navigation", ".page-mega-footer",
+    # Standardní HTML5 fallbacky
     "nav", "header", "footer",
+    # Cookie / GDPR
     ".cookie-wall", ".cookie-banner", "#cookie-consent",
     "[data-cookiebanner]", ".cookieconsent",
+    # Technické elementy
     "script", "style", "noscript",
-    ".breadcrumb", ".breadcrumbs",
-    "[aria-label='Breadcrumb']",
-    ".site-header", ".site-footer",
+    # Navigační drobečky a skip linky
+    ".breadcrumb", ".breadcrumbs", "[aria-label='Breadcrumb']",
     ".back-to-top", ".skip-link",
+    # Překryvné vrstvy a modály (nezobrazeny)
+    ".popup-container", ".overlay",
 ]
+
+# Selektory loading stavů – čekáme na jejich zmizení
+_SPINNER_SELECTORS = [
+    ".loading", ".spinner", ".skeleton", ".loader",
+    "[class*='loading']", "[class*='spinner']", "[class*='skeleton']",
+    "mat-progress-spinner", "mat-progress-bar",
+    ".rb-spinner", "[data-loading]",
+]
+
+# Minimální délka textu která svědčí o úspěšném načtení obsahu (ne jen navigace)
+_MIN_CONTENT_LENGTH = 300
 
 # ---------------------------------------------------------------------------
 # Datové struktury
@@ -386,60 +406,193 @@ async def _handle_cookie_consent(page) -> bool:
     return False
 
 
-async def _extract_page_text(page, url: str) -> str:
+async def _wait_for_spinners_gone(page, timeout_ms: int = 5000) -> None:
     """
-    Extrahuje čistý text z načtené stránky.
-
-    Strategie:
-      1. Odstraní nežádoucí elementy (nav, header, cookie banner...)
-      2. Hledá hlavní obsah dle selektorů (main, article, ...)
-      3. Expanze accordion/tab elementů (kliknutí pro odhalení obsahu)
-      4. Fallback na celý body
+    Čeká na zmizení všech loading spinnerů.
+    Neblokuje pokud žádné spinnery nejsou přítomny.
     """
-    # Odebereme navigaci a boilerplate
-    for selector in _REMOVE_SELECTORS:
+    for selector in _SPINNER_SELECTORS:
         try:
-            elements = page.locator(selector)
-            count = await elements.count()
-            for i in range(count):
-                await elements.nth(i).evaluate("el => el.remove()")
+            locator = page.locator(selector).first
+            if await locator.count() > 0:
+                await locator.wait_for(state="hidden", timeout=timeout_ms)
         except Exception:
-            pass
+            pass  # spinner nenalezen nebo timeout – pokračujeme
 
-    # Pokusíme se rozbalit accordiony (FAQ sekce)
-    try:
-        accordion_triggers = page.locator("summary, [aria-expanded='false'], .accordion__trigger")
-        count = await accordion_triggers.count()
-        for i in range(min(count, 20)):  # max 20 accordionů
-            try:
-                await accordion_triggers.nth(i).click(timeout=500)
-                await page.wait_for_timeout(100)
-            except Exception:
-                pass
-    except Exception:
-        pass
 
-    # Hledáme hlavní obsah
-    content_text = ""
+async def _wait_for_content(page, timeout_ms: int = 8000) -> str:
+    """
+    Čeká na načtení smysluplného obsahu v rb.cz-specifických selektorech.
+
+    Prochází _CONTENT_SELECTORS a vrátí název prvního selektoru,
+    který obsahuje alespoň _MIN_CONTENT_LENGTH znaků textu.
+    Pokud žádný nevyhoví, vrátí None.
+    """
     for selector in _CONTENT_SELECTORS:
         try:
-            element = page.locator(selector).first
-            if await element.count() > 0:
-                content_text = await element.inner_text()
-                if len(content_text.strip()) > 200:
-                    logger.debug(f"Obsah extrahován selektorem: {selector}")
-                    break
+            locator = page.locator(selector).first
+            # Počkáme na viditelnost elementu
+            await locator.wait_for(state="visible", timeout=timeout_ms)
+            text = await locator.inner_text()
+            if len(text.strip()) >= _MIN_CONTENT_LENGTH:
+                logger.debug(f"Obsah nalezen v '{selector}' ({len(text)} znaků)")
+                return selector
+        except Exception:
+            continue
+    return None
+
+
+async def _scroll_and_load(page) -> None:
+    """
+    Postupný scroll stránky pro aktivaci lazy-load komponent.
+
+    Angular na rb.cz používá IntersectionObserver pro lazy loading –
+    komponenty se inicializují teprve když vstoupí do viewportu.
+
+    Strategie:
+      1. Scrolluje dolů po 400px krocích s pauzou 200ms
+      2. Čeká 500ms na inicializaci Angular komponent
+      3. Vrátí scroll na začátek stránky
+    """
+    await page.evaluate("""
+        async () => {
+            const scrollStep = 400;
+            const stepDelay = 200;
+            const totalHeight = document.documentElement.scrollHeight;
+
+            for (let y = 0; y < totalHeight; y += scrollStep) {
+                window.scrollTo({ top: y, behavior: 'instant' });
+                await new Promise(r => setTimeout(r, stepDelay));
+            }
+            // Krátká pauza pro dokončení Angular animací
+            await new Promise(r => setTimeout(r, 500));
+            window.scrollTo({ top: 0, behavior: 'instant' });
+        }
+    """)
+
+
+async def _expand_interactive_content(page) -> None:
+    """
+    Expanze interaktivního obsahu Angular Material komponent:
+      - Záložky (mat-tab): klikne na každou záložku pro načtení obsahu
+      - Accordiony (mat-expansion-panel, details/summary): otevře je
+      - show-more tlačítka: klikne pro zobrazení skrytého textu
+
+    Každé kliknutí je obaleno try/except – selhání jednoho prvku
+    neblokuje zpracování zbytku stránky.
+    """
+    # Angular Material záložky – každá záložka může mít jiný obsah
+    tab_selectors = [
+        "mat-tab-header button[role='tab']",
+        ".mat-mdc-tab-label-container button[role='tab']",
+        "[role='tablist'] [role='tab']",
+    ]
+    for tab_sel in tab_selectors:
+        try:
+            tabs = page.locator(tab_sel)
+            count = await tabs.count()
+            if count > 1:  # >1 = existují záložky k přepnutí
+                for i in range(count):
+                    try:
+                        await tabs.nth(i).click(timeout=800)
+                        await page.wait_for_timeout(300)
+                    except Exception:
+                        pass
+                break  # Nalezly se záložky, neprobíráme další selektory
         except Exception:
             continue
 
-    # Fallback: celý body
-    if len(content_text.strip()) < 200:
+    # Angular Material expansion panels a HTML5 details
+    accordion_selectors = [
+        "mat-expansion-panel-header",
+        "summary",
+        "[aria-expanded='false']",
+        ".accordion__trigger",
+        ".accordion-toggle",
+        "[class*='expansion-panel-header']",
+    ]
+    for acc_sel in accordion_selectors:
         try:
-            content_text = await page.locator("body").inner_text()
+            panels = page.locator(acc_sel)
+            count = await panels.count()
+            for i in range(min(count, 15)):
+                try:
+                    panel = panels.nth(i)
+                    if await panel.is_visible():
+                        await panel.click(timeout=500)
+                        await page.wait_for_timeout(150)
+                except Exception:
+                    pass
         except Exception:
-            content_text = await page.evaluate("() => document.body.innerText")
+            continue
 
-    return _clean_extracted_text(content_text)
+    # "Zobrazit více" / "Show more" tlačítka
+    showmore_selectors = [
+        "button:has-text('Zobrazit více')",
+        "button:has-text('Načíst více')",
+        "button:has-text('Více informací')",
+        "[class*='show-more']",
+        "[class*='load-more']",
+        ".additional-content-show-more button",
+    ]
+    for sm_sel in showmore_selectors:
+        try:
+            btn = page.locator(sm_sel).first
+            if await btn.is_visible(timeout=500):
+                await btn.click()
+                await page.wait_for_timeout(300)
+        except Exception:
+            pass
+
+
+async def _extract_page_text(page, url: str) -> str:
+    """
+    Extrahuje čistý text z plně načtené stránky rb.cz (Angular SPA).
+
+    Pořadí operací:
+      1. Odstraní navigaci a boilerplate elementy
+      2. Najde selector s nejdelším textem z _CONTENT_SELECTORS
+      3. Fallback: celý body text
+    """
+    # Odebereme navigaci a boilerplate přes DOM manipulation
+    await page.evaluate("""
+        (selectors) => {
+            selectors.forEach(sel => {
+                try {
+                    document.querySelectorAll(sel).forEach(el => el.remove());
+                } catch(e) {}
+            });
+        }
+    """, _REMOVE_SELECTORS)
+
+    # Najdeme selector s nejbohatším obsahem
+    best_text = ""
+    best_selector = "body"
+    for selector in _CONTENT_SELECTORS:
+        try:
+            locator = page.locator(selector).first
+            if await locator.count() == 0:
+                continue
+            text = await locator.inner_text()
+            stripped = text.strip()
+            if len(stripped) > len(best_text):
+                best_text = stripped
+                best_selector = selector
+                if len(best_text) >= _MIN_CONTENT_LENGTH * 3:
+                    break  # Dost obsahu – nehledáme dál
+        except Exception:
+            continue
+
+    logger.debug(f"Nejlepší selektor: '{best_selector}' ({len(best_text)} znaků)")
+
+    # Fallback: celý body
+    if len(best_text) < _MIN_CONTENT_LENGTH:
+        try:
+            best_text = await page.locator("body").inner_text()
+        except Exception:
+            best_text = await page.evaluate("() => document.body.innerText || ''")
+
+    return _clean_extracted_text(best_text)
 
 
 async def scrape_page(
@@ -472,20 +625,38 @@ async def scrape_page(
         )
 
     try:
-        # Navigace s timeoutem
+        # Krok 1: Navigace – čekáme na DOMContentLoaded (Angular SSR HTML)
         await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
 
-        # Pokus o networkidle (JS komponenty) – neblokujeme při timeoutu
+        # Krok 2: Čekáme na Angular hydration + JS komponenty
+        # networkidle = žádné síťové požadavky po 500ms → Angular hotov
         try:
-            await page.wait_for_load_state("networkidle", timeout=8_000)
+            await page.wait_for_load_state("networkidle", timeout=10_000)
         except Exception:
-            # Stránka může být dost načtena i bez networkidle
-            await page.wait_for_timeout(2_000)
+            # Angular může stále inicializovat – dáme mu extra čas
+            await page.wait_for_timeout(3_000)
 
-        # Cookie consent (pokud cookies nestačily)
+        # Krok 3: Cookie consent (záloha – cookies obvykle stačí)
         await _handle_cookie_consent(page)
 
-        # Extrakce textu
+        # Krok 4: Čekáme na zmizení loading spinnerů
+        await _wait_for_spinners_gone(page, timeout_ms=5_000)
+
+        # Krok 5: Čekáme na konkrétní content selektor s dostatkem textu
+        found_selector = await _wait_for_content(page, timeout_ms=6_000)
+        if not found_selector:
+            logger.debug(f"Žádný content selektor nenalezl {_MIN_CONTENT_LENGTH}+ znaků, pokračuji…")
+
+        # Krok 6: Scroll pro aktivaci lazy-load Angular komponent
+        await _scroll_and_load(page)
+
+        # Krok 7: Čekáme na nově načtené komponenty po scrollu
+        await _wait_for_spinners_gone(page, timeout_ms=3_000)
+
+        # Krok 8: Rozbalíme záložky, accordiony, show-more tlačítka
+        await _expand_interactive_content(page)
+
+        # Krok 9: Extrakce textu
         text = await _extract_page_text(page, url)
 
         if len(text) < 100:
