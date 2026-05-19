@@ -16,10 +16,13 @@ Použití:
   python scripts/ingest.py --urls-file data/sources.txt
 
   # Zpracování lokálních PDF bez stahování
-  python scripts/ingest.py --pdf-dir data/raw
-
-  # Přeskočení stahování (re-indexace existujících PDF)
   python scripts/ingest.py --skip-download
+
+  # Přidání nových dokumentů bez smazání existující kolekce (výchozí)
+  python scripts/ingest.py --incremental
+
+  # Kompletní reindexace od nuly (maže existující kolekci)
+  python scripts/ingest.py --full
 """
 
 from __future__ import annotations
@@ -39,7 +42,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
 from src.ingestion.chunker import chunk_documents
 from src.ingestion.downloader import download_all, load_urls_from_file
-from src.ingestion.indexer import run_full_indexing
+from src.ingestion.indexer import run_full_indexing, run_incremental_indexing
 from src.ingestion.parser import parse_all_pdfs
 from src.utils.logger import get_logger
 
@@ -79,16 +82,29 @@ def main(
         "--chunk-overlap",
         help="Překryv sousedních chunků.",
     ),
+    full: bool = typer.Option(
+        False,
+        "--full",
+        help=(
+            "Kompletní reindexace: smaže existující kolekci a indexuje vše znovu. "
+            "Použijte při změně embed modelu nebo chunking parametrů."
+        ),
+    ),
 ) -> None:
     """
-    Spustí kompletní ingestion pipeline pro Raiffeisenbank dokumenty.
+    Spustí ingestion pipeline pro Raiffeisenbank dokumenty.
+
+    Výchozí chování je incremental – přidává pouze nové dokumenty
+    (detekuje duplikáty pomocí chunk_id). Existující kolekce se nesmaže.
+    Použijte --full pro kompletní reindexaci od nuly.
     """
     start_time = time.time()
 
+    mode_label = "[red]FULL reindexace[/red]" if full else "[green]Incremental[/green]"
     console.print(
         Panel.fit(
             "[bold cyan]RAG Banking Chatbot – Ingestion Pipeline[/bold cyan]\n"
-            "Raiffeisenbank dokumenty → Qdrant + BM25",
+            f"Raiffeisenbank dokumenty → Qdrant + BM25  |  Režim: {mode_label}",
             border_style="cyan",
         )
     )
@@ -153,25 +169,40 @@ def main(
     console.print(f"[green]✓[/green] Vytvořeno {len(chunks)} chunků")
 
     # ── Krok 4: Indexace ─────────────────────────────────────────────────────
-    console.print("\n[bold]Indexace do Qdrant + BM25…[/bold]")
+    mode_str = "FULL reindexace" if full else "Incremental (přidávám nové)"
+    console.print(f"\n[bold]Indexace do Qdrant + BM25 [{mode_str}]…[/bold]")
     console.print(
         f"[dim]Qdrant: {config.QDRANT_HOST}:{config.QDRANT_PORT} "
         f"/ {config.QDRANT_COLLECTION}[/dim]"
     )
     console.print(f"[dim]Embed model: {config.EMBED_MODEL} (Ollama)[/dim]")
 
-    run_full_indexing(chunks)
-
     elapsed = time.time() - start_time
-    console.print(
-        Panel.fit(
-            f"[bold green]✓ Ingestion dokončena za {elapsed:.1f}s[/bold green]\n"
-            f"  Dokumentů: {len(documents)} stránek → {len(chunks)} chunků\n"
-            f"  Qdrant: '{config.QDRANT_COLLECTION}' ({len(chunks)} vektorů)\n"
-            f"  BM25: {config.BM25_INDEX_PATH}",
-            border_style="green",
+
+    if full:
+        run_full_indexing(chunks)
+        console.print(
+            Panel.fit(
+                f"[bold green]✓ Full indexace dokončena za {elapsed:.1f}s[/bold green]\n"
+                f"  Dokumentů: {len(documents)} stránek → {len(chunks)} chunků\n"
+                f"  Qdrant: '{config.QDRANT_COLLECTION}' ({len(chunks)} vektorů)\n"
+                f"  BM25: {config.BM25_INDEX_PATH}",
+                border_style="green",
+            )
         )
-    )
+    else:
+        stats = run_incremental_indexing(chunks)
+        console.print(
+            Panel.fit(
+                f"[bold green]✓ Incremental indexace dokončena za {elapsed:.1f}s[/bold green]\n"
+                f"  Zpracováno chunků:  {len(chunks)}\n"
+                f"  Nově indexováno:   [green]{stats['new']}[/green]\n"
+                f"  Přeskočeno (dup.): [dim]{stats['skipped']}[/dim]\n"
+                f"  Qdrant celkem:     {stats['total_qdrant']} bodů\n"
+                f"  BM25 celkem:       {stats['total_bm25']} dokumentů",
+                border_style="green",
+            )
+        )
 
 
 if __name__ == "__main__":
