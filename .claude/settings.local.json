@@ -5,7 +5,23 @@
       "Bash(pip install *)",
       "Bash(pip show *)",
       "Bash(wait)",
-      "Bash(git *)"
+      "Bash(git *)",
+      "Bash(curl -s http://localhost:11434/api/tags)",
+      "Bash(pkill -f \"uvicorn src.api.main:app\")",
+      "Bash(echo \"PID: $!\")",
+      "Bash(python3 -m uvicorn src.api.main:app --host 127.0.0.1 --port 8000 --log-level info)",
+      "Read(//tmp/**)",
+      "Bash(curl -s http://127.0.0.1:8000/health)",
+      "Skill(claude-api)",
+      "Bash(pkill -f \"uvicorn src.api.main\")",
+      "Bash(curl -s http://127.0.0.1:8004/health)",
+      "Bash(curl -s http://127.0.0.1:8006/health)",
+      "Bash(GEMINI_API_KEY=AIzaSyDOQ4cQM-PWZkl8M3qPG2K21h2jhpLGTcs LLM_BACKEND=gemini python3 -m uvicorn src.api.main:app --host 127.0.0.1 --port 8007 --log-level warning)",
+      "Bash(curl -s http://127.0.0.1:8007/health)",
+      "Bash(GEMINI_API_KEY=AIzaSyDOQ4cQM-PWZkl8M3qPG2K21h2jhpLGTcs python3 -c ' *)",
+      "Bash(pkill -9 -f uvicorn)",
+      "Bash(fuser -k 8000/tcp)",
+      "Bash(echo \"Nový server PID: $!\")"
     ]
   }
 }
