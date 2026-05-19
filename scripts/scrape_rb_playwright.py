@@ -356,12 +356,13 @@ async def _setup_browser_context(playwright):
         ),
     )
 
-    # Přednastavíme cookie consent aby se nezobrazoval banner
+    # Přednastavíme cookie consent aby se nezobrazoval banner.
+    # Playwright vyžaduje buď "url" nebo "domain" – ne obě zároveň.
+    # Používáme "domain" (s tečkou = platné pro všechny subdomény rb.cz).
     await context.add_cookies([
-        {**_CONSENT_COOKIE, "url": BASE_URL},
-        # Záloha pro různé cookie consent systémy
-        {"name": "OptanonAlertBoxClosed", "value": "1", "domain": ".rb.cz", "path": "/", "url": BASE_URL},
-        {"name": "cookieconsent_status", "value": "allow", "domain": ".rb.cz", "path": "/", "url": BASE_URL},
+        _CONSENT_COOKIE,
+        {"name": "OptanonAlertBoxClosed", "value": "1",   "domain": ".rb.cz", "path": "/"},
+        {"name": "cookieconsent_status",  "value": "allow","domain": ".rb.cz", "path": "/"},
     ])
 
     return browser, context
