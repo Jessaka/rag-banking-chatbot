@@ -43,6 +43,11 @@ uvicorn[standard]>=0.32.0
 beautifulsoup4>=4.12.0
 lxml>=5.2.0
 
+# ─── JS-rendered scraping ───────────────────────────────────────────────────
+# Instalace: pip install playwright && playwright install chromium
+# Vyžaduje Ubuntu ≤ 24.04 nebo macOS/Windows (Ubuntu 26+ zatím nepodporováno)
+playwright>=1.44.0
+
 # ─── Volitelné: akcelerace CPU inference ────────────────────────────────────
 # Odkomentujte pro GPU prostředí:
 # torch>=2.2.0+cu121  --index-url https://download.pytorch.org/whl/cu121
