@@ -481,22 +481,93 @@ def parse_pdf(pdf_path: Path, fallback: bool = True) -> list[Document]:
     return docs
 
 
-def parse_all_pdfs(pdf_dir: Path) -> list[Document]:
+def parse_txt(txt_path: Path) -> list[Document]:
     """
-    Parsuje všechny PDF soubory v adresáři.
+    Parsuje .txt soubor (Playwright scraped page nebo FAQ extrakce).
+
+    Rozpozná metadata hlavičku scrape_rb_playwright.py a přeskočí ji:
+      URL: https://www.rb.cz/...
+      Kategorie: hypoteky
+      Datum: 2026-05-19
+      Zdroj: Playwright (JS-rendered)
+
+      ============================================================
+
+      [vlastní textový obsah stránky]
+
+    Vrátí jeden Document za celý soubor s metadaty source/file_name/url.
+    """
+    try:
+        raw = txt_path.read_text(encoding="utf-8")
+    except Exception as exc:
+        logger.error(f"Nelze číst {txt_path.name}: {exc}")
+        return []
+
+    # Extrahujeme URL z hlavičky pro metadata
+    url_match = re.search(r"^URL:\s*(.+)$", raw, re.MULTILINE)
+    url = url_match.group(1).strip() if url_match else ""
+
+    # Přeskočíme metadata hlavičku – Playwright scraper ji odděluje linií ====
+    sep_match = re.search(r"^={3,}$", raw, re.MULTILINE)
+    if sep_match:
+        content = raw[sep_match.end():].strip()
+    else:
+        # FAQ scraper / prostý text – odstraníme pouze metadata řádky
+        metadata_pattern = re.compile(r"^(URL|Zdroj|Kategorie|Datum):\s*.+$", re.MULTILINE)
+        content = metadata_pattern.sub("", raw).strip()
+
+    content = _clean_text(content)
+
+    if len(content) < 50:
+        logger.debug(f"  {txt_path.name}: příliš málo textu, přeskakuji")
+        return []
+
+    logger.debug(f"  {txt_path.name}: {len(content)} znaků extrahováno")
+    return [Document(
+        page_content=content,
+        metadata={
+            "source": str(txt_path),
+            "file_name": txt_path.name,
+            "page": 1,
+            "total_pages": 1,
+            "has_tables": False,
+            "table_count": 0,
+            "url": url,
+        },
+    )]
+
+
+def parse_all_documents(doc_dir: Path) -> list[Document]:
+    """
+    Parsuje všechny PDF a .txt soubory v adresáři.
+
+    PDF: hybridní parser (ceníky) nebo PyMuPDF + pdfplumber fallback.
+    TXT: načte text a přeskočí metadata hlavičku Playwright scraperu.
 
     Returns:
-        Sloučený seznam všech Document objektů ze všech PDF.
+        Sloučený seznam Document objektů ze všech souborů.
     """
-    pdf_files = sorted(pdf_dir.glob("*.pdf"))
-    if not pdf_files:
-        logger.warning(f"V adresáři '{pdf_dir}' nejsou žádné PDF soubory")
+    pdf_files = sorted(doc_dir.glob("*.pdf"))
+    txt_files = [f for f in sorted(doc_dir.glob("*.txt")) if f.name != ".gitkeep"]
+
+    if not pdf_files and not txt_files:
+        logger.warning(f"V adresáři '{doc_dir}' nejsou žádné PDF ani TXT soubory")
         return []
 
     all_docs: list[Document] = []
-    for pdf_path in pdf_files:
-        docs = parse_pdf(pdf_path)
-        all_docs.extend(docs)
 
-    logger.info(f"Celkem extrahováno {len(all_docs)} stránek z {len(pdf_files)} PDF")
+    for pdf_path in pdf_files:
+        all_docs.extend(parse_pdf(pdf_path))
+
+    for txt_path in txt_files:
+        all_docs.extend(parse_txt(txt_path))
+
+    logger.info(
+        f"Celkem extrahováno {len(all_docs)} dokumentů "
+        f"z {len(pdf_files)} PDF + {len(txt_files)} TXT"
+    )
     return all_docs
+
+
+# Alias pro zpětnou kompatibilitu (ingest.py volá parse_all_pdfs)
+parse_all_pdfs = parse_all_documents
