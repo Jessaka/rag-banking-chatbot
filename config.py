@@ -69,20 +69,19 @@ CHUNK_SEPARATORS: list[str] = ["\n\n", "\n", ". ", " ", ""]
 # ---------------------------------------------------------------------------
 BM25_TOP_K: int = 20       # Počet kandidátů z BM25 (sparse)
 VECTOR_TOP_K: int = 20     # Počet kandidátů z Qdrant (dense)
-HYBRID_TOP_K: int = 10     # Počet výsledků po RRF fúzi
+HYBRID_TOP_K: int = 5      # Počet výsledků po RRF fúzi
 RERANK_TOP_K: int = 5      # Finální počet výsledků po rerankingu
 RRF_K: int = 60            # Konstanta pro Reciprocal Rank Fusion
 
 # ---------------------------------------------------------------------------
 # Reranker
 # ---------------------------------------------------------------------------
-RERANKER_MODEL: str = os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
+RERANKER_MODEL: str = os.getenv("RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
 RERANKER_DEVICE: str = os.getenv("RERANKER_DEVICE", "cpu")  # "cuda" pro GPU
-# Minimální sigmoid skóre cross-encoderu pro zachování dokumentu ve výsledcích.
-# BGE reranker vrací sigmoid(logit): relevantní ≈ 0.5–1.0, irelevantní ≈ 0.0.
-# Hodnota 0.01 odfiltruje dokumenty s rerank_score = 0 (např. dluhopisy pro
-# dotaz na hypotéku), ale zachová i vzdáleně relevantní dokumenty (> 0.01).
-RERANK_MIN_SCORE: float = float(os.getenv("RERANK_MIN_SCORE", "0.01"))
+# Minimální skóre cross-encoderu pro zachování dokumentu ve výsledcích.
+# ms-marco-MiniLM-L-6-v2 vrací raw logity (bez sigmoid), typicky -10 až +10.
+# Hodnota 0.0 odfiltruje negativní skóre (jednoznačně irelevantní dokumenty).
+RERANK_MIN_SCORE: float = float(os.getenv("RERANK_MIN_SCORE", "0.0"))
 
 # ---------------------------------------------------------------------------
 # Persistence lokálních indexů
