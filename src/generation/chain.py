@@ -12,6 +12,8 @@ Konverzační mód: query rewriting + paměť posledních N zpráv
 
 from __future__ import annotations
 
+import time
+
 from langchain_core.documents import Document
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_ollama import OllamaLLM
@@ -394,15 +396,23 @@ class BankingRAGChain:
               - sources (list[Document]): Použité zdroje
               - rewritten_query (str): Přeformulovaný dotaz (pokud se liší)
         """
+        t_ask = time.perf_counter()
+
         # 1. Query rewriting pro follow-up otázky
+        t_rewrite = time.perf_counter()
         retrieval_query = (
             self._rewrite_query(question)
             if self.conversational
             else question
         )
+        rewrite_ms = (time.perf_counter() - t_rewrite) * 1000
+        if self.chat_history:  # rewriting probíhá jen pokud existuje historie
+            logger.info(f"⏱ Query rewriting: {rewrite_ms:.0f}ms")
 
         # 2. Retrieval
+        t_retrieval = time.perf_counter()
         source_docs: list[Document] = self._retriever.invoke(retrieval_query)
+        retrieval_ms = (time.perf_counter() - t_retrieval) * 1000
 
         if not source_docs:
             answer = (
@@ -432,8 +442,18 @@ class BankingRAGChain:
                 question=question,
             )
 
+        backend = config.LLM_BACKEND
+        model_name = (
+            config.ANTHROPIC_MODEL if backend == "anthropic"
+            else config.GEMINI_MODEL if backend == "gemini"
+            else config.LLM_MODEL
+        )
+        t_llm = time.perf_counter()
         answer = self._llm.invoke(messages)
+        llm_ms = (time.perf_counter() - t_llm) * 1000
         answer_text = answer if isinstance(answer, str) else str(answer)
+
+        total_ms = (time.perf_counter() - t_ask) * 1000
 
         # 5. Aktualizace konverzační historie
         if self.conversational:
@@ -444,8 +464,12 @@ class BankingRAGChain:
                 self.chat_history = self.chat_history[-(limit * 2):]
 
         logger.info(
-            f"Odpověď vygenerována ({len(answer_text)} znaků, "
-            f"{len(source_docs)} zdrojů)"
+            f"⏱ LLM generation ({backend}/{model_name}): {llm_ms:.0f}ms "
+            f"({len(answer_text)} znaků)"
+        )
+        logger.info(
+            f"⏱ TOTAL ask(): {total_ms:.0f}ms "
+            f"[retrieval={retrieval_ms:.0f}ms, llm={llm_ms:.0f}ms]"
         )
         return {
             "answer": answer_text,

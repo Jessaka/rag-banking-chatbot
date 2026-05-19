@@ -13,6 +13,7 @@ Model: BAAI/bge-reranker-v2-m3
 
 from __future__ import annotations
 
+import time
 from functools import lru_cache
 
 from langchain_core.documents import Document
@@ -67,7 +68,10 @@ def rerank(
     model = _load_reranker()
 
     pairs = [(query, doc.page_content) for doc in documents]
+
+    t0 = time.perf_counter()
     scores: list[float] = model.predict(pairs).tolist()
+    rerank_ms = (time.perf_counter() - t0) * 1000
 
     ranked = sorted(
         zip(documents, scores),
@@ -78,7 +82,6 @@ def rerank(
     results = []
     for doc, score in ranked[:top_k]:
         if score < min_score:
-            # Výsledky jsou sestupně seřazeny — zbytek bude ještě nižší
             break
         enriched = Document(
             page_content=doc.page_content,
@@ -86,8 +89,6 @@ def rerank(
         )
         results.append(enriched)
 
-    # Fallback: vrátíme alespoň nejlepší dokument, aby chain nikdy nedostal prázdný seznam
-    # od rerankeru (prázdný seznam → generická "nenalezena" odpověď bez pokusu o retrieval)
     if not results and ranked:
         best_doc, best_score = ranked[0]
         logger.warning(
@@ -99,9 +100,10 @@ def rerank(
             metadata={**best_doc.metadata, "rerank_score": round(best_score, 4)},
         ))
 
-    logger.debug(
-        f"Rerank: {len(documents)} kandidátů → {len(results)} výsledků "
-        f"(top: {ranked[0][1]:.4f}, práh: {min_score})"
-        if ranked else "Rerank: 0 výsledků"
+    logger.info(
+        f"⏱ BGE reranking: {rerank_ms:.0f}ms "
+        f"({len(documents)} párů → {len(results)} výsledků, "
+        f"top score: {ranked[0][1]:.4f})"
+        if ranked else "⏱ BGE reranking: 0 výsledků"
     )
     return results

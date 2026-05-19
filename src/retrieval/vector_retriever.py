@@ -7,6 +7,7 @@ Vhodné pro sémantické dotazy a parafráze.
 
 from __future__ import annotations
 
+import time
 from functools import lru_cache
 
 from langchain_core.documents import Document
@@ -46,8 +47,11 @@ def vector_search(query: str, top_k: int = config.VECTOR_TOP_K) -> list[Document
     client = _get_client()
     embeddings = _get_embeddings()
 
+    t_embed = time.perf_counter()
     query_vector = embeddings.embed_query(query)
+    embed_ms = (time.perf_counter() - t_embed) * 1000
 
+    t_qdrant = time.perf_counter()
     # qdrant-client ≥ 1.14: client.search() nahrazeno client.query_points()
     response = client.query_points(
         collection_name=config.QDRANT_COLLECTION,
@@ -55,6 +59,7 @@ def vector_search(query: str, top_k: int = config.VECTOR_TOP_K) -> list[Document
         limit=top_k,
         with_payload=True,
     )
+    qdrant_ms = (time.perf_counter() - t_qdrant) * 1000
     hits = response.points
 
     results = []
@@ -67,9 +72,10 @@ def vector_search(query: str, top_k: int = config.VECTOR_TOP_K) -> list[Document
         )
         results.append(doc)
 
-    logger.debug(
-        f"Qdrant: '{query[:40]}…' → {len(results)} výsledků "
+    logger.info(
+        f"⏱ Vector retrieval: embed={embed_ms:.0f}ms, "
+        f"qdrant={qdrant_ms:.0f}ms, celkem={embed_ms+qdrant_ms:.0f}ms "
         f"(top score: {hits[0].score:.4f})" if hits else
-        f"Qdrant: '{query[:40]}…' → 0 výsledků"
+        f"⏱ Vector retrieval: embed={embed_ms:.0f}ms, qdrant={qdrant_ms:.0f}ms, 0 výsledků"
     )
     return results

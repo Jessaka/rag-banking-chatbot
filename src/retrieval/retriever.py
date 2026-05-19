@@ -11,6 +11,8 @@ do libovolného RAG chainu.
 
 from __future__ import annotations
 
+import time
+
 from langchain_core.callbacks import CallbackManagerForRetrieverRun
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
@@ -55,30 +57,39 @@ class BankingRetriever(BaseRetriever):
         Returns:
             Reranked seznam Document objektů.
         """
-        logger.debug(f"Retrieval pro dotaz: '{query[:60]}…'")
+        t_total = time.perf_counter()
+        logger.info(f"▶ Retrieval: '{query[:60]}'")
 
-        # Krok 1: Hybridní pre-filtr
+        # Krok 1: Hybridní pre-filtr (BM25 + Qdrant + RRF)
+        t_hybrid = time.perf_counter()
         candidates = hybrid_search(
             query=query,
             top_k=self.hybrid_top_k,
             bm25_weight=self.bm25_weight,
             vector_weight=self.vector_weight,
         )
+        hybrid_ms = (time.perf_counter() - t_hybrid) * 1000
 
         if not candidates:
             logger.warning("Hybrid search nevrátil žádné výsledky")
             return []
 
+        logger.info(f"⏱ Hybrid search (BM25+Qdrant+RRF): {hybrid_ms:.0f}ms → {len(candidates)} kandidátů")
+
         # Krok 2: Reranking cross-encoderem
+        t_rerank = time.perf_counter()
         final_docs = rerank(
             query=query,
             documents=candidates,
             top_k=self.rerank_top_k,
         )
+        rerank_ms = (time.perf_counter() - t_rerank) * 1000
 
+        total_retrieval_ms = (time.perf_counter() - t_total) * 1000
         logger.info(
-            f"Retrieval: {len(candidates)} kandidátů → "
-            f"{len(final_docs)} po rerankingu"
+            f"⏱ Retrieval celkem: {total_retrieval_ms:.0f}ms "
+            f"(hybrid={hybrid_ms:.0f}ms, rerank={rerank_ms:.0f}ms) "
+            f"→ {len(final_docs)} výsledků"
         )
         return final_docs
 

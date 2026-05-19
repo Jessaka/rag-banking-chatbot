@@ -11,6 +11,7 @@ Index je načten z disku (vytvořen během ingestion).
 from __future__ import annotations
 
 import pickle
+import time
 from functools import lru_cache
 
 from langchain_core.documents import Document
@@ -83,12 +84,13 @@ def bm25_search(query: str, top_k: int = config.BM25_TOP_K) -> list[Document]:
     documents = _load_documents()
 
     tokenized_query = _tokenize(query)
-    scores = bm25.get_scores(tokenized_query)
 
-    # Seřadíme indexy sestupně podle skóre
+    t0 = time.perf_counter()
+    scores = bm25.get_scores(tokenized_query)
     ranked_indices = sorted(
         range(len(scores)), key=lambda i: scores[i], reverse=True
     )[:top_k]
+    bm25_ms = (time.perf_counter() - t0) * 1000
 
     results = []
     for idx in ranked_indices:
@@ -99,8 +101,8 @@ def bm25_search(query: str, top_k: int = config.BM25_TOP_K) -> list[Document]:
         )
         results.append(enriched)
 
-    logger.debug(
-        f"BM25: '{query[:40]}…' → {len(results)} výsledků "
-        f"(top score: {scores[ranked_indices[0]]:.3f})"
+    logger.info(
+        f"⏱ BM25 retrieval: {bm25_ms:.0f}ms "
+        f"({len(documents)} dokumentů, top score: {scores[ranked_indices[0]]:.3f})"
     )
     return results
