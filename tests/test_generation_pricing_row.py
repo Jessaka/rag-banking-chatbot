@@ -1,6 +1,6 @@
 from langchain_core.documents import Document
 
-from src.generation.chain import BankingRAGChain, extract_structured_pricing_answer
+from src.generation.chain import BankingRAGChain, extract_structured_pricing_answer, normalize_product_name
 
 
 class FakeRetriever:
@@ -112,3 +112,18 @@ def test_structured_pricing_answer_groups_max_three_products():
     assert "eKonto EXTRA" not in result["answer"]
     assert "* vedení účtu: 100 Kč měsíčně" in result["answer"]
     assert "\\n" not in result["answer"]
+
+
+def test_normalize_product_name_strips_suffixes():
+    # Suffixes stripped
+    assert normalize_product_name("eKonto Základní cena") == "eKonto Základní"
+    assert normalize_product_name("eKonto EXCLUSIVE") == "eKonto EXCLUSIVE"
+    assert normalize_product_name("Podnikatelské eKonto - Základní cena") == "Podnikatelské eKonto - Základní"
+    assert normalize_product_name("AKTIVNÍ účet") == "AKTIVNÍ účet"  # preserved
+    # Preserved names
+    assert normalize_product_name("eKonto SMART") == "eKonto SMART"
+    assert normalize_product_name("eKonto Výhody Prémium") == "eKonto Výhody Prémium"
+    assert normalize_product_name("eKonto KOMPLET") == "eKonto KOMPLET"
+    # Empty/edge
+    assert normalize_product_name("") == ""
+    assert normalize_product_name(None) is None

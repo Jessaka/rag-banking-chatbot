@@ -121,6 +121,48 @@ def _structured_pricing_docs(source_docs: list[Document]) -> list[Document]:
     ]
 
 
+def normalize_product_name(name: str) -> str:
+    """Lightweight suffix cleanup for pricing product names.
+
+    Strips known trailing suffixes (e.g. "cena", "vedení účtu") while
+    preserving specific product names that include those words as part of
+    their official name.
+    """
+    if not name:
+        return name
+    raw = name.strip()
+
+    # Preserve specific product names exactly (case-insensitive)
+    preserve_lower = frozenset({
+        "ekonto smart",
+        "ekonto výhody prémium",
+        "ekonto vyhody premium",
+        "aktivní účet",
+        "aktivni ucet",
+        "ekonto komplet",
+    })
+    if raw.lower() in preserve_lower:
+        return raw
+
+    # Ordered by length (longest first) — strip at most one suffix.
+    # NOTE: "cena" is listed separately (not "základní cena") so that
+    # "eKonto Základní cena" → "eKonto Základní" rather than "eKonto".
+    suffixes = [
+        "vedení jednoho běžného účtu měsíčně",
+        "vedení jednoho běžného účtu",
+        "vedení účtu měsíčně",
+        "vedení účtu",
+        "měsíčně",
+        "v ceně",
+        "cena",
+    ]
+    for suffix in suffixes:
+        if raw.lower().endswith(suffix.lower()):
+            stripped = raw[:-len(suffix)].strip()
+            return stripped if stripped else raw
+    return raw
+
+
 def _clean_fee_label(label: str) -> str:
     label = re.sub(r"^\s*\d+(?:\.\d+)*\.?\s*", "", label or "").strip()
     label = re.sub(r"\s+\d+\)\s*$", "", label).strip()
@@ -174,7 +216,7 @@ def format_structured_pricing_answer(docs: list[Document], max_products: int = 3
         data = extract_structured_pricing_answer(doc)
         if not data:
             continue
-        product = data["product_name"].strip()
+        product = normalize_product_name(data["product_name"])
         if product not in grouped:
             if len(grouped) >= max_products:
                 continue

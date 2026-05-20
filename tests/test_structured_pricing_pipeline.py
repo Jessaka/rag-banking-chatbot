@@ -165,3 +165,65 @@ def test_pricing_retriever_skips_low_confidence_rows(tmp_path):
         pricing_retriever.config.PRICING_ROWS_PATH = original
         pricing_retriever.load_pricing_rows.cache_clear()
     assert docs == []
+
+
+def test_active_pricing_preferred_over_archived(tmp_path):
+    """Active pricing rows are returned for normal queries; archived rows pass only
+    when the query explicitly asks about historical/archived products."""
+    path = tmp_path / "pricing_rows.jsonl"
+    active = {
+        "product_name": "eKonto",
+        "fee_type": "Vedení účtu",
+        "fee_value": "129 Kč",
+        "currency": "CZK",
+        "period": "měsíčně",
+        "conditions": "",
+        "source_url": "https://www.rb.cz/cenik.pdf",
+        "source_file": "cenik.pdf",
+        "page": 1,
+        "table_index": 0,
+        "row_index": 1,
+        "title": "1. část Aktuálně nabízené produkty",
+        "section_title": "Aktuálně nabízené produkty",
+        "category": "retail",
+        "document_type": "pricing",
+        "pricing_type": "account_fee",
+        "confidence": 0.95,
+        "raw_cells": ["Vedení účtu", "129 Kč"],
+    }
+    archived = {
+        "product_name": "eKonto (již nenabízené)",
+        "fee_type": "Vedení účtu",
+        "fee_value": "99 Kč",
+        "currency": "CZK",
+        "period": "měsíčně",
+        "conditions": "",
+        "source_url": "https://www.rb.cz/cenik.pdf",
+        "source_file": "cenik.pdf",
+        "page": 2,
+        "table_index": 0,
+        "row_index": 1,
+        "title": "2. část Již nenabízené produkty",
+        "section_title": "Již nenabízené produkty",
+        "category": "retail",
+        "document_type": "pricing",
+        "pricing_type": "account_fee",
+        "confidence": 0.90,
+        "raw_cells": ["Vedení účtu", "99 Kč"],
+    }
+    rows = [active, archived]
+    path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows), encoding="utf-8")
+    pricing_retriever.load_pricing_rows.cache_clear()
+    original = pricing_retriever.config.PRICING_ROWS_PATH
+    pricing_retriever.config.PRICING_ROWS_PATH = path
+    try:
+        # Normal query — should return only active
+        docs = pricing_retriever.pricing_search("Kolik stojí vedení eKonta?", top_k=5, min_score=0.1)
+        assert len(docs) == 1, f"Očekáván 1 aktivní doc, ale je {len(docs)}"
+        assert docs[0].metadata["product_name"] == "eKonto"
+        assert docs[0].metadata["title"] == "1. část Aktuálně nabízené produkty"
+        # Metadata contains filter reason
+        assert docs[0].metadata.get("structured_pricing_filter_reason", "").startswith("archived_hard_filtered:")
+    finally:
+        pricing_retriever.config.PRICING_ROWS_PATH = original
+        pricing_retriever.load_pricing_rows.cache_clear()

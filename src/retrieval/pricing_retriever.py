@@ -90,6 +90,50 @@ def _score_row(row: dict, query: str, profile: QueryProfile) -> tuple[float, lis
     return score, reasons
 
 
+# ---------------------------------------------------------------------------
+# Hard filter – archived/discontinued rows
+# ---------------------------------------------------------------------------
+
+_ARCHIVE_KEYWORDS_RAW = frozenset({
+    "historický", "historický", "historické",
+    "archiv", "archivní",
+    "již nenabízen", "již nenabízený",
+    "starý produkt", "staré produkty",
+    "nenabízený",
+})
+# Pre-normalized variants (no diacritics) so _is_archive_query doesn't
+# have to re-normalize every keyword on every call.
+_ARCHIVE_KEYWORDS: frozenset[str] = frozenset(
+    word
+    for kw in _ARCHIVE_KEYWORDS_RAW
+    for word in (kw, _norm(kw))
+)
+
+
+def _is_archive_query(query: str) -> bool:
+    """True if the user explicitly asks about archived/discontinued products."""
+    q = _norm(query)
+    return any(kw in q for kw in _ARCHIVE_KEYWORDS)
+
+
+def _is_row_archived(row: dict) -> bool:
+    """Check if a pricing row belongs to an archived/discontinued product."""
+    val = row.get("is_archived")
+    if val in (True, "True", "true", 1, "1"):
+        return True
+    val = row.get("is_discontinued")
+    if val in (True, "True", "true", 1, "1"):
+        return True
+    title = _norm(row.get("title", ""))
+    if "již nenabízen" in title or "jiz nenabiz" in title:
+        return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Main search
+# ---------------------------------------------------------------------------
+
 def pricing_search(query: str, top_k: int = 5, min_score: float = 0.5) -> list[Document]:
     profile = classify_query(query)
     if "pricing" not in profile.labels:
@@ -99,6 +143,21 @@ def pricing_search(query: str, top_k: int = 5, min_score: float = 0.5) -> list[D
         score, reasons = _score_row(row, query, profile)
         if score >= min_score:
             scored.append((row, score, reasons))
+
+    # Hard filter: remove archived rows unless query explicitly asks for them
+    filter_reason: str | None = None
+    if not _is_archive_query(query):
+        active = [(r, s, rs) for r, s, rs in scored if not _is_row_archived(r)]
+        if active:
+            filtered = len(scored) - len(active)
+            if filtered > 0:
+                filter_reason = f"archived_hard_filtered:{filtered}"
+                logger.info(f"PricingRetriever hard filter odstranil {filtered} archived rows")
+            scored = active
+        else:
+            filter_reason = "archived_hard_filter_fallback:all_rows_archived"
+            logger.warning("PricingRetriever: vše by bylo odfiltrováno → fallback na všechny řádky")
+
     ranked = sorted(scored, key=lambda item: item[1], reverse=True)[:top_k]
     docs: list[Document] = []
     for row, score, reasons in ranked:
@@ -110,7 +169,7 @@ def pricing_search(query: str, top_k: int = 5, min_score: float = 0.5) -> list[D
             f"Podmínky: {row.get('conditions', '')}\n"
             f"Zdroj: {row.get('source_file', '')}, str. {row.get('page', '')}"
         ).strip()
-        docs.append(Document(page_content=content, metadata={
+        meta: dict = {
             **row,
             "chunk_type": "pricing_row",
             "document_type": "pricing",
@@ -121,6 +180,9 @@ def pricing_search(query: str, top_k: int = 5, min_score: float = 0.5) -> list[D
             "rerank_score": score,
             "hybrid_score": score,
             "query_labels": sorted(profile.labels),
-        }))
+        }
+        if filter_reason:
+            meta["structured_pricing_filter_reason"] = filter_reason
+        docs.append(Document(page_content=content, metadata=meta))
     logger.info(f"PricingRetriever: query='{query[:60]}' → {len(docs)} structured rows")
     return docs
