@@ -196,9 +196,12 @@ def test_is_primary_account_fee_query_true():
     """Queries that SHOULD activate the primary filter."""
     assert pricing_retriever.is_primary_account_fee_query("Jaký je poplatek za vedení běžného účtu?")
     assert pricing_retriever.is_primary_account_fee_query("Kolik stojí vedení účtu?")
+    assert pricing_retriever.is_primary_account_fee_query("Kolik stojí vedení eKonta?")  # OPRAVENO: nyní triggeruje na "vedení" samostatně
     assert pricing_retriever.is_primary_account_fee_query("Jaký je měsíční poplatek za eKonto?")
     assert pricing_retriever.is_primary_account_fee_query("Monthly account fee")
     assert pricing_retriever.is_primary_account_fee_query("Account maintenance fee")
+    assert pricing_retriever.is_primary_account_fee_query("Kolik stojí účet?")
+    assert pricing_retriever.is_primary_account_fee_query("Monthly fee")
 
 
 def test_is_primary_account_fee_query_false():
@@ -208,6 +211,7 @@ def test_is_primary_account_fee_query_false():
     assert not pricing_retriever.is_primary_account_fee_query("Kolik stojí kreditní karta?")
     assert not pricing_retriever.is_primary_account_fee_query("Jaký je poplatek za pojištění?")
     assert not pricing_retriever.is_primary_account_fee_query("Hello world")
+    assert not pricing_retriever.is_primary_account_fee_query("Sjednání a správa služeb")  # "správa" ≠ "vedení"
 
 
 def test_pricing_search_primary_filter_excludes_secondary_rows(tmp_path):
@@ -579,6 +583,119 @@ def test_archived_primary_fallback_when_no_active_primary(tmp_path):
         debug = docs[0].metadata.get("retrieval_debug", {})
         assert debug.get("primary_account_fee_filter") == "true"
         assert debug.get("archived_fallback_used") == "true"
+    finally:
+        pricing_retriever.config.PRICING_ROWS_PATH = original
+        pricing_retriever.load_pricing_rows.cache_clear()
+
+
+def test_service_config_fees_excluded_from_primary_query(tmp_path):
+    """Query 'Kolik stojí vedení eKonta?' must NOT return service/config rows.
+
+    Rows like:
+      - Správa služby
+      - Telefonní notifikace
+      - Doplňkové služby
+      - Nastavení služby
+      - RB klíč
+
+    must be excluded when the primary account fee filter is active.
+    """
+    path = tmp_path / "pricing_rows.jsonl"
+    primary = {
+        "product_name": "eKonto",
+        "fee_type": "Vedení účtu",
+        "fee_value": "129 Kč",
+        "currency": "CZK",
+        "period": "měsíčně",
+        "conditions": "",
+        "source_url": "https://www.rb.cz/cenik.pdf",
+        "source_file": "cenik.pdf",
+        "page": 1,
+        "table_index": 0,
+        "row_index": 1,
+        "title": "Ceník",
+        "category": "retail",
+        "document_type": "pricing",
+        "pricing_type": "account_fee",
+        "confidence": 0.95,
+    }
+    service_rows = [
+        {
+            "product_name": "eKonto",
+            "fee_type": "2. Správa služby",
+            "fee_value": "50 Kč",
+            "currency": "",
+            "period": "měsíčně",
+            "conditions": "",
+            "source_url": "https://www.rb.cz/cenik.pdf",
+            "source_file": "cenik.pdf",
+            "page": 1,
+            "table_index": 0,
+            "row_index": 2,
+            "title": "Ceník",
+            "category": "retail",
+            "document_type": "pricing",
+            "pricing_type": "account_fee",
+            "confidence": 0.90,
+        },
+        {
+            "product_name": "eKonto",
+            "fee_type": "3. Telefonní bankovnictví",
+            "fee_value": "zdarma",
+            "currency": "",
+            "period": "",
+            "conditions": "",
+            "source_url": "https://www.rb.cz/cenik.pdf",
+            "source_file": "cenik.pdf",
+            "page": 1,
+            "table_index": 0,
+            "row_index": 3,
+            "title": "Ceník",
+            "category": "retail",
+            "document_type": "pricing",
+            "pricing_type": "account_fee",
+            "confidence": 0.90,
+        },
+        {
+            "product_name": "eKonto",
+            "fee_type": "4. Doplňkové služby",
+            "fee_value": "30 Kč",
+            "currency": "",
+            "period": "měsíčně",
+            "conditions": "",
+            "source_url": "https://www.rb.cz/cenik.pdf",
+            "source_file": "cenik.pdf",
+            "page": 1,
+            "table_index": 0,
+            "row_index": 4,
+            "title": "Ceník",
+            "category": "retail",
+            "document_type": "pricing",
+            "pricing_type": "account_fee",
+            "confidence": 0.90,
+        },
+    ]
+    rows = [primary] + service_rows
+    path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows), encoding="utf-8")
+    pricing_retriever.load_pricing_rows.cache_clear()
+    original = pricing_retriever.config.PRICING_ROWS_PATH
+    pricing_retriever.config.PRICING_ROWS_PATH = path
+    try:
+        # This query now activates primary filter thanks to "vedení" trigger
+        docs = pricing_retriever.pricing_search("Kolik stojí vedení eKonta?", top_k=10, min_score=0.1)
+        assert len(docs) == 1, (
+            f"Očekáván přesně 1 primary doc (Vedení účtu), "
+            f"ale je {len(docs)}: {[d.metadata['fee_type'] for d in docs]}"
+        )
+        assert docs[0].metadata["fee_type"] == "Vedení účtu"
+        # Verify retrieval debug
+        debug = docs[0].metadata.get("retrieval_debug", {})
+        assert debug.get("primary_account_fee_filter") == "true"
+        assert debug.get("primary_rows") == 1
+        assert "primary_fee_reason" in debug
+        # Ve primary_fee_reason musí být zmínka o excludovaných service rows
+        excluded_ft = debug.get("primary_fee_reason", "")
+        assert "sprava" in excluded_ft or "excluded" in excluded_ft
     finally:
         pricing_retriever.config.PRICING_ROWS_PATH = original
         pricing_retriever.load_pricing_rows.cache_clear()
