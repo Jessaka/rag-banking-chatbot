@@ -359,9 +359,11 @@ def test_pricing_search_primary_filter_fallback(tmp_path):
         docs = pricing_retriever.pricing_search("Jaký je poplatek za vedení běžného účtu?", top_k=10, min_score=0.1)
         assert len(docs) == 1, f"Očekáván 1 fallback doc, ale je {len(docs)}"
         debug = docs[0].metadata.get("retrieval_debug", {})
-        assert debug.get("primary_account_fee_filter") == "true"
-        assert debug.get("primary_rows") == 0
+        # No primary rows exist → primary_fallback without primary_account_fee_filter
+        assert debug.get("primary_account_fee_filter") is None
         assert debug.get("primary_fallback") == "true"
+        assert debug.get("active_rows_count") == 1
+        assert debug.get("active_results_count") == 1
     finally:
         pricing_retriever.config.PRICING_ROWS_PATH = original
         pricing_retriever.load_pricing_rows.cache_clear()
@@ -458,8 +460,125 @@ def test_active_pricing_preferred_over_archived(tmp_path):
         assert len(docs) == 1, f"Očekáván 1 aktivní doc, ale je {len(docs)}"
         assert docs[0].metadata["product_name"] == "eKonto"
         assert docs[0].metadata["title"] == "1. část Aktuálně nabízené produkty"
-        # Metadata contains filter reason
-        assert docs[0].metadata.get("structured_pricing_filter_reason", "").startswith("archived_hard_filtered:")
+        debug = docs[0].metadata.get("retrieval_debug", {})
+        assert debug.get("active_rows_count") == 1
+        assert debug.get("archived_rows_count") == 1
+        assert debug.get("active_results_count") == 1
+        assert debug.get("archived_fallback_used") is None
+    finally:
+        pricing_retriever.config.PRICING_ROWS_PATH = original
+        pricing_retriever.load_pricing_rows.cache_clear()
+
+
+def test_active_primary_preferred_over_archived_primary(tmp_path):
+    """When active primary rows exist, they must win even if archived primary has higher score."""
+    path = tmp_path / "pricing_rows.jsonl"
+    active_primary = {
+        "product_name": "AKTIVNÍ účet",
+        "fee_type": "1. Cena tarifu",
+        "fee_value": "99 Kč",
+        "currency": "CZK",
+        "period": "měsíčně",
+        "conditions": "",
+        "source_url": "https://www.rb.cz/cenik.pdf",
+        "source_file": "cenik.pdf",
+        "page": 1,
+        "table_index": 0,
+        "row_index": 1,
+        "title": "1. část Aktuálně nabízené produkty",
+        "category": "retail",
+        "document_type": "pricing",
+        "pricing_type": "account_fee",
+        "confidence": 0.95,
+    }
+    archived_primary = {
+        "product_name": "eKonto (archiv)",
+        "fee_type": "1. Vedení jednoho běžného účtu",
+        "fee_value": "250 Kč",
+        "currency": "CZK",
+        "period": "měsíčně",
+        "conditions": "",
+        "source_url": "https://www.rb.cz/cenik.pdf",
+        "source_file": "cenik.pdf",
+        "page": 2,
+        "table_index": 0,
+        "row_index": 1,
+        "title": "2. část Již nenabízené produkty",
+        "category": "retail",
+        "document_type": "pricing",
+        "pricing_type": "account_fee",
+        "confidence": 0.95,
+    }
+    rows = [active_primary, archived_primary]
+    path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows), encoding="utf-8")
+    pricing_retriever.load_pricing_rows.cache_clear()
+    original = pricing_retriever.config.PRICING_ROWS_PATH
+    pricing_retriever.config.PRICING_ROWS_PATH = path
+    try:
+        docs = pricing_retriever.pricing_search("Jaký je poplatek za vedení běžného účtu?", top_k=5, min_score=0.0)
+        assert len(docs) == 1, f"Očekáván 1 active primary doc, ale je {len(docs)}"
+        assert docs[0].metadata["product_name"] == "AKTIVNÍ účet"
+        assert docs[0].metadata["fee_type"] == "1. Cena tarifu"
+        debug = docs[0].metadata.get("retrieval_debug", {})
+        assert debug.get("primary_account_fee_filter") == "true"
+        assert debug.get("archived_fallback_used") is None
+    finally:
+        pricing_retriever.config.PRICING_ROWS_PATH = original
+        pricing_retriever.load_pricing_rows.cache_clear()
+
+
+def test_archived_primary_fallback_when_no_active_primary(tmp_path):
+    """When NO active primary rows exist, archived primary rows should be returned."""
+    path = tmp_path / "pricing_rows.jsonl"
+    active_non_primary = {
+        "product_name": "AKTIVNÍ účet",
+        "fee_type": "4. Vedení každé vedlejší měnové složky účtu 3)",
+        "fee_value": "v ceně",
+        "currency": "",
+        "period": "",
+        "conditions": "",
+        "source_url": "https://www.rb.cz/cenik.pdf",
+        "source_file": "cenik.pdf",
+        "page": 1,
+        "table_index": 0,
+        "row_index": 1,
+        "title": "1. část Aktuálně nabízené produkty",
+        "category": "retail",
+        "document_type": "pricing",
+        "pricing_type": "account_fee",
+        "confidence": 0.95,
+    }
+    archived_primary = {
+        "product_name": "eKonto (archiv)",
+        "fee_type": "1. Vedení jednoho běžného účtu",
+        "fee_value": "250 Kč",
+        "currency": "CZK",
+        "period": "měsíčně",
+        "conditions": "",
+        "source_url": "https://www.rb.cz/cenik.pdf",
+        "source_file": "cenik.pdf",
+        "page": 2,
+        "table_index": 0,
+        "row_index": 1,
+        "title": "2. část Již nenabízené produkty",
+        "category": "retail",
+        "document_type": "pricing",
+        "pricing_type": "account_fee",
+        "confidence": 0.95,
+    }
+    rows = [active_non_primary, archived_primary]
+    path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows), encoding="utf-8")
+    pricing_retriever.load_pricing_rows.cache_clear()
+    original = pricing_retriever.config.PRICING_ROWS_PATH
+    pricing_retriever.config.PRICING_ROWS_PATH = path
+    try:
+        docs = pricing_retriever.pricing_search("Jaký je poplatek za vedení běžného účtu?", top_k=5, min_score=0.0)
+        assert len(docs) == 1, f"Očekáván 1 archived primary doc, ale je {len(docs)}"
+        assert docs[0].metadata["product_name"] == "eKonto (archiv)"
+        assert docs[0].metadata["fee_type"] == "1. Vedení jednoho běžného účtu"
+        debug = docs[0].metadata.get("retrieval_debug", {})
+        assert debug.get("primary_account_fee_filter") == "true"
+        assert debug.get("archived_fallback_used") == "true"
     finally:
         pricing_retriever.config.PRICING_ROWS_PATH = original
         pricing_retriever.load_pricing_rows.cache_clear()

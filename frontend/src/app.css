@@ -1,0 +1,68 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+	*,
+	*::before,
+	*::after {
+		@apply border-surface-border dark:border-dark-border;
+	}
+
+	html {
+		@apply scroll-smooth;
+	}
+
+	body {
+		@apply min-h-screen;
+	}
+
+	/* Custom scrollbar */
+	::-webkit-scrollbar {
+		width: 6px;
+		height: 6px;
+	}
+
+	::-webkit-scrollbar-track {
+		@apply bg-transparent;
+	}
+
+	::-webkit-scrollbar-thumb {
+		@apply rounded-full bg-gray-300 dark:bg-gray-700;
+	}
+
+	::-webkit-scrollbar-thumb:hover {
+		@apply bg-gray-400 dark:bg-gray-600;
+	}
+
+	/* Focus ring */
+	*:focus-visible {
+		@apply outline-none ring-2 ring-rb-400 ring-offset-2 ring-offset-white dark:ring-offset-dark-bg;
+	}
+
+	/* Selection */
+	::selection {
+		@apply bg-rb-200/60 dark:bg-rb-800/40;
+	}
+}
+
+@layer components {
+	.prose-custom {
+		@apply prose prose-sm max-w-none
+			prose-headings:text-gray-900 prose-headings:font-semibold
+			prose-p:text-gray-700 prose-p:leading-relaxed
+			prose-a:text-rb-600 prose-a:no-underline hover:prose-a:underline
+			prose-strong:text-gray-900 prose-strong:font-semibold
+			prose-code:text-gray-900 prose-code:bg-gray-100 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-sm prose-code:font-mono
+			prose-pre:bg-gray-900 prose-pre:text-gray-100 prose-pre:rounded-xl prose-pre:border prose-pre:border-gray-800
+			prose-li:text-gray-700
+			prose-blockquote:border-l-rb-400 prose-blockquote:text-gray-600
+			dark:prose-headings:text-dark-text
+			dark:prose-p:text-gray-300
+			dark:prose-strong:text-dark-text
+			dark:prose-code:text-dark-text dark:prose-code:bg-gray-800
+			dark:prose-pre:bg-gray-950 dark:prose-pre:border-gray-800
+			dark:prose-li:text-gray-300
+			dark:prose-blockquote:text-gray-400;
+	}
+}

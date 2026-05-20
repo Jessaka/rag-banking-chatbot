@@ -290,56 +290,77 @@ def pricing_search(query: str, top_k: int = 5, min_score: float = 0.5) -> list[D
     profile = classify_query(query)
     if "pricing" not in profile.labels:
         return []
-    scored: list[tuple[dict, float, list[str]]] = []
+    all_scored: list[tuple[dict, float, list[str]]] = []
     for row in load_pricing_rows():
         score, reasons = _score_row(row, query, profile)
         if score >= min_score:
-            scored.append((row, score, reasons))
+            all_scored.append((row, score, reasons))
 
-    # --- Primary account fee filter -----------------------------------------
-    # If the user explicitly asks about *primary* account fees, restrict to
-    # primary rows only.  Non-primary rows (multicurrency, MEK, BIU, card,
-    # etc.) are dropped BEFORE archive filtering so that archived primary
-    # rows can still be shown as a last resort.
     debug: dict[str, str | int] = {}
-    primary_rows: list[tuple[dict, float, list[str]]] = []
-    if is_primary_account_fee_query(query):
-        primary_rows = [(r, s, rs) for r, s, rs in scored if is_primary_account_fee_row(r)]
-        debug["primary_account_fee_filter"] = "true"
-        debug["primary_rows"] = len(primary_rows)
-        if primary_rows:
-            scored = primary_rows
-            logger.info(f"Primary account fee filter: {len(primary_rows)} primary rows")
-        else:
-            debug["primary_fallback"] = "true"
-            logger.info("Primary account fee filter: 0 primary rows → fallback to general scoring")
 
-    # --- Archive filter ------------------------------------------------------
-    filter_reason: str | None = None
-    if not _is_archive_query(query):
-        active = [(r, s, rs) for r, s, rs in scored if not _is_row_archived(r)]
-        if active:
-            filtered = len(scored) - len(active)
-            if filtered > 0:
-                filter_reason = f"archived_hard_filtered:{filtered}"
-                logger.info(f"PricingRetriever hard filter odstranil {filtered} archived rows")
-                # If this is a primary-filtered set and we lost all primary rows,
-                # signal the fallback.
-                if primary_rows and not any(True for _ in active):
-                    debug["primary_archived_fallback"] = "true"
-            scored = active
-        else:
-            fbk = "archived_hard_filter_fallback:"
-            if primary_rows:
-                fbk += "all_primary_rows_archived"
-                debug["primary_archived_fallback"] = "true"
+    # --- Active / archived split --------------------------------------------
+    active_scored = [(r, s, rs) for r, s, rs in all_scored if not _is_row_archived(r)]
+    archived_scored = [(r, s, rs) for r, s, rs in all_scored if _is_row_archived(r)]
+
+    debug["active_rows_count"] = len(active_scored)
+    debug["archived_rows_count"] = len(archived_scored)
+
+    # --- Helper: apply primary filter to a set ------------------------------
+    def _filter_primary(rows: list[tuple[dict, float, list[str]]]) -> list[tuple[dict, float, list[str]]]:
+        """Return only primary account fee rows when the query asks for them."""
+        if is_primary_account_fee_query(query):
+            primary = [(r, s, rs) for r, s, rs in rows if is_primary_account_fee_row(r)]
+            if primary:
+                debug["primary_account_fee_filter"] = "true"
+                debug["primary_rows"] = len(primary)
+                return primary
             else:
-                fbk += "all_rows_archived"
-            filter_reason = fbk
-            logger.warning(f"PricingRetriever: vše by bylo odfiltrováno → fallback na všechny řádky")
+                debug["primary_fallback"] = "true"
+        return rows
+
+    # --- Phase 1: select best candidate set ----------------------------------
+    # Priority (for non-archive queries):
+    #   A. active + primary  (most precise)
+    #   B. archived + primary (precise, but archived – shown only when no
+    #      active primary rows exist)
+    #   C. active general     (imprecise but active)
+    #   D. archived general   (last resort)
+
+    if _is_archive_query(query):
+        # User explicitly asked for archived → use everything
+        candidate = all_scored
+    else:
+        is_primary = is_primary_account_fee_query(query)
+
+        # Priority A: active + primary
+        candidate = _filter_primary(active_scored)
+        if is_primary and debug.get("primary_account_fee_filter"):
+            debug["active_results_count"] = len(candidate)
+            logger.info(f"Active-primary: {len(candidate)} rows")
+        # Priority B: archived + primary (only when A produced nothing)
+        elif is_primary and not debug.get("primary_account_fee_filter"):
+            candidate = _filter_primary(archived_scored)
+            if debug.get("primary_account_fee_filter"):
+                debug["archived_fallback_used"] = "true"
+                debug["primary_rows"] = len(candidate)
+                logger.info(f"Archived-primary fallback: {len(candidate)} rows")
+            else:
+                # Priority C: active general (no primary at all)
+                candidate = active_scored or archived_scored
+                debug["active_results_count"] = len(candidate)
+                logger.info(f"General fallback (no primary): {len(candidate)} rows")
+        else:
+            # Non-primary query: active first, archived fallback
+            candidate = active_scored or archived_scored
+            if not active_scored and archived_scored:
+                debug["archived_fallback_used"] = "true"
+            debug["active_results_count"] = len(candidate)
+            logger.info(
+                f"{'Active' if active_scored else 'Archived'}-first: {len(candidate)} rows"
+            )
 
     # --- Rank & build docs ---------------------------------------------------
-    ranked = sorted(scored, key=lambda item: item[1], reverse=True)[:top_k]
+    ranked = sorted(candidate, key=lambda item: item[1], reverse=True)[:top_k]
     docs: list[Document] = []
     for row, score, reasons in ranked:
         content = (
@@ -363,8 +384,6 @@ def pricing_search(query: str, top_k: int = 5, min_score: float = 0.5) -> list[D
             "query_labels": sorted(profile.labels),
             "retrieval_debug": debug,
         }
-        if filter_reason:
-            meta["structured_pricing_filter_reason"] = filter_reason
         docs.append(Document(page_content=content, metadata=meta))
     logger.info(f"PricingRetriever: query='{query[:60]}' → {len(docs)} structured rows")
     return docs
