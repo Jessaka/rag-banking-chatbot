@@ -19,14 +19,18 @@ přes asyncio.to_thread(), čímž neblokují event loop FastAPI.
 from __future__ import annotations
 
 import asyncio
+import json
 import time
+import traceback
 import uuid
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 import requests as http_requests
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 import config
@@ -81,6 +85,11 @@ class ChatResponse(BaseModel):
     sources: list[SourceDocument] = Field(description="Zdrojové chunky použité pro odpověď.")
     session_id: str = Field(description="UUID sezení – použijte ho v příštím požadavku.")
     processing_time_ms: float = Field(description="Celková latence (retrieval + LLM) v ms.")
+    request_id: str | None = Field(None, description="Correlation ID requestu pro logy/eval debugging.")
+    answer_strategy: str | None = Field(None, description="Strategie odpovědi/debug informace.")
+    error: str | None = Field(None, description="Chybová zpráva pouze v debug/error odpovědích.")
+    traceback: str | None = Field(None, description="Traceback pouze pokud DEBUG_API_ERRORS=true.")
+    retrieval_debug: Any | None = Field(None, description="Debug retrievalu pouze pro eval/debug odpovědi.")
 
 
 class ComponentStatus(BaseModel):
@@ -94,8 +103,7 @@ class HealthResponse(BaseModel):
     )
     qdrant: ComponentStatus
     ollama: ComponentStatus = Field(
-        description="Stav Ollama – vždy kontroluje embedding model; "
-                    "LLM model jen pokud LLM_BACKEND='ollama'."
+        description="Stav Ollama – kontroluje jen modely potřebné pro aktivní LLM/embedding backend."
     )
     bm25_index: ComponentStatus
     anthropic: ComponentStatus | None = Field(
@@ -113,7 +121,7 @@ class CollectionInfo(BaseModel):
     points_count: int = Field(description="Celkový počet bodů (chunků) v kolekci.")
     indexed_vectors_count: int = Field(description="Počet plně indexovaných vektorů.")
     status: str = Field(description="Stav kolekce: green | yellow | grey.")
-    vector_size: int = Field(description="Dimenze embeddingů (nomic-embed-text = 768).")
+    vector_size: int = Field(description="Dimenze embeddingů podle backendu: Ollama 768, OpenAI text-embedding-3-small 1536.")
     distance_metric: str = Field(description="Metrika vzdálenosti: Cosine | Dot | Euclid.")
 
 
@@ -176,6 +184,100 @@ def _get_or_create_session(
     return session_id, _sessions[session_id][0], _session_locks[session_id]
 
 
+def _serialize_sources(raw_sources: list[Any]) -> list[SourceDocument]:
+    sources: list[SourceDocument] = []
+    for doc in raw_sources:
+        if isinstance(doc, dict):
+            metadata = doc.get("metadata", doc)
+            page_content = doc.get("page_content", "")
+        else:
+            metadata = getattr(doc, "metadata", {}) or {}
+            page_content = getattr(doc, "page_content", "")
+
+        file_name = metadata.get("file_name") or metadata.get("source_file") or metadata.get("title") or "neznámý"
+        rerank_score = metadata.get("rerank_score")
+        sources.append(
+            SourceDocument(
+                file_name=file_name,
+                page=metadata.get("page"),
+                chunk_id=metadata.get("chunk_id"),
+                rerank_score=round(rerank_score, 4) if rerank_score is not None else None,
+                preview=page_content[:500],
+            )
+        )
+    return sources
+
+
+def _source_debug(raw_sources: list[Any]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for doc in raw_sources[:5]:
+        if isinstance(doc, dict):
+            metadata = doc.get("metadata", doc)
+            page_content = doc.get("page_content", "")
+        else:
+            metadata = getattr(doc, "metadata", {}) or {}
+            page_content = getattr(doc, "page_content", "")
+        out.append({
+            "metadata": metadata,
+            "preview": page_content[:500],
+        })
+    return out
+
+
+def _write_error_log(payload: dict[str, Any]) -> None:
+    try:
+        config.ERROR_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with config.ERROR_LOG_PATH.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception as log_exc:
+        logger.error(f"Nelze zapsat error log: {log_exc}")
+
+
+def _internal_error_response(
+    *,
+    request_id: str,
+    session_id: str,
+    question: str,
+    exc: Exception,
+    elapsed_ms: float,
+    partial_result: dict[str, Any] | None = None,
+) -> JSONResponse:
+    tb = traceback.format_exc()
+    partial_result = partial_result or {}
+    raw_sources = partial_result.get("sources", []) or []
+    retrieval_debug = partial_result.get("retrieval_debug", []) or []
+    answer_strategy = partial_result.get("answer_strategy") or "internal_error"
+    payload_for_log = {
+        "timestamp": datetime.now(UTC).isoformat(timespec="seconds"),
+        "request_id": request_id,
+        "session_id": session_id,
+        "query": question,
+        "error": str(exc),
+        "traceback": tb,
+        "answer_strategy": answer_strategy,
+        "retrieval_debug": retrieval_debug,
+        "sources": _source_debug(raw_sources),
+        "pricing_retriever_result": partial_result.get("pricing_retriever_result"),
+        "hybrid_candidates": partial_result.get("hybrid_candidates"),
+    }
+    _write_error_log(payload_for_log)
+
+    content = {
+        "answer": "Došlo k interní chybě při zpracování dotazu.",
+        "error": str(exc),
+        "traceback": tb if config.DEBUG_API_ERRORS else None,
+        "answer_strategy": "internal_error",
+        "retrieval_debug": retrieval_debug if config.DEBUG_API_ERRORS else None,
+        "sources": [s.model_dump() if hasattr(s, "model_dump") else s.dict() for s in _serialize_sources(raw_sources)] if config.DEBUG_API_ERRORS else [],
+        "request_id": request_id,
+        "session_id": session_id,
+        "processing_time_ms": round(elapsed_ms, 1),
+        "pricing_retriever_result": partial_result.get("pricing_retriever_result") if config.DEBUG_API_ERRORS else None,
+        "hybrid_candidates": partial_result.get("hybrid_candidates") if config.DEBUG_API_ERRORS else None,
+    }
+    return JSONResponse(status_code=500, content=content)
+
+
 # ---------------------------------------------------------------------------
 # Health check – pomocné funkce (synchronní, volají se přes to_thread)
 # ---------------------------------------------------------------------------
@@ -214,9 +316,9 @@ def _check_qdrant() -> ComponentStatus:
 
 def _check_ollama() -> ComponentStatus:
     """
-    Zkontroluje Ollama:
-      - Vždy ověří embedding model (nomic-embed-text) – ten je potřeba vždy.
-      - LLM model ověří pouze pokud LLM_BACKEND == 'ollama'.
+    Zkontroluje Ollama modely potřebné pro aktivní konfiguraci:
+      - embedding model pouze pokud EMBEDDING_BACKEND == 'ollama'
+      - LLM model pouze pokud LLM_BACKEND == 'ollama'
     """
     try:
         resp = http_requests.get(
@@ -229,10 +331,14 @@ def _check_ollama() -> ComponentStatus:
         def _model_present(name: str) -> bool:
             return any(tag == name or tag.startswith(f"{name}:") for tag in available)
 
-        # Embedding model je vždy potřeba; LLM jen při ollama backendu
-        required = [config.EMBED_MODEL]
+        required = []
+        if config.EMBEDDING_BACKEND == "ollama":
+            required.append(config.EMBED_MODEL)
         if config.LLM_BACKEND == "ollama":
             required.append(config.LLM_MODEL)
+
+        if not required:
+            return ComponentStatus(status="ok", detail="Ollama není potřeba pro aktivní LLM/embedding backend")
 
         missing = [m for m in required if not _model_present(m)]
         if missing:
@@ -244,7 +350,12 @@ def _check_ollama() -> ComponentStatus:
                 ),
             )
 
-        scope = "LLM + embeddings" if config.LLM_BACKEND == "ollama" else "embeddings"
+        scope_parts = []
+        if config.LLM_BACKEND == "ollama":
+            scope_parts.append("LLM")
+        if config.EMBEDDING_BACKEND == "ollama":
+            scope_parts.append("embeddings")
+        scope = " + ".join(scope_parts)
         return ComponentStatus(
             status="ok",
             detail=f"{scope} OK: {available}",
@@ -464,6 +575,8 @@ app.add_middleware(
 )
 async def chat(request: ChatRequest) -> ChatResponse:
     t_start = time.perf_counter()
+    request_id = str(uuid.uuid4())
+    partial_result: dict[str, Any] | None = None
 
     # Získání / vytvoření sezení
     try:
@@ -478,33 +591,43 @@ async def chat(request: ChatRequest) -> ChatResponse:
     async with lock:
         try:
             result: dict = await asyncio.to_thread(chain.ask, request.question)
+            partial_result = result
         except Exception as exc:
-            logger.error(f"[{session_id[:8]}] Chain error: {exc}", exc_info=True)
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Chyba při generování odpovědi: {exc}",
+            elapsed_ms = (time.perf_counter() - t_start) * 1000
+            logger.error(f"[{request_id}] [{session_id[:8]}] Chain error: {exc}", exc_info=True)
+            return _internal_error_response(
+                request_id=request_id,
+                session_id=session_id,
+                question=request.question,
+                exc=exc,
+                elapsed_ms=elapsed_ms,
+                partial_result=partial_result,
             )
 
     elapsed_ms = (time.perf_counter() - t_start) * 1000
 
-    sources = [
-        SourceDocument(
-            file_name=doc.metadata.get("file_name", "neznámý"),
-            page=doc.metadata.get("page"),
-            chunk_id=doc.metadata.get("chunk_id"),
-            rerank_score=round(doc.metadata["rerank_score"], 4)
-            if "rerank_score" in doc.metadata
-            else None,
-            preview=doc.page_content[:300],
+    try:
+        sources = _serialize_sources(result.get("sources", []))
+    except Exception as exc:
+        elapsed_ms = (time.perf_counter() - t_start) * 1000
+        logger.error(f"[{request_id}] [{session_id[:8]}] Source serialization error: {exc}", exc_info=True)
+        return _internal_error_response(
+            request_id=request_id,
+            session_id=session_id,
+            question=request.question,
+            exc=exc,
+            elapsed_ms=elapsed_ms,
+            partial_result=result,
         )
-        for doc in result.get("sources", [])
-    ]
 
     return ChatResponse(
         answer=result["answer"],
         sources=sources,
         session_id=session_id,
         processing_time_ms=round(elapsed_ms, 1),
+        request_id=request_id,
+        answer_strategy=result.get("answer_strategy"),
+        retrieval_debug=result.get("retrieval_debug") if config.DEBUG_API_ERRORS else None,
     )
 
 

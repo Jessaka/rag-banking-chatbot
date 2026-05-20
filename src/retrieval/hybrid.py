@@ -15,12 +15,13 @@ Výhoda hybridního přístupu:
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 
 from langchain_core.documents import Document
 
 import config
 from src.retrieval.bm25_retriever import bm25_search
+from src.retrieval.query_classifier import QueryProfile, classify_query, expand_query, freshness_priority, is_archived_doc, is_corporate_doc, is_personal_retail_doc, is_retail_doc, source_priority
 from src.retrieval.vector_retriever import vector_search
 from src.utils.logger import get_logger
 
@@ -42,6 +43,8 @@ def hybrid_search(
     top_k: int = config.HYBRID_TOP_K,
     bm25_weight: float = 0.4,
     vector_weight: float = 0.6,
+    metadata_filters: dict | None = None,
+    query_profile: QueryProfile | None = None,
 ) -> list[Document]:
     """
     Hybridní vyhledávání s RRF fúzí.
@@ -55,9 +58,34 @@ def hybrid_search(
     Returns:
         Seřazený seznam Document objektů s metadatem `hybrid_score`.
     """
+    query_profile = query_profile or classify_query(query)
+    expanded_query = expand_query(query, query_profile)
+    bm25_weight = query_profile.bm25_weight if bm25_weight == 0.4 else bm25_weight
+    vector_weight = query_profile.vector_weight if vector_weight == 0.6 else vector_weight
+
     # Paralelní dotazy na oba retrievery
-    bm25_results = bm25_search(query, top_k=config.BM25_TOP_K)
-    vector_results = vector_search(query, top_k=config.VECTOR_TOP_K)
+    bm25_results = bm25_search(expanded_query, top_k=config.BM25_TOP_K, metadata_filters=metadata_filters)
+    try:
+        vector_results = vector_search(expanded_query, top_k=config.VECTOR_TOP_K, metadata_filters=metadata_filters)
+    except Exception as exc:
+        vector_results = []
+        logger.warning(f"Vector retrieval selhal, pokračuji BM25-only fallbackem: {exc}")
+
+    pricing_row_bm25: list[Document] = []
+    pricing_row_vector: list[Document] = []
+    if "pricing" in query_profile.labels:
+        row_filter = {**(metadata_filters or {}), "chunk_type": "pricing_row"}
+        pricing_row_bm25 = bm25_search(expanded_query, top_k=min(config.BM25_TOP_K, 30), metadata_filters=row_filter)
+        try:
+            pricing_row_vector = vector_search(expanded_query, top_k=min(config.VECTOR_TOP_K, 30), metadata_filters=row_filter)
+        except Exception as exc:
+            logger.warning(f"Pricing_row vector fallback selhal, pokračuji s BM25 rows: {exc}")
+        bm25_results = pricing_row_bm25 + bm25_results
+        vector_results = pricing_row_vector + vector_results
+        logger.info(
+            f"Pricing_row recall: bm25={len(pricing_row_bm25)}, qdrant={len(pricing_row_vector)}, "
+            f"expanded_query='{expanded_query[:140]}'"
+        )
 
     # Mapa chunk_id → (Document, rrf_score)
     scores: dict[str, tuple[Document, float]] = {}
@@ -85,8 +113,66 @@ def hybrid_search(
         else:
             scores[key] = (doc, contribution)
 
-    # Seřadíme podle RRF skóre
-    ranked = sorted(scores.values(), key=lambda x: x[1], reverse=True)
+    # Metadata-aware boosting/penalizace nad RRF skóre.
+    boosted: list[tuple[Document, float]] = []
+    for doc, base_score in (item for item in scores.values()):
+        metadata_boost, reasons = source_priority(doc, query_profile)
+        freshness_score, archived_penalty, _freshness_reasons = freshness_priority(doc, query_profile)
+        final_score = base_score + metadata_boost
+        boosted.append((
+            Document(
+                page_content=doc.page_content,
+                metadata={
+                    **doc.metadata,
+                    "hybrid_base_score": round(base_score, 6),
+                    "metadata_boost": round(metadata_boost, 6),
+                    "freshness_score": round(freshness_score, 6),
+                    "archived_penalty": round(archived_penalty, 6),
+                    "retrieval_reasons": reasons,
+                    "query_labels": sorted(query_profile.labels),
+                },
+            ),
+            final_score,
+        ))
+
+    # Seřadíme podle boosted skóre
+    ranked = sorted(boosted, key=lambda x: x[1], reverse=True)
+
+    pricing_row_candidates = [(doc, score) for doc, score in ranked if doc.metadata.get("chunk_type") == "pricing_row"]
+    logger.info(
+        "Hybrid candidate types: "
+        + ", ".join(
+            f"{chunk_type}:{count}"
+            for chunk_type, count in Counter(doc.metadata.get("chunk_type", "unknown") for doc, _ in ranked).most_common(8)
+        )
+        + f" | pricing_row_found={len(pricing_row_candidates)}"
+        + (
+            " | pricing_row_scores=" + ", ".join(f"{score:.4f}" for _doc, score in pricing_row_candidates[:5])
+            if pricing_row_candidates else ""
+        )
+    )
+
+    if "retail_banking" in query_profile.labels and "corporate_banking" not in query_profile.labels:
+        personal_mode = "personal_retail_account" in query_profile.labels
+        def _allowed_retail_doc(doc: Document) -> bool:
+            return is_personal_retail_doc(doc) if personal_mode else (is_retail_doc(doc) and not is_corporate_doc(doc))
+
+        has_retail = any(_allowed_retail_doc(doc) for doc, _score in ranked)
+        if has_retail:
+            before = len(ranked)
+            if "cards" not in query_profile.labels and "mortgages" not in query_profile.labels:
+                ranked = [(doc, score) for doc, score in ranked if _allowed_retail_doc(doc)]
+                logger.info(f"Retail hard filter: ponechány pouze {'personal retail' if personal_mode else 'retail/account'} kandidáti {before} → {len(ranked)}")
+            else:
+                ranked = [(doc, score) for doc, score in ranked if not is_corporate_doc(doc)]
+                logger.info(f"Retail hard filter: corporate kandidáti odfiltrováni {before} → {len(ranked)}")
+
+    if "pricing" in query_profile.labels and "archived_requested" not in query_profile.labels:
+        active_ranked = [(doc, score) for doc, score in ranked if not is_archived_doc(doc)]
+        if active_ranked:
+            before = len(ranked)
+            ranked = active_ranked
+            logger.info(f"Freshness hard filter: archived/discontinued pricing vyřazeno {before} → {len(ranked)}")
 
     # Deduplication: max MAX_CHUNKS_PER_SOURCE chunků z jednoho zdrojového souboru.
     # Bez tohoto může jeden soubor s mnoha podobnými chunky (napr. 516 chunků
@@ -95,7 +181,7 @@ def hybrid_search(
     source_counts: dict[str, int] = defaultdict(int)
     results = []
     for doc, score in ranked:
-        source = doc.metadata.get("file_name", "")
+        source = doc.metadata.get("source_url") or doc.metadata.get("url") or doc.metadata.get("file_name", "")
         if source_counts[source] >= MAX_CHUNKS_PER_SOURCE:
             continue
         source_counts[source] += 1

@@ -47,11 +47,73 @@
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
+### Enterprise rb.cz RAG Pipeline
+
+Nová enterprise pipeline rozšiřuje původní PDF-only ingestion o plný structured crawl webu rb.cz:
+
+```text
+rb.cz sitemap + internal links
+  └─ scripts/crawl_rb.py --depth N
+       ├─ data/crawl/raw_html/*.html
+       └─ data/crawl/structured/*.json + *.md
+
+rb.cz PDF dokumenty
+  └─ scripts/download_documents.py --category pricing|mortgages|cards
+       ├─ data/documents/*.pdf
+       └─ data/documents/metadata.jsonl
+
+Enterprise ingestion
+  └─ scripts/ingest.py --enterprise --full
+       ├─ structured JSON sections / FAQ / tables / cards
+       ├─ PDF text + PDF tables via PyMuPDF/pdfplumber
+       ├─ semantic chunks with metadata
+       ├─ Qdrant dense vectors
+       └─ BM25 sparse index
+```
+
+Structured page JSON schema:
+
+```json
+{
+  "url": "https://www.rb.cz/...",
+  "title": "Page title",
+  "sections": [],
+  "tables": [],
+  "faq": [],
+  "metadata": {
+    "source_type": "web",
+    "document_type": "product_page|pricing|terms|faq|article",
+    "category": "accounts|cards|mortgages|loans|pricing|...",
+    "canonical_url": "https://www.rb.cz/...",
+    "content_hash": "sha256",
+    "pricing_detected": false
+  }
+}
+```
+
+Every indexed chunk carries at least:
+
+```text
+source_url, title, section_title, source_type, document_type,
+page, category, chunk_type, chunk_id, content_hash, char_count
+```
+
+Chunk types include:
+
+- `section_text`
+- `faq`
+- `table`
+- `pricing`
+- `pdf_text`
+- `pdf_table`
+
+Pricing detection marks chunks/documents as `document_type=pricing` when content contains terms such as `sazebník`, `ceník`, `fee`, `price`, `poplatek`, `Kč`, `zdarma`, `měsíčně`.
+
 ### Component Overview
 
 | Component | Technology | Purpose |
 |---|---|---|
-| **Embeddings** | nomic-embed-text (Ollama) | 768-dim dense vectors |
+| **Embeddings** | Ollama `nomic-embed-text` or OpenAI `text-embedding-3-small` | 768 or 1536-dim dense vectors |
 | **Vector DB** | Qdrant | Dense retrieval with cosine similarity |
 | **Sparse retrieval** | BM25 (rank-bm25) | Exact keyword matching |
 | **Fusion** | Reciprocal Rank Fusion | Combines dense + sparse rankings |
@@ -71,9 +133,9 @@
 ### Prerequisites
 
 ```bash
-# 1. Ollama — local LLM inference and embeddings
+# 1. Ollama — local LLM inference and optional local embeddings
 curl -fsSL https://ollama.com/install.sh | sh
-ollama pull nomic-embed-text   # required for all backends
+ollama pull nomic-embed-text   # required only when EMBEDDING_BACKEND=ollama
 ollama pull llama3.2           # required only for LLM_BACKEND=ollama
 
 # 2. Qdrant — vector database
@@ -110,6 +172,27 @@ python scripts/ingest.py
 # Re-index existing PDFs without re-downloading
 python scripts/ingest.py --skip-download
 ```
+
+### Enterprise crawl + ingest
+
+```bash
+# 1. Structured crawl rb.cz webu
+python3 scripts/crawl_rb.py --max-pages 200 --depth 2
+
+# 2. PDF sazebníky/ceníky/podmínky
+python3 scripts/download_documents.py --category pricing
+python3 scripts/download_documents.py --category mortgages
+python3 scripts/download_documents.py --category cards
+
+# 3. Full enterprise ingest do Qdrant + BM25
+python3 scripts/ingest.py --enterprise --full --chunk-size 1100 --chunk-overlap 150
+
+# 4. Dataset diagnostics
+python3 scripts/debug_dataset.py
+```
+
+> Playwright crawler requires Chromium. On unsupported systems use the official image
+> `mcr.microsoft.com/playwright/python:v1.44.0-jammy` or a supported Ubuntu/macOS/Windows host.
 
 ### Chat
 
@@ -299,6 +382,9 @@ rag-banking-chatbot/
 ├── .env.example                 # Template — copy to .env
 │
 ├── scripts/
+│   ├── crawl_rb.py              # Playwright structured crawler: HTML → JSON/MD
+│   ├── download_documents.py    # PDF downloader for sazebníky/ceníky/podmínky
+│   ├── debug_dataset.py         # Dataset/chunk diagnostics
 │   ├── scrape_rb.py             # Sitemap-driven web scraper for rb.cz
 │   ├── ingest.py                # Ingestion pipeline CLI
 │   ├── chat.py                  # Interactive terminal chatbot
@@ -306,6 +392,7 @@ rag-banking-chatbot/
 │
 ├── src/
 │   ├── ingestion/
+│   │   ├── enterprise.py        # Structured/PDF semantic loaders + chunking
 │   │   ├── downloader.py        # HTTP downloader with retry + idempotency
 │   │   ├── parser.py            # PDF text extraction (PyMuPDF + pdfplumber)
 │   │   ├── chunker.py           # RecursiveCharacterTextSplitter + chunk IDs
@@ -330,6 +417,10 @@ rag-banking-chatbot/
 │       └── logger.py            # Rich-formatted logger
 │
 └── data/
+    ├── crawl/
+    │   ├── raw_html/            # Audit HTML from Playwright crawler
+    │   └── structured/          # One JSON + Markdown export per URL
+    ├── documents/               # PDF documents + metadata.jsonl
     ├── raw/                     # Downloaded PDFs + extracted FAQ .txt files
     ├── indexes/                 # BM25 index + document store (pickle)
     └── sources.txt              # Auto-generated PDF URL list (scraper output)
@@ -343,7 +434,12 @@ rag-banking-chatbot/
 |---|---|---|
 | `LLM_BACKEND` | `ollama` | LLM provider: `ollama` \| `anthropic` \| `gemini` |
 | `LLM_MODEL` | `llama3.2` | Ollama model name (ollama backend only) |
-| `EMBED_MODEL` | `nomic-embed-text` | Embedding model (always via Ollama) |
+| `EMBEDDING_BACKEND` | `ollama` | Embedding provider: `ollama` \| `openai` |
+| `EMBED_MODEL` | `nomic-embed-text` | Ollama embedding model when `EMBEDDING_BACKEND=ollama` |
+| `OPENAI_API_KEY` | — | OpenAI API key when `EMBEDDING_BACKEND=openai` |
+| `OPENAI_EMBED_MODEL` | `text-embedding-3-small` | OpenAI embedding model; default is 1536 dimensions |
+| `OPENAI_EMBED_BATCH_SIZE` | `16` | Max chunks per OpenAI embedding request; also capped by estimated token count |
+| `OPENAI_EMBED_SLEEP_MS` | `250` | Sleep between OpenAI embedding requests to reduce TPM/RPM pressure |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama API endpoint |
 | `ANTHROPIC_API_KEY` | — | Anthropic API key (anthropic backend) |
 | `ANTHROPIC_MODEL` | `claude-haiku-4-5-20251001` | Anthropic model ID |
@@ -404,7 +500,46 @@ pip install streamlit
 
 **Swap the embedding model**
 
-Update `EMBED_MODEL` and `QDRANT_VECTOR_SIZE` in config, then re-run `scripts/ingest.py` to rebuild the index.
+For local embeddings keep:
+
+```bash
+EMBEDDING_BACKEND=ollama
+EMBED_MODEL=nomic-embed-text       # 768 dimensions
+```
+
+For OpenAI embeddings:
+
+```bash
+EMBEDDING_BACKEND=openai
+OPENAI_API_KEY=sk-...
+OPENAI_EMBED_MODEL=text-embedding-3-small  # 1536 dimensions
+```
+
+After changing embedding backend/model, rebuild Qdrant with `--full` so the collection is recreated with the correct vector dimension:
+
+```bash
+python3 scripts/ingest.py --enterprise --full
+```
+
+If an OpenAI embedding run is interrupted or rate-limited, resume without recreating Qdrant:
+
+```bash
+python3 scripts/ingest.py --enterprise --full --resume
+```
+
+---
+
+## Production Deployment Recommendations
+
+- Run crawling as a scheduled batch job, not inside the chat API process.
+- Use a supported Playwright runtime, preferably Docker image `mcr.microsoft.com/playwright/python:v1.44.0-jammy` or newer supported equivalent.
+- Keep raw HTML and structured JSON as immutable audit artifacts with timestamps and content hashes.
+- Run `scripts/debug_dataset.py` after every crawl/ingest and alert on drops in URL/PDF/chunk counts.
+- Use `scripts/ingest.py --enterprise --full` for planned rebuilds; use incremental mode for daily deltas only after validating chunk IDs.
+- Back up Qdrant storage and `data/indexes/*.pkl` together so dense and BM25 indexes stay in sync.
+- For pricing/legal answers, require citations and prefer `document_type=pricing` and `chunk_type=pricing|table|pdf_table` retrieval filters.
+- Do not expose crawler endpoints publicly; treat crawled content as untrusted data to mitigate prompt injection.
+- Version prompts, crawler code, chunking parameters and crawl manifests together for reproducible answers.
 
 ---
 

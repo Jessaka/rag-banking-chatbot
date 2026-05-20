@@ -13,6 +13,8 @@ Konverzační mód: query rewriting + paměť posledních N zpráv
 from __future__ import annotations
 
 import time
+import re
+from pathlib import Path
 
 from langchain_core.documents import Document
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
@@ -29,6 +31,180 @@ from src.retrieval.retriever import BankingRetriever
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+NO_ANSWER_MARKERS = (
+    "nenalezl jsem",
+    "nenašel jsem",
+    "kontaktujte zákaznickou linku",
+    "kontaktujte podporu",
+)
+
+
+def _extract_fee_value_from_text(text: str) -> str:
+    patterns = (
+        r"\bzdarma\b",
+        r"\b\d+[\s\d]*(?:[,.]\d+)?\s*(?:Kč|CZK)(?:\s*(?:měsíčně|mesicne|ročně|rocne|za\s+\w+))?",
+        r"\b\d+[,.]?\d*\s*%",
+        r"\b\d+[\s\d]*(?:[,.]\d+)?\s*(?:měsíčně|mesicne|ročně|rocne)\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            return match.group(0).strip()
+    return ""
+
+
+def extract_structured_pricing_answer(doc: Document) -> dict | None:
+    """Extract a deterministic answer from an atomic pricing_row chunk."""
+    md = doc.metadata
+    if md.get("chunk_type") != "pricing_row":
+        return None
+    if str(md.get("chunk_quality") or "ok").lower() == "bad_table_row":
+        return None
+
+    product_name = str(md.get("product_name") or "").strip()
+    fee_type = str(md.get("fee_type") or "").strip()
+    fee_value = str(md.get("fee_value") or "").strip() or _extract_fee_value_from_text(doc.page_content)
+    if not product_name or not (fee_type or fee_value):
+        return None
+
+    source_url = str(md.get("source_url") or md.get("url") or "").strip()
+    file_name = str(md.get("file_name") or md.get("source_file") or Path(source_url).name or md.get("title") or "zdroj").strip()
+    page = md.get("page")
+    return {
+        "product_name": product_name,
+        "fee_type": fee_type or "Poplatek",
+        "fee_value": fee_value,
+        "period": str(md.get("period") or "").strip(),
+        "source_url": source_url,
+        "source_label": file_name,
+        "title": str(md.get("title") or "Ceník Raiffeisenbank").strip(),
+        "page": page,
+    }
+
+
+def _pricing_row_confidence_high(doc: Document) -> bool:
+    if doc.metadata.get("chunk_type") != "pricing_row":
+        return False
+    if str(doc.metadata.get("chunk_quality") or "ok").lower() == "bad_table_row":
+        return False
+    if doc.metadata.get("structured_pricing"):
+        try:
+            if float(doc.metadata.get("confidence", 0.0)) < 0.70:
+                return False
+        except Exception:
+            return False
+    if not extract_structured_pricing_answer(doc):
+        return False
+    score = doc.metadata.get("rerank_score")
+    try:
+        return score is None or float(score) >= max(0.0, config.RERANK_MIN_SCORE)
+    except Exception:
+        return True
+
+
+def _format_structured_pricing_answer(data: dict) -> str:
+    page = f", str. {data['page']}" if data.get("page") else ""
+    fee_line = f"{data['fee_type']}: {data['fee_value']}" if data.get("fee_value") else data["fee_type"]
+    return (
+        f"Produkt: {data['product_name']}\n"
+        f"{fee_line}\n"
+        f"Zdroj: {data['source_label']}{page}"
+        + (f"\nURL: {data['source_url']}" if data.get("source_url") else "")
+    )
+
+
+def _structured_pricing_docs(source_docs: list[Document]) -> list[Document]:
+    return [
+        doc for doc in source_docs
+        if doc.metadata.get("structured_pricing") is True and _pricing_row_confidence_high(doc)
+    ]
+
+
+def _clean_fee_label(label: str) -> str:
+    label = re.sub(r"^\s*\d+(?:\.\d+)*\.?\s*", "", label or "").strip()
+    label = re.sub(r"\s+\d+\)\s*$", "", label).strip()
+    if not label:
+        return "poplatek"
+    return label[:1].lower() + label[1:]
+
+
+def _format_value_with_period(value: str, period: str) -> str:
+    if not period:
+        return value
+    if period.lower() in value.lower():
+        return value
+    return f"{value} {period}"
+
+
+def _source_display_name(data: dict) -> str:
+    title = str(data.get("title") or "").strip()
+    source_label = str(data.get("source_label") or "").strip()
+    if title and title.lower() not in {"nový ceník", "novy cenik", "zde"}:
+        return title
+    if source_label:
+        return "Ceník Raiffeisenbank"
+    return "Ceník Raiffeisenbank"
+
+
+def _minimal_structured_sources(docs: list[Document]) -> list[dict]:
+    seen: set[tuple[str, str, str]] = set()
+    sources: list[dict] = []
+    for doc in docs:
+        data = extract_structured_pricing_answer(doc)
+        if not data:
+            continue
+        key = (data.get("source_label", ""), str(data.get("page") or ""), data.get("source_url", ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        sources.append({
+            "title": _source_display_name(data),
+            "page": data.get("page"),
+            "url": data.get("source_url"),
+        })
+    return sources[:3]
+
+
+def format_structured_pricing_answer(docs: list[Document], max_products: int = 3) -> str:
+    """Clean human formatter for high-confidence structured pricing rows."""
+    grouped: dict[str, list[dict]] = {}
+    ordered_docs: list[Document] = []
+    for doc in docs:
+        data = extract_structured_pricing_answer(doc)
+        if not data:
+            continue
+        product = data["product_name"].strip()
+        if product not in grouped:
+            if len(grouped) >= max_products:
+                continue
+            grouped[product] = []
+        grouped[product].append(data)
+        ordered_docs.append(doc)
+
+    parts: list[str] = []
+    for product, rows in grouped.items():
+        parts.append(f"{product}:")
+        seen_lines: set[str] = set()
+        for row in rows[:3]:
+            line = f"* {_clean_fee_label(row['fee_type'])}: {_format_value_with_period(row['fee_value'], row.get('period', ''))}"
+            if line not in seen_lines:
+                parts.append(line)
+                seen_lines.add(line)
+        parts.append("")
+
+    source_names = []
+    for doc in ordered_docs:
+        data = extract_structured_pricing_answer(doc)
+        if not data:
+            continue
+        name = _source_display_name(data)
+        if name not in source_names:
+            source_names.append(name)
+    if source_names:
+        parts.append("Zdroj:")
+        parts.extend(source_names[:2])
+    return "\n".join(parts).strip()
 
 
 # ---------------------------------------------------------------------------
@@ -424,6 +600,41 @@ class BankingRAGChain:
                 "answer": answer,
                 "sources": [],
                 "rewritten_query": retrieval_query,
+                "retrieval_debug": [],
+                "answer_strategy": "fallback_no_answer",
+                "answer_confidence": "low",
+            }
+
+        top_doc = source_docs[0]
+        structured_docs = _structured_pricing_docs(source_docs)
+        answer_strategy = "generic_llm"
+        answer_confidence = "medium"
+        if top_doc in structured_docs:
+            answer_strategy = "pricing_row_direct"
+            answer_confidence = "high"
+        elif top_doc.metadata.get("chunk_type") in {"table", "pdf_table"} and top_doc.metadata.get("document_type") == "pricing":
+            answer_strategy = "pricing_table_llm"
+        elif top_doc.metadata.get("document_type") == "pricing":
+            answer_strategy = "pricing_section_llm"
+
+        if answer_strategy == "pricing_row_direct" and structured_docs:
+            answer_text = format_structured_pricing_answer(structured_docs, max_products=3)
+            total_ms = (time.perf_counter() - t_ask) * 1000
+            if self.conversational:
+                self.chat_history.append(HumanMessage(content=question))
+                self.chat_history.append(AIMessage(content=answer_text))
+                limit = config.CONVERSATION_HISTORY_LIMIT
+                if len(self.chat_history) > limit * 2:
+                    self.chat_history = self.chat_history[-(limit * 2):]
+            logger.info("Answer strategy: pricing_row_direct (LLM skipped)")
+            return {
+                "answer": answer_text,
+                "sources": _minimal_structured_sources(structured_docs),
+                "rewritten_query": retrieval_query,
+                "answer_strategy": answer_strategy,
+                "answer_confidence": answer_confidence,
+                "retrieval_debug": self._structured_retrieval_debug(structured_docs, answer_strategy),
+                "timing_ms": {"retrieval": round(retrieval_ms), "total": round(total_ms), "llm": 0},
             }
 
         # 3. Formátování kontextu
@@ -452,6 +663,13 @@ class BankingRAGChain:
         answer = self._llm.invoke(messages)
         llm_ms = (time.perf_counter() - t_llm) * 1000
         answer_text = answer if isinstance(answer, str) else str(answer)
+        if answer_strategy.startswith("pricing_") and any(marker in answer_text.lower() for marker in NO_ANSWER_MARKERS):
+            structured_fallback_docs = _structured_pricing_docs(source_docs)
+            if structured_fallback_docs:
+                answer_text = format_structured_pricing_answer(structured_fallback_docs, max_products=3)
+                answer_strategy = "pricing_row_direct"
+                answer_confidence = "high"
+                logger.warning("LLM vrátil fallback apology navzdory pricing_row; použita strukturovaná odpověď")
 
         total_ms = (time.perf_counter() - t_ask) * 1000
 
@@ -473,9 +691,55 @@ class BankingRAGChain:
         )
         return {
             "answer": answer_text,
-            "sources": source_docs,
+            "sources": _minimal_structured_sources(_structured_pricing_docs(source_docs)) if answer_strategy == "pricing_row_direct" else source_docs,
             "rewritten_query": retrieval_query,
+            "answer_strategy": answer_strategy,
+            "answer_confidence": answer_confidence,
+            "retrieval_debug": self._structured_retrieval_debug(_structured_pricing_docs(source_docs), answer_strategy) if answer_strategy == "pricing_row_direct" else self._retrieval_debug(source_docs, answer_strategy),
         }
+
+    def _retrieval_debug(self, source_docs: list[Document], answer_strategy: str) -> list[dict]:
+        return [
+            {
+                "title": doc.metadata.get("title"),
+                "source_url": doc.metadata.get("source_url") or doc.metadata.get("url"),
+                "chunk_type": doc.metadata.get("chunk_type"),
+                "document_type": doc.metadata.get("document_type"),
+                "category": doc.metadata.get("category"),
+                "product_name": doc.metadata.get("product_name"),
+                "fee_type": doc.metadata.get("fee_type"),
+                "fee_value": doc.metadata.get("fee_value"),
+                "chunk_quality": doc.metadata.get("chunk_quality"),
+                "hybrid_score": doc.metadata.get("hybrid_score"),
+                "hybrid_base_score": doc.metadata.get("hybrid_base_score"),
+                "metadata_boost": doc.metadata.get("metadata_boost"),
+                "freshness_score": doc.metadata.get("freshness_score"),
+                "archived_penalty": doc.metadata.get("archived_penalty"),
+                "document_year": doc.metadata.get("document_year"),
+                "document_date": doc.metadata.get("document_date"),
+                "is_archived": doc.metadata.get("is_archived"),
+                "is_discontinued": doc.metadata.get("is_discontinued"),
+                "rerank_score": doc.metadata.get("rerank_score"),
+                "reasons": doc.metadata.get("retrieval_reasons"),
+                "query_labels": doc.metadata.get("query_labels"),
+                "answer_strategy": answer_strategy,
+            }
+            for doc in source_docs
+        ]
+
+    def _structured_retrieval_debug(self, source_docs: list[Document], answer_strategy: str) -> list[dict]:
+        return [
+            {
+                "answer_strategy": answer_strategy,
+                "product_name": doc.metadata.get("product_name"),
+                "fee_type": doc.metadata.get("fee_type"),
+                "fee_value": doc.metadata.get("fee_value"),
+                "confidence": doc.metadata.get("confidence"),
+                "source": doc.metadata.get("source_file") or doc.metadata.get("title"),
+                "page": doc.metadata.get("page"),
+            }
+            for doc in source_docs[:3]
+        ]
 
     def reset_history(self) -> None:
         """Vymaže konverzační historii (nové sezení)."""

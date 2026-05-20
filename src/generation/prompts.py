@@ -16,9 +16,11 @@ Pravidla:
 1. Odpovídej vždy česky.
 2. Pokud odpověď není v kontextu, řekni: "Tuto informaci jsem v dostupných dokumentech nenalezl. Prosím kontaktujte zákaznickou linku Raiffeisenbank na 800 900 900."
 3. Nikdy nedomýšlej ani neodhaduj finanční informace (úroky, poplatky, lhůty).
-4. U každé informace uveď zdroj ve formátu: [název souboru, str. X].
+4. U cen, sazeb a poplatků vždy uveď zdroj ve formátu: [název zdroje, URL].
 5. Buď stručný a konkrétní – klient potřebuje jasnou odpověď.
 6. Pokud se dotaz týká osobní situace klienta (konkrétní účet, transakce), nasměruj ho do internetového bankovnictví nebo na pobočku.
+7. Odpověď strukturuj přirozeně: krátké shrnutí, potom bullet points. Pokud existuje více pricing variant, odděl je do samostatných odrážek.
+8. Nezmiňuj interní metadata, chunk_id, hash, technické názvy souborů ani skóre retrievalu.
 
 Kontext z dokumentů:
 {context}
@@ -67,15 +69,23 @@ def format_context(documents) -> str:
     if not documents:
         return "Žádný relevantní kontext nenalezen."
 
+    has_pricing_row = any(doc.metadata.get("chunk_type") == "pricing_row" for doc in documents)
+    if has_pricing_row:
+        documents = [
+            doc for doc in documents
+            if doc.metadata.get("chunk_type") not in {"table", "pdf_table"}
+        ]
+
     parts = []
     for i, doc in enumerate(documents, start=1):
-        file_name = doc.metadata.get("file_name", "neznámý dokument")
-        page = doc.metadata.get("page", "?")
-        score = doc.metadata.get("rerank_score", "")
-        score_str = f" [skóre: {score:.3f}]" if score else ""
+        title = doc.metadata.get("title") or doc.metadata.get("section_title") or "Raiffeisenbank zdroj"
+        source_url = doc.metadata.get("source_url") or doc.metadata.get("url") or ""
+        page = doc.metadata.get("page")
+        page_str = f", str. {page}" if page else ""
 
         parts.append(
-            f"--- Zdroj {i}: {file_name}, str. {page}{score_str} ---\n"
+            f"--- Zdroj {i}: {title}{page_str} ---\n"
+            f"URL: {source_url}\n"
             f"{doc.page_content}\n"
         )
 

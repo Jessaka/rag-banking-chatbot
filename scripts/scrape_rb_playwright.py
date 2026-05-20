@@ -38,6 +38,8 @@ Požadavky prostředí:
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import re
 import sys
 import time
@@ -187,6 +189,20 @@ _CONTENT_SELECTORS = [
     "app-root",                  # poslední záloha: celý Angular kořen
 ]
 
+# Pricing/product komponenty, které často leží v cards/tabpanech nebo jsou
+# renderované přes Angular mimo hlavní textový tok.
+_PRICING_SELECTORS = [
+    '[class*="price"]',
+    '[class*="tariff"]',
+    '[class*="benefit"]',
+    '[class*="card"]',
+    'mat-expansion-panel',
+    '[role="tabpanel"]',
+    '.product-detail',
+    '.product-box',
+    '.comparison-table',
+]
+
 # Elementy k odstranění před extrakcí – Angular navigace rb.cz
 _REMOVE_SELECTORS = [
     # Angular komponenty navigace
@@ -214,6 +230,17 @@ _SPINNER_SELECTORS = [
     ".rb-spinner", "[data-loading]",
 ]
 
+_NETWORK_DEBUG_KEYWORDS = [
+    "price",
+    "tariff",
+    "fee",
+    "account",
+    "product",
+    "comparison",
+]
+
+_NETWORK_DEBUG_DIR = Path("data/debug/network")
+
 # Minimální délka textu která svědčí o úspěšném načtení obsahu (ne jen navigace)
 _MIN_CONTENT_LENGTH = 300
 
@@ -230,6 +257,8 @@ class ScrapeResult:
     output_path: Path
     success: bool
     error: str = ""
+    kc_count: int = 0
+    expanded_count: int = 0
 
 
 @dataclass
@@ -239,6 +268,83 @@ class ScrapeSummary:
     skipped: int = 0
     failed: int = 0
     results: list[ScrapeResult] = field(default_factory=list)
+
+
+class NetworkDebugCapture:
+    """Zachytává XHR/fetch response a ukládá JSON payloady pro debug."""
+
+    def __init__(self, output_dir: Path = _NETWORK_DEBUG_DIR) -> None:
+        self.output_dir = output_dir
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.pending: set[asyncio.Task] = set()
+        self.counter = 0
+
+    def attach(self, page) -> None:
+        """Připojí async response handler k Playwright page."""
+        page.on("response", lambda response: self._schedule(response))
+
+    def _schedule(self, response) -> None:
+        task = asyncio.create_task(self._handle_response(response))
+        self.pending.add(task)
+        task.add_done_callback(self.pending.discard)
+
+    async def drain(self) -> None:
+        """Počká na doběhnutí rozpracovaných response handlerů."""
+        if self.pending:
+            await asyncio.gather(*list(self.pending), return_exceptions=True)
+
+    async def _handle_response(self, response) -> None:
+        request = response.request
+        if request.resource_type not in {"xhr", "fetch"}:
+            return
+
+        url = response.url
+        content_type = (response.headers.get("content-type") or "").split(";")[0].strip()
+        keyword_hits = [kw for kw in _NETWORK_DEBUG_KEYWORDS if kw in url.lower()]
+
+        body_text = ""
+        json_payload = None
+        json_preview = ""
+        is_json = "json" in content_type.lower()
+
+        try:
+            if is_json:
+                body = await response.body()
+                body_text = body.decode("utf-8", errors="replace")
+                try:
+                    json_payload = json.loads(body_text)
+                    compact = json.dumps(json_payload, ensure_ascii=False, separators=(",", ":"))
+                    json_preview = compact[:800]
+                except Exception:
+                    json_preview = body_text.replace("\n", " ")[:800]
+        except Exception as exc:
+            json_preview = f"<payload read failed: {str(exc)[:120]}>"
+
+        marker = " KEYWORD_MATCH=" + ",".join(keyword_hits) if keyword_hits else ""
+        logger.info(
+            f"[network] {request.resource_type.upper()} {response.status} {url} | "
+            f"content-type={content_type or '-'}{marker} | json_preview={json_preview or '-'}"
+        )
+
+        if not is_json:
+            return
+
+        self.counter += 1
+        url_hash = hashlib.sha1(url.encode("utf-8")).hexdigest()[:10]
+        safe_name = re.sub(r"[^a-zA-Z0-9_.-]+", "_", urlparse(url).path.strip("/") or "root")[:100]
+        filename = f"{self.counter:04d}_{safe_name}_{url_hash}.json"
+        output_path = self.output_dir / filename
+
+        if json_payload is not None:
+            output_path.write_text(
+                json.dumps(json_payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        else:
+            output_path.write_text(body_text, encoding="utf-8")
+
+        if keyword_hits:
+            logger.info(f"[network] JSON uložen: {output_path} (keywords: {', '.join(keyword_hits)})")
 
 
 # ---------------------------------------------------------------------------
@@ -454,24 +560,35 @@ async def _scroll_and_load(page) -> None:
       2. Čeká 500ms na inicializaci Angular komponent
       3. Vrátí scroll na začátek stránky
     """
-    await page.evaluate("""
-        async () => {
-            const scrollStep = 400;
-            const stepDelay = 200;
-            const totalHeight = document.documentElement.scrollHeight;
+    previous_height = 0
+    stable_passes = 0
+    y = 0
+    while stable_passes < 2:
+        height = await page.evaluate("() => document.documentElement.scrollHeight")
+        while y < height:
+            await page.evaluate("y => window.scrollTo({ top: y, behavior: 'instant' })", y)
+            await page.wait_for_timeout(500)
+            await _wait_for_spinners_gone(page, timeout_ms=2_000)
+            y += 500
 
-            for (let y = 0; y < totalHeight; y += scrollStep) {
-                window.scrollTo({ top: y, behavior: 'instant' });
-                await new Promise(r => setTimeout(r, stepDelay));
-            }
-            // Krátká pauza pro dokončení Angular animací
-            await new Promise(r => setTimeout(r, 500));
-            window.scrollTo({ top: 0, behavior: 'instant' });
-        }
-    """)
+        await page.evaluate("() => window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'instant' })")
+        await page.wait_for_timeout(1_000)
+        await _wait_for_spinners_gone(page, timeout_ms=2_000)
+
+        new_height = await page.evaluate("() => document.documentElement.scrollHeight")
+        if new_height <= previous_height:
+            stable_passes += 1
+        else:
+            stable_passes = 0
+            previous_height = new_height
+            height = new_height
+        y = max(0, height - 500)
+
+    await page.evaluate("() => window.scrollTo({ top: 0, behavior: 'instant' })")
+    await page.wait_for_timeout(500)
 
 
-async def _expand_interactive_content(page) -> None:
+async def _expand_interactive_content(page) -> int:
     """
     Expanze interaktivního obsahu Angular Material komponent:
       - Záložky (mat-tab): klikne na každou záložku pro načtení obsahu
@@ -481,6 +598,8 @@ async def _expand_interactive_content(page) -> None:
     Každé kliknutí je obaleno try/except – selhání jednoho prvku
     neblokuje zpracování zbytku stránky.
     """
+    expanded_count = 0
+
     # Angular Material záložky – každá záložka může mít jiný obsah
     tab_selectors = [
         "mat-tab-header button[role='tab']",
@@ -495,7 +614,9 @@ async def _expand_interactive_content(page) -> None:
                 for i in range(count):
                     try:
                         await tabs.nth(i).click(timeout=800)
-                        await page.wait_for_timeout(300)
+                        expanded_count += 1
+                        await page.wait_for_timeout(500)
+                        await _wait_for_spinners_gone(page, timeout_ms=2_000)
                     except Exception:
                         pass
                 break  # Nalezly se záložky, neprobíráme další selektory
@@ -505,6 +626,7 @@ async def _expand_interactive_content(page) -> None:
     # Angular Material expansion panels a HTML5 details
     accordion_selectors = [
         "mat-expansion-panel-header",
+        "mat-expansion-panel:not(.mat-expanded) mat-expansion-panel-header",
         "summary",
         "[aria-expanded='false']",
         ".accordion__trigger",
@@ -515,12 +637,14 @@ async def _expand_interactive_content(page) -> None:
         try:
             panels = page.locator(acc_sel)
             count = await panels.count()
-            for i in range(min(count, 15)):
+            for i in range(count):
                 try:
                     panel = panels.nth(i)
                     if await panel.is_visible():
                         await panel.click(timeout=500)
-                        await page.wait_for_timeout(150)
+                        expanded_count += 1
+                        await page.wait_for_timeout(250)
+                        await _wait_for_spinners_gone(page, timeout_ms=1_500)
                 except Exception:
                     pass
         except Exception:
@@ -531,18 +655,33 @@ async def _expand_interactive_content(page) -> None:
         "button:has-text('Zobrazit více')",
         "button:has-text('Načíst více')",
         "button:has-text('Více informací')",
+        "button:has-text('Detail')",
+        "button:has-text('Ceník')",
         "[class*='show-more']",
         "[class*='load-more']",
         ".additional-content-show-more button",
+        '[class*="card"] button',
+        '[class*="price"] button',
+        '[class*="tariff"] button',
     ]
     for sm_sel in showmore_selectors:
         try:
-            btn = page.locator(sm_sel).first
-            if await btn.is_visible(timeout=500):
-                await btn.click()
-                await page.wait_for_timeout(300)
+            buttons = page.locator(sm_sel)
+            count = await buttons.count()
+            for i in range(count):
+                try:
+                    btn = buttons.nth(i)
+                    if await btn.is_visible(timeout=500):
+                        await btn.click(timeout=500)
+                        expanded_count += 1
+                        await page.wait_for_timeout(400)
+                        await _wait_for_spinners_gone(page, timeout_ms=1_500)
+                except Exception:
+                    pass
         except Exception:
             pass
+
+    return expanded_count
 
 
 async def _extract_page_text(page, url: str) -> str:
@@ -565,34 +704,63 @@ async def _extract_page_text(page, url: str) -> str:
         }
     """, _REMOVE_SELECTORS)
 
-    # Najdeme selector s nejbohatším obsahem
+    extract_js = """
+        (selectors) => {
+            const textFrom = (el) => {
+                const clone = el.cloneNode(true);
+                clone.querySelectorAll('script,style,noscript').forEach(node => node.remove());
+                return (clone.textContent || '').replace(/\u00a0/g, ' ').trim();
+            };
+
+            const parts = [];
+            const seen = new Set();
+            for (const selector of selectors) {
+                for (const el of document.querySelectorAll(selector)) {
+                    if (seen.has(el)) continue;
+                    seen.add(el);
+                    const text = textFrom(el);
+                    if (text) parts.push(text);
+                }
+            }
+            return parts.join('\n\n');
+        }
+    """
+
+    # Najdeme selector s nejbohatším obsahem. Používáme textContent přes clone,
+    # aby se zachytil i skrytý text v Angular tabpanech/expansion panelech.
     best_text = ""
     best_selector = "body"
     for selector in _CONTENT_SELECTORS:
         try:
-            locator = page.locator(selector).first
-            if await locator.count() == 0:
-                continue
-            text = await locator.inner_text()
+            text = await page.evaluate(extract_js, [selector])
             stripped = text.strip()
             if len(stripped) > len(best_text):
                 best_text = stripped
                 best_selector = selector
-                if len(best_text) >= _MIN_CONTENT_LENGTH * 3:
-                    break  # Dost obsahu – nehledáme dál
         except Exception:
             continue
 
-    logger.debug(f"Nejlepší selektor: '{best_selector}' ({len(best_text)} znaků)")
+    targeted_text = ""
+    try:
+        targeted_text = await page.evaluate(extract_js, _PRICING_SELECTORS)
+    except Exception:
+        targeted_text = ""
 
-    # Fallback: celý body
-    if len(best_text) < _MIN_CONTENT_LENGTH:
+    logger.debug(
+        f"Nejlepší selektor: '{best_selector}' ({len(best_text)} znaků), "
+        f"pricing/product bloky: {len(targeted_text)} znaků"
+    )
+
+    combined = "\n\n".join(part for part in [best_text, targeted_text] if part.strip())
+
+    # Fallback: celý body včetně hidden textu.
+    if len(combined) < _MIN_CONTENT_LENGTH:
         try:
-            best_text = await page.locator("body").inner_text()
+            combined = await page.evaluate(extract_js, ["body"])
         except Exception:
-            best_text = await page.evaluate("() => document.body.innerText || ''")
+            combined = await page.evaluate("() => document.body.textContent || ''")
 
-    return _clean_extracted_text(best_text)
+    return _clean_extracted_text(combined)
 
 
 async def scrape_page(
@@ -654,10 +822,19 @@ async def scrape_page(
         await _wait_for_spinners_gone(page, timeout_ms=3_000)
 
         # Krok 8: Rozbalíme záložky, accordiony, show-more tlačítka
-        await _expand_interactive_content(page)
+        expanded_count = await _expand_interactive_content(page)
 
-        # Krok 9: Extrakce textu
+        # Krok 9: Znovu doscrollujeme dolů, protože přepnuté tabs/cards mohou
+        # spustit další lazy-load pricing bloky.
+        await _scroll_and_load(page)
+
+        # Krok 10: Extrakce textu
         text = await _extract_page_text(page, url)
+        kc_count = text.count("Kč")
+        logger.info(
+            f"Debug extrakce {url}: {len(text):,} znaků, "
+            f"Kč výskytů: {kc_count}, expandováno accordions/tabs/cards: {expanded_count}"
+        )
 
         if len(text) < 100:
             return ScrapeResult(
@@ -676,7 +853,8 @@ async def scrape_page(
 
         return ScrapeResult(
             url=url, category=category, slug=slug,
-            text=text, output_path=output_path, success=True
+            text=text, output_path=output_path, success=True,
+            kc_count=kc_count, expanded_count=expanded_count
         )
 
     except Exception as exc:
@@ -696,6 +874,7 @@ async def run_scraping(
     delay_max: float = 3.5,
     skip_existing: bool = True,
     headed: bool = False,
+    debug_network: bool = False,
 ) -> ScrapeSummary:
     """
     Hlavní async scraping smyčka.
@@ -718,6 +897,12 @@ async def run_scraping(
     async with async_playwright() as playwright:
         browser, context = await _setup_browser_context(playwright)
         page = await context.new_page()
+
+        network_debug_capture = None
+        if debug_network:
+            network_debug_capture = NetworkDebugCapture()
+            network_debug_capture.attach(page)
+            logger.info(f"Network debug zapnutý, JSON responses se ukládají do {network_debug_capture.output_dir}")
 
         # Blokujeme zbytečné zdroje pro rychlejší načítání
         await page.route(
@@ -749,6 +934,8 @@ async def run_scraping(
                     page, url, category, output_dir,
                     delay=delay, skip_existing=skip_existing,
                 )
+                if network_debug_capture:
+                    await network_debug_capture.drain()
                 summary.results.append(result)
 
                 if result.error == "skipped":
@@ -758,7 +945,8 @@ async def run_scraping(
                     char_count = len(result.text)
                     logger.info(
                         f"[green]✓[/green] {category}/{slug[:30]} "
-                        f"({char_count:,} znaků)"
+                        f"({char_count:,} znaků, Kč: {result.kc_count}, "
+                        f"expandováno: {result.expanded_count})"
                     )
                 else:
                     summary.failed += 1
@@ -822,6 +1010,11 @@ def main(
     no_skip: bool = typer.Option(False, "--no-skip", help="Přescrapuje i existující soubory."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Vypíše seznam URL bez scrapování."),
     headed: bool = typer.Option(False, "--headed", help="Viditelný browser (pro debug)."),
+    debug_network: bool = typer.Option(
+        False,
+        "--debug-network",
+        help="Loguje XHR/fetch response a ukládá JSON payloady do data/debug/network/.",
+    ),
 ) -> None:
     """
     Playwright scraper pro JS-rendered produktové stránky rb.cz.
@@ -888,6 +1081,8 @@ def main(
     if category:
         console.print(f"Kategorie: [bold]{category}[/bold]")
     console.print(f"Výstup: [cyan]{output_dir}[/cyan]")
+    if debug_network:
+        console.print(f"Network debug: [cyan]{_NETWORK_DEBUG_DIR}[/cyan]")
     console.print()
 
     if dry_run:
@@ -906,6 +1101,7 @@ def main(
                 delay_max=delay_max,
                 skip_existing=not no_skip,
                 headed=headed,
+                debug_network=debug_network,
             )
         )
     except Exception as exc:

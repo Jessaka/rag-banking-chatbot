@@ -13,6 +13,7 @@ from __future__ import annotations
 import pickle
 import time
 from functools import lru_cache
+from collections import Counter
 
 from langchain_core.documents import Document
 
@@ -69,7 +70,45 @@ def _tokenize(text: str) -> list[str]:
     return tokens
 
 
-def bm25_search(query: str, top_k: int = config.BM25_TOP_K) -> list[Document]:
+def _matches_filters(doc: Document, metadata_filters: dict | None) -> bool:
+    if not metadata_filters:
+        return True
+    for key, expected in metadata_filters.items():
+        actual = doc.metadata.get(key)
+        if isinstance(expected, (list, tuple, set)):
+            if actual not in expected:
+                return False
+        elif actual != expected:
+            return False
+    return True
+
+
+def bm25_pricing_row_debug(limit: int = 12) -> dict:
+    """Return pricing_row coverage diagnostics from the BM25 document store."""
+    documents = _load_documents()
+    rows = [doc for doc in documents if doc.metadata.get("chunk_type") == "pricing_row"]
+    non_empty = [doc for doc in rows if doc.page_content and doc.page_content.strip()]
+    return {
+        "bm25_documents": len(documents),
+        "pricing_row_count": len(rows),
+        "pricing_row_non_empty": len(non_empty),
+        "top_product_name": Counter(str(doc.metadata.get("product_name") or "").strip() or "<empty>" for doc in rows).most_common(limit),
+        "top_fee_type": Counter(str(doc.metadata.get("fee_type") or "").strip() or "<empty>" for doc in rows).most_common(limit),
+        "sample_rows": [
+            {
+                "product_name": doc.metadata.get("product_name"),
+                "fee_type": doc.metadata.get("fee_type"),
+                "fee_value": doc.metadata.get("fee_value"),
+                "source_url": doc.metadata.get("source_url"),
+                "page": doc.metadata.get("page"),
+                "content_preview": doc.page_content[:220],
+            }
+            for doc in non_empty[: min(5, limit)]
+        ],
+    }
+
+
+def bm25_search(query: str, top_k: int = config.BM25_TOP_K, metadata_filters: dict | None = None) -> list[Document]:
     """
     Vyhledá top_k nejrelevantnějších chunků pomocí BM25.
 
@@ -87,9 +126,12 @@ def bm25_search(query: str, top_k: int = config.BM25_TOP_K) -> list[Document]:
 
     t0 = time.perf_counter()
     scores = bm25.get_scores(tokenized_query)
-    ranked_indices = sorted(
-        range(len(scores)), key=lambda i: scores[i], reverse=True
-    )[:top_k]
+    ranked_indices = []
+    for idx in sorted(range(len(scores)), key=lambda i: scores[i], reverse=True):
+        if _matches_filters(documents[idx], metadata_filters):
+            ranked_indices.append(idx)
+        if len(ranked_indices) >= top_k:
+            break
     bm25_ms = (time.perf_counter() - t0) * 1000
 
     results = []

@@ -20,6 +20,7 @@ from langchain_core.documents import Document
 from sentence_transformers import CrossEncoder
 
 import config
+from src.retrieval.query_classifier import QueryProfile, classify_query
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -43,6 +44,7 @@ def rerank(
     documents: list[Document],
     top_k: int = config.RERANK_TOP_K,
     min_score: float = config.RERANK_MIN_SCORE,
+    query_profile: QueryProfile | None = None,
 ) -> list[Document]:
     """
     Přeřadí dokumenty podle cross-encoder relevance pro daný dotaz.
@@ -64,6 +66,8 @@ def rerank(
     """
     if not documents:
         return []
+    query_profile = query_profile or classify_query(query)
+    min_score = max(min_score, query_profile.rerank_min_score)
 
     model = _load_reranker()
 
@@ -90,20 +94,15 @@ def rerank(
         results.append(enriched)
 
     if not results and ranked:
-        best_doc, best_score = ranked[0]
         logger.warning(
             f"Všechny rerank skóre pod prahem {min_score:.4f} "
-            f"(nejlepší: {best_score:.4f}). Vracím nejlepší kandidát."
+            f"(nejlepší: {ranked[0][1]:.4f}). Nevracím žádný dokument."
         )
-        results.append(Document(
-            page_content=best_doc.page_content,
-            metadata={**best_doc.metadata, "rerank_score": round(best_score, 4)},
-        ))
 
     logger.info(
         f"⏱ BGE reranking: {rerank_ms:.0f}ms "
         f"({len(documents)} párů → {len(results)} výsledků, "
-        f"top score: {ranked[0][1]:.4f})"
+        f"threshold: {min_score:.4f}, top score: {ranked[0][1]:.4f})"
         if ranked else "⏱ BGE reranking: 0 výsledků"
     )
     return results

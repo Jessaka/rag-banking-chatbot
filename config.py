@@ -11,6 +11,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
+def _env_bool(name: str, default: str = "false") -> bool:
+    return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
+
 # ---------------------------------------------------------------------------
 # Cesty
 # ---------------------------------------------------------------------------
@@ -19,6 +23,41 @@ DATA_DIR = BASE_DIR / "data"
 RAW_DIR = DATA_DIR / "raw"
 PROCESSED_DIR = DATA_DIR / "processed"
 INDEX_DIR = DATA_DIR / "indexes"
+PRICING_DIR = DATA_DIR / "pricing"
+PRICING_ROWS_PATH: Path = PRICING_DIR / "pricing_rows.jsonl"
+PRICING_EXTRACT_MAX_PAGES_PER_PDF: int = int(os.getenv("PRICING_EXTRACT_MAX_PAGES_PER_PDF", "25"))
+LOGS_DIR = BASE_DIR / "logs"
+ERROR_LOG_PATH: Path = LOGS_DIR / "errors.log"
+DEBUG_API_ERRORS: bool = _env_bool("DEBUG_API_ERRORS", "false")
+
+# ---------------------------------------------------------------------------
+# Embeddings backend
+# ---------------------------------------------------------------------------
+# "ollama" = lokální nomic-embed-text (768 dim)
+# "openai" = OpenAI text-embedding-3-small (1536 dim)
+EMBEDDING_BACKEND: str = os.getenv("EMBEDDING_BACKEND", "ollama").lower()
+OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+OPENAI_EMBED_MODEL: str = os.getenv("OPENAI_EMBED_MODEL", "text-embedding-3-small")
+OPENAI_EMBED_BATCH_SIZE: int = int(os.getenv("OPENAI_EMBED_BATCH_SIZE", "16"))
+OPENAI_EMBED_SLEEP_MS: int = int(os.getenv("OPENAI_EMBED_SLEEP_MS", "250"))
+
+# Backward-compatible název Ollama embedding modelu.
+EMBED_MODEL: str = os.getenv("EMBED_MODEL", "nomic-embed-text")
+
+
+def get_embedding_vector_size() -> int:
+    """Vrátí dimenzi embeddingů podle aktivního backendu."""
+    if EMBEDDING_BACKEND == "openai":
+        return 1536
+    return 768
+
+
+def get_active_embed_model() -> str:
+    """Vrátí název aktivního embedding modelu pro logy/UI."""
+    if EMBEDDING_BACKEND == "openai":
+        return OPENAI_EMBED_MODEL
+    return EMBED_MODEL
+
 
 # ---------------------------------------------------------------------------
 # Qdrant (vektorová databáze)
@@ -26,8 +65,8 @@ INDEX_DIR = DATA_DIR / "indexes"
 QDRANT_HOST: str = os.getenv("QDRANT_HOST", "localhost")
 QDRANT_PORT: int = int(os.getenv("QDRANT_PORT", "6333"))
 QDRANT_COLLECTION: str = os.getenv("QDRANT_COLLECTION", "raiffeisenbank_docs")
-# Dimenze embeddings modelu nomic-embed-text
-QDRANT_VECTOR_SIZE: int = 768
+# Dimenze se řídí embedding backendem; env override ponechán pro custom modely.
+QDRANT_VECTOR_SIZE: int = int(os.getenv("QDRANT_VECTOR_SIZE", str(get_embedding_vector_size())))
 
 # ---------------------------------------------------------------------------
 # LLM backend – "ollama" (lokální) nebo "anthropic" (cloud API)
@@ -36,11 +75,10 @@ LLM_BACKEND: str = os.getenv("LLM_BACKEND", "ollama")  # "ollama" | "anthropic"
 
 # ---------------------------------------------------------------------------
 # Ollama (lokální LLM + embeddings)
-# Embeddings vždy přes Ollama; LLM jen pokud LLM_BACKEND == "ollama"
+# Ollama (lokální LLM + volitelně embeddings); LLM jen pokud LLM_BACKEND == "ollama"
 # ---------------------------------------------------------------------------
 OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 LLM_MODEL: str = os.getenv("LLM_MODEL", "llama3.2")
-EMBED_MODEL: str = os.getenv("EMBED_MODEL", "nomic-embed-text")
 
 # ---------------------------------------------------------------------------
 # Anthropic API (aktivní pouze pokud LLM_BACKEND == "anthropic")

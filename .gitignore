@@ -1,45 +1,56 @@
-# Python
+# === Python ===
 __pycache__/
+**/__pycache__/
 *.py[cod]
 *.pyo
+*$py.class
 .Python
 *.egg-info/
 dist/
 build/
 .eggs/
+*.egg
 
-# Virtuální prostředí
+# === Virtual environments ===
 .venv/
 venv/
 env/
 
-# Prostředí a secrets
-.env
-*.env.local
+# === Data – runtime artifacts, downloads, indexes, datasets ===
+data/
 
-# Data – stažené soubory a indexy (velké binární soubory)
-data/raw/*.pdf
-data/raw/*.txt
-data/indexes/*.pkl
-data/processed/
+# === Logs ===
+logs/
 
-# Qdrant lokální storage
-data/qdrant_storage/
-
-# IDE
+# === IDE / editors ===
 .idea/
 .vscode/
 *.swp
 *.swo
+*~
+*.sublime-workspace
 
-# OS
+# === OS ===
 .DS_Store
 Thumbs.db
+*.Zone.Identifier
+*:Zone.Identifier
 
-# Pytest / coverage
+# === Secrets & env ===
+.env
+*.env.local
+
+# === Test / coverage artifacts ===
 .pytest_cache/
 .coverage
 htmlcov/
 
-# Model cache (sentence-transformers / HuggingFace)
+# === OpenCode / agent workspace artifacts ===
+.iris/
+.claude/
+
+# === Eval reports (not eval source data) ===
+evals/results/
+
+# === Model cache ===
 .cache/

@@ -23,10 +23,15 @@ Deterministické point IDs:
 from __future__ import annotations
 
 import pickle
+import hashlib
+import json
+import random
+import re
+import time
+from collections import deque
 from pathlib import Path
 
 from langchain_core.documents import Document
-from langchain_ollama import OllamaEmbeddings
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qmodels
 from tqdm import tqdm
@@ -38,17 +43,33 @@ logger = get_logger(__name__)
 
 _UPSERT_BATCH_SIZE = 64
 _SCROLL_BATCH_SIZE = 1000
+MAX_EMBED_CHARS = 4000
+MAX_EMBED_TOKENS_APPROX = 1500
+_OPENAI_MAX_RETRIES = 8
+_OPENAI_MAX_BATCH_TOKENS = 6000
 
 
 # ---------------------------------------------------------------------------
 # Klientské singletons
 # ---------------------------------------------------------------------------
 
-def _get_embeddings() -> OllamaEmbeddings:
-    return OllamaEmbeddings(
-        model=config.EMBED_MODEL,
-        base_url=config.OLLAMA_BASE_URL,
-    )
+def _get_embeddings():
+    if config.EMBEDDING_BACKEND == "openai":
+        if not config.OPENAI_API_KEY:
+            raise RuntimeError("EMBEDDING_BACKEND=openai vyžaduje OPENAI_API_KEY")
+        try:
+            from langchain_openai import OpenAIEmbeddings
+        except ImportError as exc:
+            raise RuntimeError("Chybí langchain-openai. Spusťte: pip install langchain-openai openai") from exc
+        return OpenAIEmbeddings(
+            model=config.OPENAI_EMBED_MODEL,
+            api_key=config.OPENAI_API_KEY,
+        )
+
+    if config.EMBEDDING_BACKEND != "ollama":
+        raise RuntimeError("EMBEDDING_BACKEND musí být 'ollama' nebo 'openai'")
+    from langchain_ollama import OllamaEmbeddings
+    return OllamaEmbeddings(model=config.EMBED_MODEL, base_url=config.OLLAMA_BASE_URL)
 
 
 def _get_qdrant_client() -> QdrantClient:
@@ -70,6 +91,271 @@ def _chunk_id_to_point_id(chunk_id: str) -> int:
       - Existence chunku lze ověřit bez scrollování celé kolekce
     """
     return int(chunk_id, 16)
+
+
+def _approx_tokens(text: str) -> int:
+    return max(len(text) // 3, len(text.split()))
+
+
+def _within_embed_limit(text: str) -> bool:
+    return len(text) <= MAX_EMBED_CHARS and _approx_tokens(text) <= MAX_EMBED_TOKENS_APPROX
+
+
+def _split_plain_fallback(text: str) -> list[str]:
+    safe_size = min(MAX_EMBED_CHARS, MAX_EMBED_TOKENS_APPROX * 3, 3500)
+    parts: list[str] = []
+    paragraphs = re.split(r"(\n\n+)", text)
+    current = ""
+    for part in paragraphs:
+        candidate = (current + part).strip()
+        if current and not _within_embed_limit(candidate):
+            parts.append(current.strip())
+            current = part.strip()
+        else:
+            current = candidate
+    if current.strip():
+        parts.append(current.strip())
+    final: list[str] = []
+    for part in parts:
+        if _within_embed_limit(part):
+            final.append(part)
+        else:
+            for start in range(0, len(part), safe_size):
+                final.append(part[start : start + safe_size])
+    return [p for p in final if p.strip()]
+
+
+def _split_table_fallback(markdown: str) -> list[str]:
+    if _within_embed_limit(markdown):
+        return [markdown]
+    lines = [line for line in markdown.splitlines() if line.strip()]
+    table_lines = [line for line in lines if "|" in line]
+    if len(table_lines) < 3:
+        return _split_plain_fallback(markdown)
+    header = table_lines[0]
+    separator = table_lines[1]
+    rows = table_lines[2:]
+    chunks: list[str] = []
+    current: list[str] = []
+    for row in rows:
+        candidate = "\n".join([header, separator, *current, row])
+        if current and not _within_embed_limit(candidate):
+            chunks.append("\n".join([header, separator, *current]))
+            current = [row]
+        else:
+            current.append(row)
+    if current:
+        chunks.append("\n".join([header, separator, *current]))
+    final: list[str] = []
+    for chunk in chunks:
+        if _within_embed_limit(chunk):
+            final.append(chunk)
+        else:
+            for part in _split_plain_fallback(chunk):
+                final.append("\n".join([header, separator, part]) if "|" not in part else part)
+    return final
+
+
+def _tokenize_bm25(text: str) -> list[str]:
+    return [token for token in re.findall(r"[\wÀ-ɏ]+", text.lower()) if token]
+
+
+def _bm25_searchable_text(chunk: Document) -> str:
+    """Index visible content plus high-signal metadata for row-level pricing recall."""
+    md = chunk.metadata
+    extra_fields = []
+    if md.get("chunk_type") == "pricing_row":
+        extra_fields.extend([
+            md.get("product_name", ""),
+            md.get("fee_type", ""),
+            md.get("fee_value", ""),
+            md.get("pricing_type", ""),
+            "pricing_row poplatek cena vedení účtu vedeni uctu",
+        ])
+        product = str(md.get("product_name") or "").lower()
+        if "ekonto" in product or "ekonto" in chunk.page_content.lower():
+            extra_fields.append("eKonto ekonto ekonta")
+    return "\n".join([chunk.page_content, *(str(x) for x in extra_fields if x)])
+
+
+def _guard_embed_chunks(chunks: list[Document]) -> list[Document]:
+    before = len(chunks)
+    longest = sorted(chunks, key=lambda c: len(c.page_content), reverse=True)[:5]
+    if longest:
+        logger.info(
+            "Embed guard nejdelší chunky: "
+            + "; ".join(
+                f"{len(c.page_content)} chars/{_approx_tokens(c.page_content)} tok approx "
+                f"id={c.metadata.get('chunk_id')} source={c.metadata.get('file_name', c.metadata.get('source'))}"
+                for c in longest
+            )
+        )
+
+    output: list[Document] = []
+    split_count = 0
+    for doc in chunks:
+        if _within_embed_limit(doc.page_content):
+            output.append(doc)
+            continue
+        split_count += 1
+        parent_id = doc.metadata.get("chunk_id") or hashlib.sha256(doc.page_content.encode()).hexdigest()[:16]
+        chunk_type = doc.metadata.get("chunk_type", "")
+        parts = _split_table_fallback(doc.page_content) if chunk_type in {"table", "pdf_table", "pricing"} and "|" in doc.page_content else _split_plain_fallback(doc.page_content)
+        for sub_idx, part in enumerate(parts):
+            if not _within_embed_limit(part):
+                logger.warning(
+                    f"Přeskakuji oversized subchunk po fallback splitu: {len(part)} chars, "
+                    f"{_approx_tokens(part)} tok approx, parent={parent_id}"
+                )
+                continue
+            content_hash = hashlib.sha256(part.strip().encode()).hexdigest()
+            raw_id = f"{parent_id}:sub:{sub_idx}:{content_hash[:16]}"
+            metadata = {
+                **doc.metadata,
+                "parent_chunk_id": parent_id,
+                "subchunk_index": sub_idx,
+                "chunk_id": hashlib.sha256(raw_id.encode()).hexdigest()[:16],
+                "content_hash": content_hash,
+                "char_count": len(part),
+            }
+            output.append(Document(page_content=part, metadata=metadata))
+    logger.info(
+        f"Embed guard: počet chunků před splittem={before}, po splitu={len(output)}, "
+        f"nejdelší chunk={max((len(c.page_content) for c in output), default=0)}, splitnuto={split_count}"
+    )
+    return output
+
+
+def _progress_path() -> Path:
+    safe_collection = re.sub(r"[^\w.-]+", "_", config.QDRANT_COLLECTION)
+    return config.INDEX_DIR / f"embedding_progress_{safe_collection}_{config.EMBEDDING_BACKEND}.json"
+
+
+def _load_progress() -> dict:
+    path = _progress_path()
+    if not path.exists():
+        return {"last_successful_batch": -1, "completed_chunk_ids": []}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logger.warning(f"Nelze načíst embedding progress {path}: {exc}")
+        return {"last_successful_batch": -1, "completed_chunk_ids": []}
+
+
+def _save_progress(batch_index: int, chunk_ids: list[str]) -> None:
+    config.INDEX_DIR.mkdir(parents=True, exist_ok=True)
+    path = _progress_path()
+    payload = {
+        "collection": config.QDRANT_COLLECTION,
+        "embedding_backend": config.EMBEDDING_BACKEND,
+        "embedding_model": config.get_active_embed_model(),
+        "vector_size": config.QDRANT_VECTOR_SIZE,
+        "last_successful_batch": batch_index,
+        "completed_chunk_ids": chunk_ids,
+        "updated_at": time.time(),
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _clear_progress() -> None:
+    path = _progress_path()
+    if path.exists():
+        path.unlink()
+
+
+def _make_embedding_batches(chunks: list[Document]) -> list[list[Document]]:
+    """Batchuje podle počtu chunků i odhadovaného token countu."""
+    max_items = config.OPENAI_EMBED_BATCH_SIZE if config.EMBEDDING_BACKEND == "openai" else _UPSERT_BATCH_SIZE
+    max_tokens = _OPENAI_MAX_BATCH_TOKENS if config.EMBEDDING_BACKEND == "openai" else 10**9
+    batches: list[list[Document]] = []
+    current: list[Document] = []
+    current_tokens = 0
+    for chunk in chunks:
+        tokens = _approx_tokens(chunk.page_content)
+        if current and (len(current) >= max_items or current_tokens + tokens > max_tokens):
+            batches.append(current)
+            current = []
+            current_tokens = 0
+        current.append(chunk)
+        current_tokens += tokens
+    if current:
+        batches.append(current)
+    return batches
+
+
+def _retry_after_seconds(exc: Exception) -> float | None:
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None) if response is not None else None
+    if not headers:
+        return None
+    value = headers.get("retry-after") or headers.get("Retry-After")
+    if not value:
+        return None
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        return None
+
+
+def _is_rate_limit_error(exc: Exception) -> bool:
+    name = exc.__class__.__name__.lower()
+    message = str(exc).lower()
+    return "ratelimit" in name or "rate_limit" in message or "rate limit" in message or "429" in message
+
+
+def _embed_batch_with_retry(embeddings, texts: list[str], batch_index: int, batch_tokens: int, metrics: dict) -> list[list[float]]:
+    attempt = 0
+    while True:
+        try:
+            vectors = embeddings.embed_documents(texts)
+            metrics["requests"].append(time.time())
+            metrics["tokens"].append((time.time(), batch_tokens))
+            return vectors
+        except Exception as exc:
+            if not _is_rate_limit_error(exc) or attempt >= _OPENAI_MAX_RETRIES:
+                raise
+            attempt += 1
+            metrics["retry_count"] += 1
+            retry_after = _retry_after_seconds(exc)
+            if retry_after is None:
+                retry_after = min(120.0, (2 ** attempt) + random.uniform(0, 1.5))
+            logger.warning(
+                f"OpenAI RateLimitError batch={batch_index}, retry={attempt}/{_OPENAI_MAX_RETRIES}, "
+                f"čekám {retry_after:.1f}s, estimated_tokens={batch_tokens}"
+            )
+            time.sleep(retry_after)
+
+
+def _log_openai_throughput(batch_index: int, total_batches: int, batch_size: int, batch_tokens: int, metrics: dict) -> None:
+    now = time.time()
+    while metrics["requests"] and now - metrics["requests"][0] > 60:
+        metrics["requests"].popleft()
+    while metrics["tokens"] and now - metrics["tokens"][0][0] > 60:
+        metrics["tokens"].popleft()
+    rpm = len(metrics["requests"])
+    tpm = sum(tokens for _ts, tokens in metrics["tokens"])
+    logger.info(
+        f"OpenAI embeddings batch {batch_index + 1}/{total_batches}: "
+        f"chunks={batch_size}, estimated_tokens={batch_tokens}, "
+        f"requests/min={rpm}, estimated_TPM={tpm}, retries={metrics['retry_count']}"
+    )
+
+
+def _make_points(batch_chunks: list[Document], batch_vecs: list[list[float]]) -> list[qmodels.PointStruct]:
+    points = []
+    for chunk, vec in zip(batch_chunks, batch_vecs):
+        cid = chunk.metadata.get("chunk_id", "")
+        if cid:
+            point_id = _chunk_id_to_point_id(cid)
+        else:
+            point_id = int(hashlib.sha256(chunk.page_content[:100].encode()).hexdigest()[:16], 16)
+
+        points.append(qmodels.PointStruct(
+            id=point_id,
+            vector=vec,
+            payload={"page_content": chunk.page_content, **chunk.metadata},
+        ))
+    return points
 
 
 # ---------------------------------------------------------------------------
@@ -184,7 +470,8 @@ def filter_new_chunks(
 def _embed_and_upsert(
     chunks: list[Document],
     client: QdrantClient,
-    embeddings: OllamaEmbeddings,
+    embeddings,
+    resume: bool = False,
 ) -> None:
     """
     Embedduje chunky a vloží je do Qdrant.
@@ -195,49 +482,65 @@ def _embed_and_upsert(
     if not chunks:
         return
 
+    chunks = _guard_embed_chunks(chunks)
     texts = [c.page_content for c in chunks]
 
-    logger.info(f"Embedduju {len(texts)} chunků (model: {config.EMBED_MODEL})…")
-    vectors: list[list[float]] = []
-    for i in tqdm(range(0, len(texts), _UPSERT_BATCH_SIZE), desc="Embedding"):
-        batch_vecs = embeddings.embed_documents(texts[i : i + _UPSERT_BATCH_SIZE])
-        vectors.extend(batch_vecs)
-
-    logger.info(f"Ukládám {len(chunks)} bodů do Qdrant…")
-    for i in tqdm(range(0, len(chunks), _UPSERT_BATCH_SIZE), desc="Qdrant upsert"):
-        batch_chunks = chunks[i : i + _UPSERT_BATCH_SIZE]
-        batch_vecs = vectors[i : i + _UPSERT_BATCH_SIZE]
-
-        points = []
-        for chunk, vec in zip(batch_chunks, batch_vecs):
-            cid = chunk.metadata.get("chunk_id", "")
-            # Deterministické point ID: hex chunk_id → uint64
-            # Fallback pro chunky bez chunk_id: hash obsahu
-            if cid:
-                point_id = _chunk_id_to_point_id(cid)
-            else:
-                import hashlib
-                point_id = int(hashlib.sha256(chunk.page_content[:100].encode()).hexdigest()[:16], 16)
-
-            points.append(qmodels.PointStruct(
-                id=point_id,
-                vector=vec,
-                payload={
-                    "page_content": chunk.page_content,
-                    **chunk.metadata,
-                },
-            ))
-
-        client.upsert(
-            collection_name=config.QDRANT_COLLECTION,
-            points=points,
+    logger.info(
+        f"Embedduju {len(texts)} chunků "
+        f"(backend: {config.EMBEDDING_BACKEND}, model: {config.get_active_embed_model()}, "
+        f"dim: {config.QDRANT_VECTOR_SIZE})…"
+    )
+    batches = _make_embedding_batches(chunks)
+    progress = _load_progress() if resume else {"last_successful_batch": -1, "completed_chunk_ids": []}
+    last_successful = int(progress.get("last_successful_batch", -1))
+    completed_chunk_ids = list(progress.get("completed_chunk_ids", []))
+    completed_set = set(completed_chunk_ids)
+    if resume and last_successful >= 0:
+        logger.info(
+            f"Resume embedding progress: poslední hotový batch={last_successful}, "
+            f"({len(completed_chunk_ids)} chunků)"
         )
+
+    metrics = {"requests": deque(), "tokens": deque(), "retry_count": 0}
+    sleep_s = max(0, config.OPENAI_EMBED_SLEEP_MS) / 1000
+
+    logger.info(
+        f"Embedding batches: {len(batches)} "
+        f"(backend={config.EMBEDDING_BACKEND}, max_batch_size="
+        f"{config.OPENAI_EMBED_BATCH_SIZE if config.EMBEDDING_BACKEND == 'openai' else _UPSERT_BATCH_SIZE})"
+    )
+
+    for batch_index, batch_chunks in enumerate(tqdm(batches, desc="Embedding+Qdrant upsert")):
+        if resume and completed_set:
+            batch_chunks = [c for c in batch_chunks if c.metadata.get("chunk_id") not in completed_set]
+        if not batch_chunks:
+            continue
+        batch_texts = [c.page_content for c in batch_chunks]
+        batch_tokens = sum(_approx_tokens(text) for text in batch_texts)
+
+        if config.EMBEDDING_BACKEND == "openai":
+            batch_vecs = _embed_batch_with_retry(embeddings, batch_texts, batch_index, batch_tokens, metrics)
+            _log_openai_throughput(batch_index, len(batches), len(batch_chunks), batch_tokens, metrics)
+            if sleep_s:
+                time.sleep(sleep_s)
+        else:
+            batch_vecs = embeddings.embed_documents(batch_texts)
+
+        points = _make_points(batch_chunks, batch_vecs)
+        client.upsert(collection_name=config.QDRANT_COLLECTION, points=points)
+        new_completed = [c.metadata.get("chunk_id", "") for c in batch_chunks if c.metadata.get("chunk_id")]
+        completed_chunk_ids.extend(new_completed)
+        completed_set.update(new_completed)
+        _save_progress(batch_index, completed_chunk_ids)
+
+    _clear_progress()
 
 
 def index_to_qdrant(
     chunks: list[Document],
     client: QdrantClient | None = None,
-    embeddings: OllamaEmbeddings | None = None,
+    embeddings = None,
+    resume: bool = False,
 ) -> None:
     """
     Vloží chunky do Qdrant (full mode – přepíše existující kolekci).
@@ -245,8 +548,17 @@ def index_to_qdrant(
     """
     client = client or _get_qdrant_client()
     embeddings = embeddings or _get_embeddings()
-    _recreate_collection(client)
-    _embed_and_upsert(chunks, client, embeddings)
+    if resume:
+        _ensure_collection_exists(client)
+        logger.info("Resume režim: Qdrant kolekci nepřepisuji, pokračuji v rozpracované indexaci")
+        existing_ids = get_existing_chunk_ids(client)
+        if existing_ids:
+            chunks, skipped = filter_new_chunks(chunks, existing_ids)
+            logger.info(f"Resume: existující Qdrant body nepřepisuji, přeskočeno podle chunk_id: {skipped}")
+    else:
+        _clear_progress()
+        _recreate_collection(client)
+    _embed_and_upsert(chunks, client, embeddings, resume=resume)
     logger.info(f"Qdrant: {len(chunks)} bodů indexováno do '{config.QDRANT_COLLECTION}'")
 
 
@@ -259,7 +571,7 @@ def save_bm25_index(chunks: list[Document]) -> None:
     from rank_bm25 import BM25Okapi
 
     config.INDEX_DIR.mkdir(parents=True, exist_ok=True)
-    tokenized = [c.page_content.lower().split() for c in chunks]
+    tokenized = [_tokenize_bm25(_bm25_searchable_text(c)) for c in chunks]
     bm25 = BM25Okapi(tokenized)
 
     with open(config.BM25_INDEX_PATH, "wb") as f:
@@ -307,7 +619,7 @@ def update_bm25_index(new_chunks: list[Document]) -> int:
     ]
 
     all_chunks = existing_chunks + truly_new
-    tokenized = [c.page_content.lower().split() for c in all_chunks]
+    tokenized = [_tokenize_bm25(_bm25_searchable_text(c)) for c in all_chunks]
     bm25 = BM25Okapi(tokenized)
 
     with open(config.BM25_INDEX_PATH, "wb") as f:
@@ -342,6 +654,8 @@ def run_incremental_indexing(chunks: list[Document]) -> dict:
     if not chunks:
         logger.error("Prázdný seznam chunků – indexace přerušena")
         return {"new": 0, "skipped": 0, "total_qdrant": 0, "total_bm25": 0}
+
+    chunks = _guard_embed_chunks(chunks)
 
     client = _get_qdrant_client()
     embeddings = _get_embeddings()
@@ -386,7 +700,7 @@ def run_incremental_indexing(chunks: list[Document]) -> dict:
     }
 
 
-def run_full_indexing(chunks: list[Document]) -> None:
+def run_full_indexing(chunks: list[Document], resume: bool = False) -> None:
     """
     Kompletní reindexace od nuly: smaže a znovu vytvoří kolekci.
 
@@ -399,10 +713,12 @@ def run_full_indexing(chunks: list[Document]) -> None:
         logger.error("Prázdný seznam chunků – indexace přerušena")
         return
 
+    chunks = _guard_embed_chunks(chunks)
+
     client = _get_qdrant_client()
     embeddings = _get_embeddings()
 
-    index_to_qdrant(chunks, client=client, embeddings=embeddings)
+    index_to_qdrant(chunks, client=client, embeddings=embeddings, resume=resume)
     save_bm25_index(chunks)
 
     logger.info("[bold green]Full indexace dokončena úspěšně[/bold green]")

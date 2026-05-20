@@ -1,0 +1,52 @@
+[
+  {
+    "question": "Kolik stojí vedení eKonta?",
+    "expected_contains": ["eKonto", "vedení"],
+    "category": "pricing"
+  },
+  {
+    "question": "Jaký je poplatek za vedení běžného účtu?",
+    "expected_contains": ["vedení", "Kč"],
+    "category": "pricing"
+  },
+  {
+    "question": "Kolik stojí vedení vedlejší měnové složky účtu?",
+    "expected_contains": ["vedlejší", "měnové", "Kč"],
+    "category": "pricing"
+  },
+  {
+    "question": "Je zřízení běžného účtu zpoplatněné?",
+    "expected_contains": ["účet"],
+    "category": "pricing"
+  },
+  {
+    "question": "Jak zablokuji platební kartu?",
+    "expected_contains": ["kartu"],
+    "category": "support"
+  },
+  {
+    "question": "Co mám dělat při podezření na phishing?",
+    "expected_contains": ["phishing"],
+    "category": "support"
+  },
+  {
+    "question": "Co je běžný účet u Raiffeisenbank?",
+    "expected_contains": ["účet"],
+    "category": "retail_banking"
+  },
+  {
+    "question": "Jaké osobní účty Raiffeisenbank nabízí?",
+    "expected_contains": ["účet"],
+    "category": "retail_banking"
+  },
+  {
+    "question": "Jaké typy platebních karet banka nabízí?",
+    "expected_contains": ["karta"],
+    "category": "cards"
+  },
+  {
+    "question": "Jaký je poplatek za výběr z bankomatu?",
+    "expected_contains": ["výběr"],
+    "category": "cards"
+  }
+]
