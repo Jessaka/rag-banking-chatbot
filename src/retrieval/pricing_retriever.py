@@ -54,9 +54,41 @@ def _row_text(row: dict) -> str:
     ))
 
 
+# Normalized stems of non-account-fee fee_type terms that MUST be hard-excluded.
+# Checked BEFORE any scoring to prevent mortgage/loan/card/overdraft rows
+# from reaching the answer formatter even when they have token overlap.
+_FEE_EXCLUDE_STEMS: frozenset[str] = frozenset({
+    "oceneni",        # ocenění (property valuation)
+    "nemovitost",     # nemovitost (real estate)
+    "rezerv",         # rezervace, rezervaci, rezervy (reservation, overdraft)
+    "bezuroc",        # bezúročná, bezúročný (interest-free -> overdraft)
+    "cerpan",         # čerpání, čerpat (drawing/pulling from loan)
+    "uver",           # úvěr, úvěru (loan)
+    "hypotek",        # hypotéka, hypoteční (mortgage)
+    "kart",           # karta, karty (card)
+    "hotovost",       # hotovost (cash)
+    "vklad",          # vklad (deposit)
+    "vyber",          # výběr, výběry (withdrawal)
+    "transakc",       # transakce (transaction)
+    "pojist",         # pojištění (insurance)
+    "spor",           # spoření, spořicí (savings)
+    "penzijn",        # penzijní (pension)
+    "stavebn",        # stavební (building savings)
+})
+
+
 def _score_row(row: dict, query: str, profile: QueryProfile) -> tuple[float, list[str]]:
     q_norm = _norm(expand_query(query, profile))
     text = _norm(_row_text(row))
+
+    # --- HARD EXCLUDE based on fee_type ---
+    # If the row's fee_type contains a known non-account-fee stem, block it
+    # completely regardless of token overlap or other scoring signals.
+    fee_type_norm = _norm(str(row.get("fee_type") or ""))
+    for stem in _FEE_EXCLUDE_STEMS:
+        if stem in fee_type_norm:
+            return -999.0, [f"hard_excluded_fee_type={stem}"]
+
     q_tokens = _tokens(q_norm)
     row_tokens = _tokens(text)
     overlap = len(q_tokens & row_tokens)
@@ -74,9 +106,10 @@ def _score_row(row: dict, query: str, profile: QueryProfile) -> tuple[float, lis
         score -= 1.0; reasons.append("missing_fee_value")
     if "ekonto" in q_norm and "ekonto" in text:
         score += 1.2; reasons.append("ekonto exact")
-    if any(k in q_norm for k in ("vedeni", "ucet", "uctu")) and any(k in text for k in ("vedeni", "cena", "poplatek", "ucet")):
+    if (q_tokens & {"vedeni", "ucet", "uctu"}) and (row_tokens & {"vedeni", "cena", "poplatek", "ucet"}):
         score += 0.6; reasons.append("account fee intent")
-    if "vedeni" in q_norm and not any(k in _norm(str(row.get("fee_type") or "")) for k in ("vedeni", "cena", "poplatek")):
+    fee_tokens = _tokens(str(row.get("fee_type") or ""))
+    if "vedeni" in q_norm and not (fee_tokens & {"vedeni", "cena", "poplatek"}):
         score -= 0.5; reasons.append("non-account-fee wording penalty")
     if "personal_retail_account" in profile.labels:
         if row.get("category") == "retail" or "cenik-pi" in text:
