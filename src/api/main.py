@@ -114,6 +114,10 @@ class HealthResponse(BaseModel):
         None,
         description="Stav Google Gemini API – přítomno pouze pokud LLM_BACKEND='gemini'.",
     )
+    openai: ComponentStatus | None = Field(
+        None,
+        description="Stav OpenAI API – přítomno pouze pokud LLM_BACKEND='openai'.",
+    )
 
 
 class CollectionInfo(BaseModel):
@@ -452,6 +456,42 @@ def _check_gemini() -> ComponentStatus:
         return ComponentStatus(status="error", detail=str(exc))
 
 
+def _check_openai() -> ComponentStatus:
+    """
+    Ověří OpenAI API – jen pokud LLM_BACKEND == 'openai'.
+
+    Použije models.list() k ověření API klíče (levné, bez generování).
+    """
+    if not config.OPENAI_API_KEY:
+        return ComponentStatus(
+            status="error",
+            detail="OPENAI_API_KEY není nastavený v .env",
+        )
+    try:
+        from openai import OpenAI
+
+        client = OpenAI(api_key=config.OPENAI_API_KEY, timeout=10)
+        # models.list() je levný způsob ověření API klíče
+        models = client.models.list()
+        available = {m.id for m in models}
+        primary_ok = config.OPENAI_CHAT_MODEL in available
+        fallback_ok = config.OPENAI_CHAT_FALLBACK_MODEL in available
+        if primary_ok:
+            detail = (
+                f"Model '{config.OPENAI_CHAT_MODEL}' dostupný"
+                + (f", fallback '{config.OPENAI_CHAT_FALLBACK_MODEL}' {'dostupný' if fallback_ok else 'NENALEZEN'}"
+                   if config.OPENAI_CHAT_FALLBACK_MODEL != config.OPENAI_CHAT_MODEL
+                   else "")
+            )
+            return ComponentStatus(status="ok", detail=detail)
+        return ComponentStatus(
+            status="degraded",
+            detail=f"Primární model '{config.OPENAI_CHAT_MODEL}' nedostupný. Fallback: '{config.OPENAI_CHAT_FALLBACK_MODEL}' {'OK' if fallback_ok else 'NENALEZEN'}",
+        )
+    except Exception as exc:
+        return ComponentStatus(status="error", detail=str(exc))
+
+
 def _get_collection_info() -> CollectionInfo:
     """Načte detailní info o Qdrant kolekci (synchronní, pro to_thread)."""
     from qdrant_client import QdrantClient
@@ -504,15 +544,23 @@ async def lifespan(app: FastAPI):
         asyncio.to_thread(_check_qdrant),
         asyncio.to_thread(_check_ollama),
     ]
+    llm_check = None
     if config.LLM_BACKEND == "anthropic":
         checks.append(asyncio.to_thread(_check_anthropic))
+        llm_check = "anthropic"
     elif config.LLM_BACKEND == "gemini":
         checks.append(asyncio.to_thread(_check_gemini))
+        llm_check = "gemini"
+    elif config.LLM_BACKEND == "openai":
+        checks.append(asyncio.to_thread(_check_openai))
+        llm_check = "openai"
 
     results = await asyncio.gather(*checks)
     qdrant, ollama = results[0], results[1]
-    anthropic_status = results[2] if config.LLM_BACKEND == "anthropic" else None
-    gemini_status = results[2] if config.LLM_BACKEND == "gemini" else None
+    llm_status: ComponentStatus | None = results[2] if llm_check else None
+    anthropic_status: ComponentStatus | None = llm_status if config.LLM_BACKEND == "anthropic" else None
+    gemini_status: ComponentStatus | None = llm_status if config.LLM_BACKEND == "gemini" else None
+    openai_status: ComponentStatus | None = llm_status if config.LLM_BACKEND == "openai" else None
     bm25 = _check_bm25()
 
     checks_to_log = [("Qdrant", qdrant), ("Ollama", ollama), ("BM25", bm25)]
@@ -520,6 +568,8 @@ async def lifespan(app: FastAPI):
         checks_to_log.append(("Anthropic", anthropic_status))
     if gemini_status:
         checks_to_log.append(("Gemini", gemini_status))
+    if openai_status:
+        checks_to_log.append(("OpenAI", openai_status))
 
     for name, comp in checks_to_log:
         icon = "✓" if comp.status == "ok" else "⚠" if comp.status == "degraded" else "✗"
@@ -544,7 +594,8 @@ app = FastAPI(
     title="Raiffeisenbank RAG API",
     description=(
         "REST API pro RAG chatbot Raiffeisenbank.\n\n"
-        "Pipeline: BM25 + Qdrant (hybridní) → BGE Reranker → Mistral 7B (Ollama)"
+        "Pipeline: BM25 + Qdrant (hybridní) → BGE Reranker → LLM\n"
+        "Backend: ollama | anthropic | gemini | openai"
     ),
     version="1.0.0",
     lifespan=lifespan,
@@ -647,19 +698,27 @@ async def health() -> HealthResponse:
         asyncio.to_thread(_check_qdrant),
         asyncio.to_thread(_check_ollama),
     ]
+    llm_check = None
     if config.LLM_BACKEND == "anthropic":
         gather_tasks.append(asyncio.to_thread(_check_anthropic))
+        llm_check = "anthropic"
     elif config.LLM_BACKEND == "gemini":
         gather_tasks.append(asyncio.to_thread(_check_gemini))
+        llm_check = "gemini"
+    elif config.LLM_BACKEND == "openai":
+        gather_tasks.append(asyncio.to_thread(_check_openai))
+        llm_check = "openai"
 
     results = await asyncio.gather(*gather_tasks)
     qdrant, ollama = results[0], results[1]
-    anthropic_status: ComponentStatus | None = results[2] if config.LLM_BACKEND == "anthropic" else None
-    gemini_status: ComponentStatus | None = results[2] if config.LLM_BACKEND == "gemini" else None
+    llm_status: ComponentStatus | None = results[2] if llm_check else None
+    anthropic_status: ComponentStatus | None = llm_status if config.LLM_BACKEND == "anthropic" else None
+    gemini_status: ComponentStatus | None = llm_status if config.LLM_BACKEND == "gemini" else None
+    openai_status: ComponentStatus | None = llm_status if config.LLM_BACKEND == "openai" else None
     bm25 = _check_bm25()
 
     all_statuses = {qdrant.status, ollama.status, bm25.status}
-    for extra in (anthropic_status, gemini_status):
+    for extra in (anthropic_status, gemini_status, openai_status):
         if extra:
             all_statuses.add(extra.status)
 
@@ -677,6 +736,7 @@ async def health() -> HealthResponse:
         bm25_index=bm25,
         anthropic=anthropic_status,
         gemini=gemini_status,
+        openai=openai_status,
     )
 
 

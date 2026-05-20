@@ -69,9 +69,9 @@ QDRANT_COLLECTION: str = os.getenv("QDRANT_COLLECTION", "raiffeisenbank_docs")
 QDRANT_VECTOR_SIZE: int = int(os.getenv("QDRANT_VECTOR_SIZE", str(get_embedding_vector_size())))
 
 # ---------------------------------------------------------------------------
-# LLM backend – "ollama" (lokální) nebo "anthropic" (cloud API)
+# LLM backend – "ollama" (lokální) | "anthropic" | "gemini" | "openai"
 # ---------------------------------------------------------------------------
-LLM_BACKEND: str = os.getenv("LLM_BACKEND", "ollama")  # "ollama" | "anthropic"
+LLM_BACKEND: str = os.getenv("LLM_BACKEND", "ollama")
 
 # ---------------------------------------------------------------------------
 # Ollama (lokální LLM + embeddings)
@@ -93,6 +93,20 @@ ANTHROPIC_MODEL: str = os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
 GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
 # gemini-2.0-flash: rychlý, zdarma, 1M token kontext (1.5-flash není v google-genai SDK)
 GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+
+# ---------------------------------------------------------------------------
+# OpenAI Chat API (aktivní pouze pokud LLM_BACKEND == "openai")
+# Výchozí model: gpt-4.1-mini, fallback: gpt-4o-mini
+# API klíč je sdílený s embedding backendem (OPENAI_API_KEY).
+# ---------------------------------------------------------------------------
+OPENAI_CHAT_MODEL: str = os.getenv("OPENAI_CHAT_MODEL", "gpt-4.1-mini")
+OPENAI_CHAT_FALLBACK_MODEL: str = os.getenv("OPENAI_CHAT_FALLBACK_MODEL", "gpt-4o-mini")
+
+# ---------------------------------------------------------------------------
+# LLM timeouty a retry
+# ---------------------------------------------------------------------------
+LLM_TIMEOUT: int = int(os.getenv("LLM_TIMEOUT", "60"))
+LLM_MAX_RETRIES: int = int(os.getenv("LLM_MAX_RETRIES", "3"))
 
 # ---------------------------------------------------------------------------
 # Chunking dokumentů

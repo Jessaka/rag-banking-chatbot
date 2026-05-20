@@ -1,10 +1,11 @@
 """
 RAG chain pro generování odpovědí na bankovní dotazy.
 
-Podporuje tři LLM backendy (config.LLM_BACKEND):
+Podporuje čtyři LLM backendy (config.LLM_BACKEND):
   - "ollama"     → lokální Mistral/Llama přes Ollama (bez cloudu)
   - "anthropic"  → claude-haiku-4-5 přes Anthropic SDK s prompt cachingem
-  - "gemini"     → gemini-1.5-flash přes Google Gemini SDK (google-genai)
+  - "gemini"     → gemini-2.0-flash přes Google Gemini SDK (google-genai)
+  - "openai"     → gpt-4.1-mini (fallback gpt-4o-mini) s retry a rate-limit handling
 
 Pipeline: retriever → format_context → LLM → odpověď
 Konverzační mód: query rewriting + paměť posledních N zpráv
@@ -488,6 +489,152 @@ class GeminiLLM:
 
 
 # ---------------------------------------------------------------------------
+# OpenAI LLM wrapper
+# ---------------------------------------------------------------------------
+
+class OpenAILLM:
+    """
+    Wrapper kolem OpenAI Chat Completions API kompatibilní s rozhraním
+    OllamaLLM / AnthropicLLM / GeminiLLM.
+
+    Features:
+      - Chat Completions API (messages → response)
+      - Retry s exponenciálním backoffem (nativní podpora v openai SDK)
+      - Rate-limit handling (429) s fallback model
+      - Timeout konfigurovatelný přes config.LLM_TIMEOUT
+      - Automatický fallback na gpt-4o-mini pokud primární model selže
+
+    Konverze LangChain BaseMessage → OpenAI messages:
+      SystemMessage → role "system"
+      HumanMessage  → role "user"
+      AIMessage     → role "assistant"
+    """
+
+    def __init__(
+        self,
+        model: str,
+        api_key: str,
+        max_tokens: int,
+        temperature: float,
+        timeout: int,
+        max_retries: int,
+        fallback_model: str,
+    ) -> None:
+        from openai import OpenAI
+
+        self._client = OpenAI(
+            api_key=api_key,
+            timeout=timeout,
+            max_retries=max_retries,
+        )
+        self._model = model
+        self._fallback_model = fallback_model
+        self._max_tokens = max_tokens
+        self._temperature = temperature
+        logger.info(
+            f"OpenAILLM inicializována "
+            f"(model: {model}, fallback: {fallback_model}, "
+            f"timeout: {timeout}s, retry: {max_retries}x)"
+        )
+
+    def invoke(self, messages: list[BaseMessage]) -> str:
+        """
+        Volá OpenAI Chat Completions a vrátí text první odpovědi.
+
+        Prio 1: primární model (config.OPENAI_CHAT_MODEL)
+        Prio 2: fallback model (config.OPENAI_CHAT_FALLBACK_MODEL)
+
+        Args:
+            messages: LangChain BaseMessage list z prompt.format_messages().
+
+        Returns:
+            Text odpovědi asistenta.
+
+        Raises:
+            openai.RateLimitError: Pokud oba modely selžou na rate limit.
+            openai.APIStatusError: Pokud oba modely selžou na API chybu.
+        """
+        from openai import APIStatusError, RateLimitError
+
+        openai_messages: list[dict] = []
+        for msg in messages:
+            if isinstance(msg, SystemMessage):
+                openai_messages.append({"role": "system", "content": msg.content})
+            elif isinstance(msg, HumanMessage):
+                openai_messages.append({"role": "user", "content": msg.content})
+            elif isinstance(msg, AIMessage):
+                openai_messages.append({"role": "assistant", "content": msg.content})
+
+        models_to_try = [self._model]
+        if self._fallback_model and self._fallback_model != self._model:
+            models_to_try.append(self._fallback_model)
+
+        last_error: Exception | None = None
+
+        for attempt, model in enumerate(models_to_try):
+            try:
+                response = self._client.chat.completions.create(
+                    model=model,
+                    messages=openai_messages,
+                    max_tokens=self._max_tokens,
+                    temperature=self._temperature,
+                )
+                content = response.choices[0].message.content or ""
+                if attempt > 0:
+                    logger.warning(
+                        f"OpenAI fallback úspěšný: {self._model} → {model} "
+                        f"({type(last_error).__name__}: {last_error})"
+                    )
+                else:
+                    logger.debug(f"OpenAI response ({model}): {len(content)} znaků")
+                return content
+
+            except RateLimitError as e:
+                last_error = e
+                logger.warning(
+                    f"OpenAI rate limit ({model}): {e}"
+                )
+                if model == self._model and self._fallback_model:
+                    logger.info(f"⤴ Fallback na {self._fallback_model}")
+                    continue
+                logger.error("OpenAI rate limit – oba modely selhaly")
+                raise
+
+            except APIStatusError as e:
+                last_error = e
+                # 400 = bad request, 401 = auth, 403 = forbidden, 404 = not found
+                # 429 = rate limit (caught above), 500 = server error
+                if (
+                    e.status_code in (400, 401, 403, 404)
+                    and model == self._model
+                    and self._fallback_model
+                ):
+                    logger.warning(
+                        f"OpenAI API error ({model}, {e.status_code}): {e.message}"
+                        f"⤴ Fallback na {self._fallback_model}"
+                    )
+                    continue
+                logger.error(
+                    f"OpenAI API error ({model}, {e.status_code}): {e.message}"
+                )
+                raise
+
+            except Exception as e:
+                last_error = e
+                logger.warning(
+                    f"OpenAI neočekávaná chyba ({model}): {e}"
+                )
+                if model == self._model and self._fallback_model:
+                    logger.info(f"⤴ Fallback na {self._fallback_model}")
+                    continue
+                raise
+
+        raise last_error or RuntimeError(
+            "OpenAILLM: všechny pokusy selhaly (primary + fallback)"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Factory – výběr backendu dle konfigurace
 # ---------------------------------------------------------------------------
 
@@ -536,9 +683,24 @@ def _build_llm() -> OllamaLLM | AnthropicLLM:
             temperature=config.LLM_TEMPERATURE,
         )
 
+    if backend == "openai":
+        if not config.OPENAI_API_KEY:
+            raise ValueError(
+                "LLM_BACKEND='openai' vyžaduje nastavený OPENAI_API_KEY v .env"
+            )
+        return OpenAILLM(
+            model=config.OPENAI_CHAT_MODEL,
+            api_key=config.OPENAI_API_KEY,
+            max_tokens=config.LLM_MAX_TOKENS,
+            temperature=config.LLM_TEMPERATURE,
+            timeout=config.LLM_TIMEOUT,
+            max_retries=config.LLM_MAX_RETRIES,
+            fallback_model=config.OPENAI_CHAT_FALLBACK_MODEL,
+        )
+
     raise ValueError(
         f"Neznámý LLM_BACKEND='{config.LLM_BACKEND}'. "
-        f"Povolené hodnoty: 'ollama', 'anthropic', 'gemini'."
+        f"Povolené hodnoty: 'ollama', 'anthropic', 'gemini', 'openai'."
     )
 
 
@@ -576,6 +738,8 @@ class BankingRAGChain:
             backend_info = f"anthropic/{config.ANTHROPIC_MODEL}"
         elif config.LLM_BACKEND == "gemini":
             backend_info = f"gemini/{config.GEMINI_MODEL}"
+        elif config.LLM_BACKEND == "openai":
+            backend_info = f"openai/{config.OPENAI_CHAT_MODEL} (fallback: {config.OPENAI_CHAT_FALLBACK_MODEL})"
         else:
             backend_info = f"ollama/{config.LLM_MODEL}"
         logger.info(
@@ -696,11 +860,11 @@ class BankingRAGChain:
             )
 
         backend = config.LLM_BACKEND
-        model_name = (
-            config.ANTHROPIC_MODEL if backend == "anthropic"
-            else config.GEMINI_MODEL if backend == "gemini"
-            else config.LLM_MODEL
-        )
+        model_name = {
+            "anthropic": config.ANTHROPIC_MODEL,
+            "gemini": config.GEMINI_MODEL,
+            "openai": config.OPENAI_CHAT_MODEL,
+        }.get(backend, config.LLM_MODEL)
         t_llm = time.perf_counter()
         answer = self._llm.invoke(messages)
         llm_ms = (time.perf_counter() - t_llm) * 1000
