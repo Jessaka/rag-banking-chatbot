@@ -42,7 +42,7 @@ def classify_query(query: str) -> QueryProfile:
     labels: set[str] = set()
     has_business_account_term = any(k in q for k in BUSINESS_ACCOUNT_TERMS)
 
-    if any(k in q for k in ("poplatek", "poplatky", "cena", "stojí", "kolik", "sazebník", "ceník", "kč", "zdarma")):
+    if any(k in q for k in ("poplatek", "poplatky", "cena", "stojí", "kolik", "sazebník", "ceník", "kč", "zdarma", "fee", "monthly", "maintenance")):
         labels.add("pricing")
     if any(k in q for k in ARCHIVE_QUERY_TERMS):
         labels.add("archived_requested")

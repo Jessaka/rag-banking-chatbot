@@ -76,6 +76,125 @@ _FEE_EXCLUDE_STEMS: frozenset[str] = frozenset({
     "stavebn",        # stavební (building savings)
 })
 
+# ---------------------------------------------------------------------------
+# Primary account fee – ultra-precise row detection
+# ---------------------------------------------------------------------------
+
+# Substrings (in normalized fee_type) that disqualify a row from being a
+# primary account fee.  These catch multicurrency add-ons, MEK/OEk, BIU,
+# transaction fees, cash ops, card fees, insurance, etc.
+_PRIMARY_FEE_EXCLUDE_SUBSTRINGS: frozenset[str] = frozenset({
+    "vedlejsi",       # vedlejší měnové složky
+    "menove",         # měnové složky
+    "elektronicky",   # elektronický klíč (OEk)
+    "elektronickeho", # elektronického klíče
+    "mobilni",        # mobilní elektronický klíč (MEK)
+    "investicni",     # investiční účet (BIU)
+    "uhrada",         # úhrada (payment)
+    "uhrady",         # úhrady
+    "platba",         # platba
+    "prikaz",         # platební příkaz
+    "import",         # import plateb
+    "hromadny",       # hromadné platby
+    "pronajem",       # pronájem
+    "bezpecnostni",   # bezpečnostní schránka
+    "vyzva",          # výzva k zaplacení
+    "dluh",           # dluh
+    "nestandardni",   # nestandardní služby
+    "vypis",          # výpis
+    "vypisu",         # výpisu
+    "potvrzeni",       # potvrzení
+    "sprava",         # správa služby
+    "spravy",         # správy služby
+    "nastaveni",      # nastavení služby
+})
+
+
+def is_primary_account_fee_row(row: dict) -> bool:
+    """Return True if *row* is a **primary** account-fee row.
+
+    A primary account fee row covers only the core monthly account
+    maintenance fee – i.e. fee_types such as:
+
+    * ``vedení (běžného) účtu``
+    * ``cena tarifu``
+    * ``poplatek za vedení``
+    * ``měsíční poplatek`` (za účet)
+
+    Everything else (multicurrency add-ons, MEK, BIU, transaction
+    fees, cash ops, card fees, …) is rejected.
+    """
+    ft = _norm(str(row.get("fee_type") or ""))
+    if not ft:
+        return False
+
+    # --- HARD EXCLUDE ---
+    # If the normalized fee_type contains ANY exclude substring it is NOT
+    # a primary row, regardless of token-level allow patterns.
+    for excl in _PRIMARY_FEE_EXCLUDE_SUBSTRINGS:
+        if excl in ft:
+            return False
+
+    ft_tokens = {t for t in re.findall(r"[\wÀ-ɏ]+", ft) if len(t) > 1}
+
+    # --- ALLOW patterns (token-level) ---
+    # 1. vedení … účtu  (primary account maintenance)
+    if "vedeni" in ft_tokens and "uctu" in ft_tokens:
+        return True
+    # 2. cena tarifu     (active retail accounts)
+    if "cena" in ft_tokens and "tarifu" in ft_tokens:
+        return True
+    # 3. poplatek za vedení
+    if "poplatek" in ft_tokens and "vedeni" in ft_tokens:
+        return True
+    # 4. měsíční poplatek
+    if "mesicni" in ft_tokens and "poplatek" in ft_tokens:
+        return True
+    # 5. English patterns
+    ft_lower = str(row.get("fee_type", "")).lower()
+    if "account" in ft_lower and "maintenance" in ft_lower:
+        return True
+    if "monthly" in ft_lower and "account" in ft_lower and "fee" in ft_lower:
+        return True
+
+    return False
+
+
+# Normalized triggers for primary-account-fee queries.
+# A broader general-pricing query (e.g. "poplatek za výběr z bankomatu")
+# MUST NOT activate the primary filter.
+_PRIMARY_QUERY_CORE_TERMS: frozenset[str] = frozenset({
+    "vedeni", "uctu", "ucet", "bezneho", "mesicni", "poplatek",
+})
+
+
+def is_primary_account_fee_query(query: str) -> bool:
+    """Return True when *query* is explicitly about primary account fees.
+
+    Triggers:
+    * ``vedení … účtu`` anywhere in the query
+    * ``měsíční poplatek (za) účet``
+    * English ``account maintenance`` / ``monthly account fee``
+    """
+    q = _norm(query)
+    qt = {t for t in re.findall(r"[\wÀ-ɏ]+", q) if len(t) > 1}
+
+    # vedení … účtu  (strongest single signal)
+    if "vedeni" in qt and "uctu" in qt:
+        return True
+    # měsíční poplatek  (buy signals: "měsíční poplatek za eKonto",
+    # "měsíční poplatek za účet", "měsíční poplatek")
+    if "mesicni" in qt and "poplatek" in qt:
+        return True
+    # English
+    q_lower = query.lower()
+    if "account" in q_lower and "maintenance" in q_lower:
+        return True
+    if "monthly" in q_lower and "account" in q_lower and "fee" in q_lower:
+        return True
+
+    return False
+
 
 def _score_row(row: dict, query: str, profile: QueryProfile) -> tuple[float, list[str]]:
     q_norm = _norm(expand_query(query, profile))
@@ -177,7 +296,25 @@ def pricing_search(query: str, top_k: int = 5, min_score: float = 0.5) -> list[D
         if score >= min_score:
             scored.append((row, score, reasons))
 
-    # Hard filter: remove archived rows unless query explicitly asks for them
+    # --- Primary account fee filter -----------------------------------------
+    # If the user explicitly asks about *primary* account fees, restrict to
+    # primary rows only.  Non-primary rows (multicurrency, MEK, BIU, card,
+    # etc.) are dropped BEFORE archive filtering so that archived primary
+    # rows can still be shown as a last resort.
+    debug: dict[str, str | int] = {}
+    primary_rows: list[tuple[dict, float, list[str]]] = []
+    if is_primary_account_fee_query(query):
+        primary_rows = [(r, s, rs) for r, s, rs in scored if is_primary_account_fee_row(r)]
+        debug["primary_account_fee_filter"] = "true"
+        debug["primary_rows"] = len(primary_rows)
+        if primary_rows:
+            scored = primary_rows
+            logger.info(f"Primary account fee filter: {len(primary_rows)} primary rows")
+        else:
+            debug["primary_fallback"] = "true"
+            logger.info("Primary account fee filter: 0 primary rows → fallback to general scoring")
+
+    # --- Archive filter ------------------------------------------------------
     filter_reason: str | None = None
     if not _is_archive_query(query):
         active = [(r, s, rs) for r, s, rs in scored if not _is_row_archived(r)]
@@ -186,11 +323,22 @@ def pricing_search(query: str, top_k: int = 5, min_score: float = 0.5) -> list[D
             if filtered > 0:
                 filter_reason = f"archived_hard_filtered:{filtered}"
                 logger.info(f"PricingRetriever hard filter odstranil {filtered} archived rows")
+                # If this is a primary-filtered set and we lost all primary rows,
+                # signal the fallback.
+                if primary_rows and not any(True for _ in active):
+                    debug["primary_archived_fallback"] = "true"
             scored = active
         else:
-            filter_reason = "archived_hard_filter_fallback:all_rows_archived"
-            logger.warning("PricingRetriever: vše by bylo odfiltrováno → fallback na všechny řádky")
+            fbk = "archived_hard_filter_fallback:"
+            if primary_rows:
+                fbk += "all_primary_rows_archived"
+                debug["primary_archived_fallback"] = "true"
+            else:
+                fbk += "all_rows_archived"
+            filter_reason = fbk
+            logger.warning(f"PricingRetriever: vše by bylo odfiltrováno → fallback na všechny řádky")
 
+    # --- Rank & build docs ---------------------------------------------------
     ranked = sorted(scored, key=lambda item: item[1], reverse=True)[:top_k]
     docs: list[Document] = []
     for row, score, reasons in ranked:
@@ -213,6 +361,7 @@ def pricing_search(query: str, top_k: int = 5, min_score: float = 0.5) -> list[D
             "rerank_score": score,
             "hybrid_score": score,
             "query_labels": sorted(profile.labels),
+            "retrieval_debug": debug,
         }
         if filter_reason:
             meta["structured_pricing_filter_reason"] = filter_reason
