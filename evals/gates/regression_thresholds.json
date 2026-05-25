@@ -1,0 +1,44 @@
+{
+  "minimums": {
+    "pass_rate": 0.75,
+    "pricing_accuracy": 0.80,
+    "avg_source_grounding_score": 0.55,
+    "ambiguity_handling_correctness": 0.85,
+    "retrieval_precision_at_3": 0.45
+  },
+  "maximums": {
+    "hallucination_rate": 0.05,
+    "unsupported_answer_rate": 0.10
+  },
+  "category_minimum_pass_rate": {
+    "osobni_ucty": 0.70,
+    "podnikatele": 0.70,
+    "firmy": 0.65,
+    "kreditni_karty": 0.70,
+    "hypoteky": 0.70,
+    "faq": 0.70,
+    "bezpecnost": 0.75,
+    "investice": 0.65,
+    "reklamace": 0.70,
+    "limity": 0.70,
+    "rb_klic": 0.75,
+    "sepa_swift": 0.70,
+    "apple_google_pay": 0.70
+  },
+  "failure_count_maximums": {
+    "wrong_product_routing": 0,
+    "stale_pricing": 0,
+    "hallucination": 1,
+    "ambiguity_miss": 0,
+    "missing_source": 10,
+    "missing_retrieval": 15,
+    "unsupported_answer": 2,
+    "api_error": 0
+  },
+  "priority_gates": {
+    "pricing_correctness": ["pricing_accuracy", "wrong_product_routing", "stale_pricing"],
+    "hallucination_prevention": ["hallucination_rate", "unsupported_answer_rate"],
+    "ambiguity_handling": ["ambiguity_handling_correctness", "ambiguity_miss"],
+    "source_quality": ["avg_source_grounding_score", "missing_source"]
+  }
+}

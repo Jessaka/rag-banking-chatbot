@@ -114,7 +114,7 @@ def test_pricing_retriever_deterministic_jsonl(tmp_path):
     ]
     path.write_text("\n".join(json.dumps(row, ensure_ascii=False) for row in rows), encoding="utf-8")
     pricing_retriever.load_pricing_rows.cache_clear()
-    docs = pricing_retriever.pricing_search("Kolik stojí vedení eKonta?", top_k=3, min_score=0.1)
+    docs = pricing_retriever.pricing_search("Kolik stojí vedení osobního eKonta?", top_k=3, min_score=0.1)
     # default config path may be different; load directly to prove JSONL parser too
     loaded = pricing_retriever.load_pricing_rows(str(path))
     assert loaded[0]["product_name"] == "eKonto EXCLUSIVE"
@@ -123,7 +123,7 @@ def test_pricing_retriever_deterministic_jsonl(tmp_path):
     original = pricing_retriever.config.PRICING_ROWS_PATH
     pricing_retriever.config.PRICING_ROWS_PATH = path
     try:
-        docs = pricing_retriever.pricing_search("Kolik stojí vedení eKonta?", top_k=3, min_score=0.1)
+        docs = pricing_retriever.pricing_search("Kolik stojí vedení osobního eKonta?", top_k=3, min_score=0.1)
     finally:
         pricing_retriever.config.PRICING_ROWS_PATH = original
         pricing_retriever.load_pricing_rows.cache_clear()
@@ -160,11 +160,14 @@ def test_pricing_retriever_skips_low_confidence_rows(tmp_path):
     original = pricing_retriever.config.PRICING_ROWS_PATH
     pricing_retriever.config.PRICING_ROWS_PATH = path
     try:
-        docs = pricing_retriever.pricing_search("Kolik stojí vedení eKonta?", top_k=3, min_score=0.1)
+        docs = pricing_retriever.pricing_search("Kolik stojí vedení osobního eKonta?", top_k=3, min_score=0.1)
     finally:
         pricing_retriever.config.PRICING_ROWS_PATH = original
         pricing_retriever.load_pricing_rows.cache_clear()
-    assert docs == []
+    assert len(docs) == 1
+    assert docs[0].metadata["product_name"] == "Upozornění"
+    assert docs[0].metadata["retrieval_debug"]["canonical_product"] == "ekonto_osobni"
+    assert docs[0].metadata["retrieval_debug"]["fallback_used"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -334,8 +337,8 @@ def test_pricing_search_primary_filter_excludes_secondary_rows(tmp_path):
         pricing_retriever.load_pricing_rows.cache_clear()
 
 
-def test_pricing_search_primary_filter_fallback(tmp_path):
-    """When no primary rows exist, fallback to general scoring."""
+def test_pricing_search_primary_filter_blocks_general_fallback_for_canonical_product(tmp_path):
+    """When no primary rows exist for a canonical product, return warning."""
     path = tmp_path / "pricing_rows.jsonl"
     non_primary = {
         "product_name": "AKTIVNÍ účet",
@@ -361,13 +364,16 @@ def test_pricing_search_primary_filter_fallback(tmp_path):
     pricing_retriever.config.PRICING_ROWS_PATH = path
     try:
         docs = pricing_retriever.pricing_search("Jaký je poplatek za vedení běžného účtu?", top_k=10, min_score=0.1)
-        assert len(docs) == 1, f"Očekáván 1 fallback doc, ale je {len(docs)}"
+        assert len(docs) == 1
+        assert docs[0].metadata["product_name"] == "Upozornění"
         debug = docs[0].metadata.get("retrieval_debug", {})
-        # No primary rows exist → primary_fallback without primary_account_fee_filter
         assert debug.get("primary_account_fee_filter") is None
         assert debug.get("primary_fallback") == "true"
         assert debug.get("active_rows_count") == 1
-        assert debug.get("active_results_count") == 1
+        assert debug.get("active_results_count") is None
+        assert debug.get("canonical_product") == "osobni_ucet"
+        assert debug.get("fallback_used") is False
+        assert debug.get("pricing_ranking_reason") == "no_active_primary_rows_for_canonical_product"
     finally:
         pricing_retriever.config.PRICING_ROWS_PATH = original
         pricing_retriever.load_pricing_rows.cache_clear()
@@ -460,7 +466,7 @@ def test_active_pricing_preferred_over_archived(tmp_path):
     pricing_retriever.config.PRICING_ROWS_PATH = path
     try:
         # Normal query — should return only active
-        docs = pricing_retriever.pricing_search("Kolik stojí vedení eKonta?", top_k=5, min_score=0.1)
+        docs = pricing_retriever.pricing_search("Kolik stojí vedení osobního eKonta?", top_k=5, min_score=0.1)
         assert len(docs) == 1, f"Očekáván 1 aktivní doc, ale je {len(docs)}"
         assert docs[0].metadata["product_name"] == "eKonto"
         assert docs[0].metadata["title"] == "1. část Aktuálně nabízené produkty"
@@ -531,8 +537,8 @@ def test_active_primary_preferred_over_archived_primary(tmp_path):
         pricing_retriever.load_pricing_rows.cache_clear()
 
 
-def test_archived_primary_fallback_when_no_active_primary(tmp_path):
-    """When NO active primary rows exist, archived primary rows should be returned."""
+def test_archived_primary_not_used_for_canonical_product_when_no_active_primary(tmp_path):
+    """Archived primary rows must not satisfy current canonical product queries."""
     path = tmp_path / "pricing_rows.jsonl"
     active_non_primary = {
         "product_name": "AKTIVNÍ účet",
@@ -577,19 +583,21 @@ def test_archived_primary_fallback_when_no_active_primary(tmp_path):
     pricing_retriever.config.PRICING_ROWS_PATH = path
     try:
         docs = pricing_retriever.pricing_search("Jaký je poplatek za vedení běžného účtu?", top_k=5, min_score=0.0)
-        assert len(docs) == 1, f"Očekáván 1 archived primary doc, ale je {len(docs)}"
-        assert docs[0].metadata["product_name"] == "eKonto (archiv)"
-        assert docs[0].metadata["fee_type"] == "1. Vedení jednoho běžného účtu"
+        assert len(docs) == 1
+        assert docs[0].metadata["product_name"] == "Upozornění"
         debug = docs[0].metadata.get("retrieval_debug", {})
-        assert debug.get("primary_account_fee_filter") == "true"
-        assert debug.get("archived_fallback_used") == "true"
+        assert debug.get("primary_account_fee_filter") is None
+        assert debug.get("archived_fallback_used") is None
+        assert debug.get("canonical_product") == "osobni_ucet"
+        assert debug.get("fallback_used") is False
+        assert debug.get("pricing_ranking_reason") == "no_active_primary_rows_for_canonical_product"
     finally:
         pricing_retriever.config.PRICING_ROWS_PATH = original
         pricing_retriever.load_pricing_rows.cache_clear()
 
 
 def test_service_config_fees_excluded_from_primary_query(tmp_path):
-    """Query 'Kolik stojí vedení eKonta?' must NOT return service/config rows.
+    """Query 'Kolik stojí vedení osobního eKonta?' must NOT return service/config rows.
 
     Rows like:
       - Správa služby
@@ -682,7 +690,7 @@ def test_service_config_fees_excluded_from_primary_query(tmp_path):
     pricing_retriever.config.PRICING_ROWS_PATH = path
     try:
         # This query now activates primary filter thanks to "vedení" trigger
-        docs = pricing_retriever.pricing_search("Kolik stojí vedení eKonta?", top_k=10, min_score=0.1)
+        docs = pricing_retriever.pricing_search("Kolik stojí vedení osobního eKonta?", top_k=10, min_score=0.1)
         assert len(docs) == 1, (
             f"Očekáván přesně 1 primary doc (Vedení účtu), "
             f"ale je {len(docs)}: {[d.metadata['fee_type'] for d in docs]}"
@@ -696,6 +704,509 @@ def test_service_config_fees_excluded_from_primary_query(tmp_path):
         # Ve primary_fee_reason musí být zmínka o excludovaných service rows
         excluded_ft = debug.get("primary_fee_reason", "")
         assert "sprava" in excluded_ft or "excluded" in excluded_ft
+    finally:
+        pricing_retriever.config.PRICING_ROWS_PATH = original
+        pricing_retriever.load_pricing_rows.cache_clear()
+
+
+def test_ekonto_prefers_2026_active_over_2018_2020_archived(tmp_path):
+    path = tmp_path / "pricing_rows.jsonl"
+    rows = [
+        {
+            "product_name": "eKonto",
+            "fee_type": "Vedení účtu",
+            "fee_value": "250 Kč",
+            "currency": "CZK",
+            "period": "měsíčně",
+            "source_file": "cenik-pi-2018.pdf",
+            "title": "Ceník 2018",
+            "category": "retail",
+            "pricing_type": "account_fee",
+            "confidence": 0.99,
+            "document_year": 2018,
+        },
+        {
+            "product_name": "eKonto",
+            "fee_type": "Vedení účtu",
+            "fee_value": "400 Kč",
+            "currency": "CZK",
+            "period": "měsíčně",
+            "source_file": "cenik-pi-2020.pdf",
+            "title": "Ceník 2020",
+            "category": "retail",
+            "pricing_type": "account_fee",
+            "confidence": 0.99,
+            "document_year": 2020,
+        },
+        {
+            "product_name": "eKonto",
+            "fee_type": "Vedení účtu",
+            "fee_value": "129 Kč",
+            "currency": "CZK",
+            "period": "měsíčně",
+            "source_file": "cenik-pi-2026.pdf",
+            "title": "Ceník 2026 Aktuálně nabízené produkty",
+            "category": "retail",
+            "pricing_type": "account_fee",
+            "confidence": 0.90,
+            "document_year": 2026,
+            "is_active": True,
+        },
+    ]
+    path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows), encoding="utf-8")
+    pricing_retriever.load_pricing_rows.cache_clear()
+    original = pricing_retriever.config.PRICING_ROWS_PATH
+    pricing_retriever.config.PRICING_ROWS_PATH = path
+    try:
+        docs = pricing_retriever.pricing_search("Kolik stojí vedení osobního eKonta?", top_k=5, min_score=0.0)
+        assert docs
+        assert all(d.metadata["document_year"] == 2026 for d in docs)
+        assert all(d.metadata["is_active"] is True for d in docs)
+        assert {d.metadata["fee_value"] for d in docs} == {"129 Kč"}
+        debug = docs[0].metadata["retrieval_debug"]
+        assert debug["selected_document_year"] == 2026
+        assert debug["archived_rows_count"] == 2
+        assert len(debug["rejected_archived_rows"]) == 2
+        assert debug["selected_pricing_rows"][0]["document_year"] == 2026
+    finally:
+        pricing_retriever.config.PRICING_ROWS_PATH = original
+        pricing_retriever.load_pricing_rows.cache_clear()
+
+
+def test_current_account_fee_does_not_mix_archived_with_active(tmp_path):
+    path = tmp_path / "pricing_rows.jsonl"
+    rows = [
+        {
+            "product_name": "Běžný účet mimo tarify",
+            "fee_type": "1. Vedení jednoho běžného účtu",
+            "fee_value": "500 Kč",
+            "currency": "CZK",
+            "period": "měsíčně",
+            "source_file": "cenik-pi-2018.pdf",
+            "title": "Již nenabízené produkty 2018",
+            "category": "retail",
+            "pricing_type": "account_fee",
+            "confidence": 0.99,
+            "document_year": 2018,
+        },
+        {
+            "product_name": "CHYTRÝ účet",
+            "fee_type": "1. Cena tarifu",
+            "fee_value": "0 Kč",
+            "currency": "CZK",
+            "period": "měsíčně",
+            "source_file": "cenik-pi-2026.pdf",
+            "title": "Aktuální ceník 2026",
+            "category": "retail",
+            "pricing_type": "account_fee",
+            "confidence": 0.90,
+            "document_year": 2026,
+        },
+    ]
+    path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows), encoding="utf-8")
+    pricing_retriever.load_pricing_rows.cache_clear()
+    original = pricing_retriever.config.PRICING_ROWS_PATH
+    pricing_retriever.config.PRICING_ROWS_PATH = path
+    try:
+        docs = pricing_retriever.pricing_search("Jaký je poplatek za vedení běžného účtu?", top_k=5, min_score=0.0)
+        assert len(docs) == 1
+        assert docs[0].metadata["product_name"] == "CHYTRÝ účet"
+        assert docs[0].metadata["document_year"] == 2026
+        assert "2018" not in docs[0].metadata["source_file"]
+    finally:
+        pricing_retriever.config.PRICING_ROWS_PATH = original
+        pricing_retriever.load_pricing_rows.cache_clear()
+
+
+def test_archived_rows_used_only_when_no_active_data(tmp_path):
+    path = tmp_path / "pricing_rows.jsonl"
+    row = {
+        "product_name": "eKonto archiv",
+        "fee_type": "Vedení účtu",
+        "fee_value": "250 Kč",
+        "currency": "CZK",
+        "period": "měsíčně",
+        "source_file": "cenik-pi-2018.pdf",
+        "title": "Již nenabízené produkty 2018",
+        "category": "retail",
+        "pricing_type": "account_fee",
+        "confidence": 0.95,
+        "document_year": 2018,
+    }
+    path.write_text(json.dumps(row, ensure_ascii=False), encoding="utf-8")
+    pricing_retriever.load_pricing_rows.cache_clear()
+    original = pricing_retriever.config.PRICING_ROWS_PATH
+    pricing_retriever.config.PRICING_ROWS_PATH = path
+    try:
+        docs = pricing_retriever.pricing_search("Kolik stojí vedení osobního eKonta?", top_k=5, min_score=0.0)
+        assert len(docs) == 1
+        assert docs[0].metadata["product_name"] == "Upozornění"
+        assert "Nepodařilo se najít jednoznačný aktuální ceník" in docs[0].metadata["fee_type"]
+        debug = docs[0].metadata["retrieval_debug"]
+        assert debug["canonical_product"] == "ekonto_osobni"
+        assert debug["fallback_used"] is False
+        assert debug["pricing_ranking_reason"] == "no_active_rows_for_canonical_product"
+    finally:
+        pricing_retriever.config.PRICING_ROWS_PATH = original
+        pricing_retriever.load_pricing_rows.cache_clear()
+
+
+def test_duplicate_current_price_rows_are_deduped(tmp_path):
+    path = tmp_path / "pricing_rows.jsonl"
+    row = {
+        "product_name": "eKonto",
+        "fee_type": "Vedení účtu",
+        "fee_value": "129 Kč",
+        "currency": "CZK",
+        "period": "měsíčně",
+        "source_file": "cenik-pi-2026.pdf",
+        "title": "Aktuální ceník 2026",
+        "category": "retail",
+        "pricing_type": "account_fee",
+        "confidence": 0.95,
+        "document_year": 2026,
+    }
+    rows = [row, {**row, "page": 2, "row_index": 99}]
+    path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows), encoding="utf-8")
+    pricing_retriever.load_pricing_rows.cache_clear()
+    original = pricing_retriever.config.PRICING_ROWS_PATH
+    pricing_retriever.config.PRICING_ROWS_PATH = path
+    try:
+        docs = pricing_retriever.pricing_search("Kolik stojí vedení osobního eKonta?", top_k=5, min_score=0.0)
+        assert len(docs) == 1
+        assert docs[0].metadata["fee_value"] == "129 Kč"
+    finally:
+        pricing_retriever.config.PRICING_ROWS_PATH = original
+        pricing_retriever.load_pricing_rows.cache_clear()
+
+
+def test_generic_account_fee_query_does_not_return_500_250_400_without_current_tariff(tmp_path):
+    """Regression for mixed/orphan account fee rows from old ceníky.
+
+    Generic query must not return historical 500/250/400 Kč rows when a current
+    active tariff row exists. It should return one well-mapped current product.
+    """
+    path = tmp_path / "pricing_rows.jsonl"
+    rows = [
+        {
+            "product_name": "eKonto Základní cena",
+            "fee_type": "1. Vedení jednoho běžného účtu",
+            "fee_value": "500 Kč",
+            "currency": "CZK",
+            "period": "měsíčně",
+            "source_file": "pricing_cenik-pi-2_55d9608ef7.pdf",
+            "title": "Starý ceník bez data",
+            "category": "retail",
+            "pricing_type": "account_fee",
+            "confidence": 1.0,
+        },
+        {
+            "product_name": "eKonto Výhody Prémium",
+            "fee_type": "1. Vedení jednoho běžného účtu",
+            "fee_value": "250 Kč",
+            "currency": "CZK",
+            "period": "měsíčně",
+            "source_file": "pricing_cenik-pi-2_55d9608ef7.pdf",
+            "title": "Starý ceník bez data",
+            "category": "retail",
+            "pricing_type": "account_fee",
+            "confidence": 1.0,
+        },
+        {
+            "product_name": "eKonto Základní cena",
+            "fee_type": "1. Vedení jednoho běžného účtu",
+            "fee_value": "400 Kč",
+            "currency": "CZK",
+            "period": "měsíčně",
+            "source_file": "cenik-pi-2020.pdf",
+            "title": "Ceník 2020",
+            "category": "retail",
+            "pricing_type": "account_fee",
+            "confidence": 1.0,
+            "document_year": 2020,
+        },
+        {
+            "product_name": "Základní platební účet",
+            "fee_type": "1. Vedení účtu",
+            "fee_value": "zdarma",
+            "currency": "CZK",
+            "period": "měsíčně",
+            "source_file": "cenik-pi-zpu-2026.pdf",
+            "title": "Aktuální ceník 2026",
+            "category": "retail",
+            "pricing_type": "account_fee",
+            "confidence": 0.95,
+            "document_year": 2026,
+        },
+    ]
+    path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows), encoding="utf-8")
+    pricing_retriever.load_pricing_rows.cache_clear()
+    original = pricing_retriever.config.PRICING_ROWS_PATH
+    pricing_retriever.config.PRICING_ROWS_PATH = path
+    try:
+        docs = pricing_retriever.pricing_search("Jaký je poplatek za vedení běžného účtu?", top_k=5, min_score=0.0)
+        assert len(docs) == 1
+        assert docs[0].metadata["product_name"] == "Základní platební účet"
+        assert docs[0].metadata["fee_value"] == "zdarma"
+        assert docs[0].metadata["document_year"] == 2026
+        assert docs[0].metadata["fee_value"] not in {"500 Kč", "250 Kč", "400 Kč"}
+        debug = docs[0].metadata["retrieval_debug"]
+        assert debug["selected_document_year"] == 2026
+        assert len(debug["rejected_archived_rows"]) >= 3
+    finally:
+        pricing_retriever.config.PRICING_ROWS_PATH = original
+        pricing_retriever.load_pricing_rows.cache_clear()
+
+
+def test_ambiguous_ekonto_query_returns_clarification_not_pricing(tmp_path):
+    path = tmp_path / "pricing_rows.jsonl"
+    rows = [
+        {
+            "product_name": "Základní platební účet",
+            "fee_type": "Vedení účtu",
+            "fee_value": "zdarma",
+            "currency": "CZK",
+            "period": "měsíčně",
+            "source_file": "cenik-pi-zpu-2026.pdf",
+            "category": "retail",
+            "pricing_type": "account_fee",
+            "confidence": 0.95,
+            "document_year": 2026,
+        },
+        {
+            "product_name": "eKonto archiv",
+            "fee_type": "Vedení účtu",
+            "fee_value": "250 Kč",
+            "currency": "CZK",
+            "period": "měsíčně",
+            "source_file": "cenik-pi-2020.pdf",
+            "category": "retail",
+            "pricing_type": "account_fee",
+            "confidence": 0.95,
+            "document_year": 2020,
+        },
+    ]
+    path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows), encoding="utf-8")
+    pricing_retriever.load_pricing_rows.cache_clear()
+    original = pricing_retriever.config.PRICING_ROWS_PATH
+    pricing_retriever.config.PRICING_ROWS_PATH = path
+    try:
+        docs = pricing_retriever.pricing_search("Kolik stojí vedení eKonta?", top_k=5, min_score=0.0)
+        assert len(docs) == 1
+        assert docs[0].metadata["product_name"] == "Upřesnění"
+        assert "osobní eKonto" in docs[0].metadata["fee_type"]
+        assert "podnikatelské eKonto" in docs[0].metadata["fee_type"]
+        assert docs[0].metadata["fee_value"] == ""
+        debug = docs[0].metadata["retrieval_debug"]
+        assert debug["canonical_product"] == "ekonto_ambiguous"
+        assert debug["product_match_confidence"] >= 0.75
+        assert debug["matched_product_rows"] == 0
+        assert debug["clarification_required"] is True
+        assert debug["fallback_used"] is False
+    finally:
+        pricing_retriever.config.PRICING_ROWS_PATH = original
+        pricing_retriever.load_pricing_rows.cache_clear()
+
+
+def test_business_account_query_does_not_fallback_to_personal_account(tmp_path):
+    path = tmp_path / "pricing_rows.jsonl"
+    rows = [
+        {
+            "product_name": "Základní platební účet",
+            "fee_type": "Vedení účtu",
+            "fee_value": "zdarma",
+            "currency": "CZK",
+            "period": "měsíčně",
+            "source_file": "cenik-pi-zpu-2026.pdf",
+            "category": "retail",
+            "pricing_type": "account_fee",
+            "confidence": 0.95,
+            "document_year": 2026,
+        }
+    ]
+    path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows), encoding="utf-8")
+    pricing_retriever.load_pricing_rows.cache_clear()
+    original = pricing_retriever.config.PRICING_ROWS_PATH
+    pricing_retriever.config.PRICING_ROWS_PATH = path
+    try:
+        docs = pricing_retriever.pricing_search("Kolik stojí podnikatelský účet?", top_k=5, min_score=0.0)
+        assert len(docs) == 1
+        assert docs[0].metadata["product_name"] == "Upozornění"
+        debug = docs[0].metadata["retrieval_debug"]
+        assert debug["canonical_product"] == "podnikatelsky_ucet"
+        assert debug["matched_product_rows"] == 0
+        assert debug["rejected_cross_product_rows"][0]["product_name"] == "Základní platební účet"
+        assert debug["fallback_used"] is False
+    finally:
+        pricing_retriever.config.PRICING_ROWS_PATH = original
+        pricing_retriever.load_pricing_rows.cache_clear()
+
+
+def test_corporate_account_query_does_not_fallback_to_personal_account(tmp_path):
+    path = tmp_path / "pricing_rows.jsonl"
+    rows = [
+        {
+            "product_name": "Osobní účet",
+            "fee_type": "Vedení účtu",
+            "fee_value": "zdarma",
+            "currency": "CZK",
+            "period": "měsíčně",
+            "source_file": "cenik-pi-2026.pdf",
+            "category": "retail",
+            "pricing_type": "account_fee",
+            "confidence": 0.95,
+            "document_year": 2026,
+        }
+    ]
+    path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows), encoding="utf-8")
+    pricing_retriever.load_pricing_rows.cache_clear()
+    original = pricing_retriever.config.PRICING_ROWS_PATH
+    pricing_retriever.config.PRICING_ROWS_PATH = path
+    try:
+        docs = pricing_retriever.pricing_search("Kolik stojí firemní účet?", top_k=5, min_score=0.0)
+        assert len(docs) == 1
+        assert docs[0].metadata["product_name"] == "Upozornění"
+        debug = docs[0].metadata["retrieval_debug"]
+        assert debug["canonical_product"] == "firemni_ucet"
+        assert debug["matched_product_rows"] == 0
+        assert debug["fallback_used"] is False
+    finally:
+        pricing_retriever.config.PRICING_ROWS_PATH = original
+        pricing_retriever.load_pricing_rows.cache_clear()
+
+
+def test_basic_account_query_can_use_personal_account_fallback(tmp_path):
+    path = tmp_path / "pricing_rows.jsonl"
+    rows = [
+        {
+            "product_name": "Základní platební účet",
+            "fee_type": "Vedení účtu",
+            "fee_value": "zdarma",
+            "currency": "CZK",
+            "period": "měsíčně",
+            "source_file": "cenik-pi-zpu-2026.pdf",
+            "category": "retail",
+            "pricing_type": "account_fee",
+            "confidence": 0.95,
+            "document_year": 2026,
+        },
+        {
+            "product_name": "Podnikatelské eKonto",
+            "fee_type": "Vedení účtu",
+            "fee_value": "129 Kč",
+            "currency": "CZK",
+            "period": "měsíčně",
+            "source_file": "cenik-podnikatele-2026.pdf",
+            "category": "corporate",
+            "pricing_type": "account_fee",
+            "confidence": 0.95,
+            "document_year": 2026,
+        },
+    ]
+    path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows), encoding="utf-8")
+    pricing_retriever.load_pricing_rows.cache_clear()
+    original = pricing_retriever.config.PRICING_ROWS_PATH
+    pricing_retriever.config.PRICING_ROWS_PATH = path
+    try:
+        docs = pricing_retriever.pricing_search("Jaký je poplatek za vedení běžného účtu?", top_k=5, min_score=0.0)
+        assert len(docs) == 1
+        assert docs[0].metadata["product_name"] == "Základní platební účet"
+        debug = docs[0].metadata["retrieval_debug"]
+        assert debug["canonical_product"] == "osobni_ucet"
+        assert debug["fallback_used"] is False
+        assert all(r["product_name"] != "Podnikatelské eKonto" for r in debug["selected_pricing_rows"])
+    finally:
+        pricing_retriever.config.PRICING_ROWS_PATH = original
+        pricing_retriever.load_pricing_rows.cache_clear()
+
+
+def test_personal_ekonto_does_not_use_business_ekonto_rows(tmp_path):
+    path = tmp_path / "pricing_rows.jsonl"
+    rows = [
+        {
+            "product_name": "eKonto",
+            "fee_type": "Vedení účtu",
+            "fee_value": "129 Kč",
+            "currency": "CZK",
+            "period": "měsíčně",
+            "source_file": "cenik-pi-2026.pdf",
+            "category": "retail",
+            "pricing_type": "account_fee",
+            "confidence": 0.95,
+            "document_year": 2026,
+        },
+        {
+            "product_name": "Podnikatelské eKonto",
+            "fee_type": "Vedení účtu",
+            "fee_value": "500 Kč",
+            "currency": "CZK",
+            "period": "měsíčně",
+            "source_file": "cenik-fop-2026.pdf",
+            "category": "corporate",
+            "pricing_type": "account_fee",
+            "confidence": 0.95,
+            "document_year": 2026,
+        },
+    ]
+    path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows), encoding="utf-8")
+    pricing_retriever.load_pricing_rows.cache_clear()
+    original = pricing_retriever.config.PRICING_ROWS_PATH
+    pricing_retriever.config.PRICING_ROWS_PATH = path
+    try:
+        docs = pricing_retriever.pricing_search("Kolik stojí vedení osobního eKonta?", top_k=5, min_score=0.0)
+        assert len(docs) == 1
+        assert docs[0].metadata["product_name"] == "eKonto"
+        assert docs[0].metadata["fee_value"] == "129 Kč"
+        debug = docs[0].metadata["retrieval_debug"]
+        assert debug["canonical_product"] == "ekonto_osobni"
+        assert docs[0].metadata["pricing_product_segment"] == "personal"
+        assert all(r["product_name"] != "Podnikatelské eKonto" for r in debug["selected_pricing_rows"])
+    finally:
+        pricing_retriever.config.PRICING_ROWS_PATH = original
+        pricing_retriever.load_pricing_rows.cache_clear()
+
+
+def test_business_ekonto_does_not_use_personal_ekonto_rows(tmp_path):
+    path = tmp_path / "pricing_rows.jsonl"
+    rows = [
+        {
+            "product_name": "eKonto",
+            "fee_type": "Vedení účtu",
+            "fee_value": "129 Kč",
+            "currency": "CZK",
+            "period": "měsíčně",
+            "source_file": "cenik-pi-2026.pdf",
+            "category": "retail",
+            "pricing_type": "account_fee",
+            "confidence": 0.95,
+            "document_year": 2026,
+        },
+        {
+            "product_name": "Podnikatelské eKonto",
+            "fee_type": "Vedení účtu",
+            "fee_value": "500 Kč",
+            "currency": "CZK",
+            "period": "měsíčně",
+            "source_file": "cenik-fop-2026.pdf",
+            "category": "corporate",
+            "pricing_type": "account_fee",
+            "confidence": 0.95,
+            "document_year": 2026,
+        },
+    ]
+    path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows), encoding="utf-8")
+    pricing_retriever.load_pricing_rows.cache_clear()
+    original = pricing_retriever.config.PRICING_ROWS_PATH
+    pricing_retriever.config.PRICING_ROWS_PATH = path
+    try:
+        docs = pricing_retriever.pricing_search("Kolik stojí vedení podnikatelského eKonta?", top_k=5, min_score=0.0)
+        assert len(docs) == 1
+        assert docs[0].metadata["product_name"] == "Podnikatelské eKonto"
+        assert docs[0].metadata["fee_value"] == "500 Kč"
+        debug = docs[0].metadata["retrieval_debug"]
+        assert debug["canonical_product"] == "ekonto_podnikatelske"
+        assert docs[0].metadata["pricing_product_segment"] == "business"
+        assert all(r["product_name"] != "eKonto" for r in debug["selected_pricing_rows"])
     finally:
         pricing_retriever.config.PRICING_ROWS_PATH = original
         pricing_retriever.load_pricing_rows.cache_clear()

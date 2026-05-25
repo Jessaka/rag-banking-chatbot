@@ -60,6 +60,13 @@ def hybrid_search(
     """
     query_profile = query_profile or classify_query(query)
     expanded_query = expand_query(query, query_profile)
+    retrieval_route = (
+        "pricing" if "pricing" in query_profile.labels else
+        "reklamace" if "complaints" in query_profile.labels else
+        "credit_card_catalog" if "credit_card_catalog" in query_profile.labels else
+        "faq" if "faq" in query_profile.labels else
+        "hybrid"
+    )
     bm25_weight = query_profile.bm25_weight if bm25_weight == 0.4 else bm25_weight
     vector_weight = query_profile.vector_weight if vector_weight == 0.6 else vector_weight
 
@@ -124,6 +131,16 @@ def hybrid_search(
                 page_content=doc.page_content,
                 metadata={
                     **doc.metadata,
+                    "rewritten_query": expanded_query,
+                    "retrieval_route": retrieval_route,
+                    "catalog_intent_detected": "catalog_intent" in query_profile.labels,
+                    "boosted_product_group": "kreditni_karta" if "credit_card" in query_profile.labels else None,
+                    "expanded_credit_card_terms": [
+                        term for term in ("kreditka", "kreditní karta", "splátková karta", "Mastercard kreditní karta", "Visa kreditní karta")
+                        if "credit_card" in query_profile.labels and term.lower() in expanded_query.lower()
+                    ],
+                    "metadata_boost_reason": reasons[:8],
+                    "faq_priority_used": any("faq_priority_used" in reason for reason in reasons),
                     "hybrid_base_score": round(base_score, 6),
                     "metadata_boost": round(metadata_boost, 6),
                     "freshness_score": round(freshness_score, 6),

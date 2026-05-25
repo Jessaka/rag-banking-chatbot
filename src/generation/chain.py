@@ -29,6 +29,7 @@ from src.generation.prompts import (
     format_context,
 )
 from src.retrieval.retriever import BankingRetriever
+from src.retrieval.query_classifier import classify_query
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -39,6 +40,48 @@ NO_ANSWER_MARKERS = (
     "kontaktujte zákaznickou linku",
     "kontaktujte podporu",
 )
+
+AMBIGUITY_PATTERNS = (
+    (re.compile(r"jak[yý]\s+účet\s+je\s+pro\s+mě\s+nejlepší", re.I), "account_advisory"),
+    (re.compile(r"kolik\s+stoj[ií]\s+účet\??$", re.I), "generic_account_pricing"),
+    (re.compile(r"chci\s+kartu.*kolik\s+stoj", re.I), "generic_card_pricing"),
+    (re.compile(r"mohu\s+investici\s+kdykoliv\s+prodat", re.I), "investment_liquidity"),
+)
+
+
+def _ambiguity_intent(question: str) -> str | None:
+    for pattern, intent in AMBIGUITY_PATTERNS:
+        if pattern.search(question):
+            return intent
+    return None
+
+
+def _clarification_answer(intent: str) -> str:
+    if intent == "account_advisory":
+        return (
+            "Upřesněte prosím potřeby, abych mohl doporučit vhodný účet:\n"
+            "- jde o osobní účet, podnikání nebo firmu?\n"
+            "- chcete hlavně nízké poplatky, kartu, výběry, zahraniční platby nebo spoření?\n"
+            "- budete účet používat aktivně každý měsíc?"
+        )
+    if intent == "generic_account_pricing":
+        return "Upřesněte prosím, jestli myslíte osobní běžný účet, podnikatelský účet, firemní účet nebo konkrétní eKonto."
+    if intent == "generic_card_pricing":
+        return "Upřesněte prosím, kterou karta myslíte: debetní kartu, kreditní kartu, nebo kartu k podnikatelskému/firemnímu účtu."
+    if intent == "investment_liquidity":
+        return (
+            "Záleží na konkrétním investičním produktu. Upřesněte prosím, jestli jde o fond, DIP, dluhopis, akcie nebo jiný produkt. "
+            "U investic se mohou lišit lhůty pro vypořádání, poplatky i rizika."
+        )
+    return "Upřesněte prosím, který konkrétní produkt nebo situaci máte na mysli."
+
+
+def _normalize_answer_text(answer: str, *, answer_strategy: str) -> str:
+    text = str(answer or "").strip()
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    if answer_strategy in {"generic_llm", "pricing_section_llm", "pricing_table_llm"} and "Zdroj" not in text:
+        text = f"{text}\n\nZdroj: viz uvedené zdroje níže."
+    return text
 
 
 def _extract_fee_value_from_text(text: str) -> str:
@@ -207,6 +250,59 @@ def _minimal_structured_sources(docs: list[Document]) -> list[dict]:
             "url": data.get("source_url"),
         })
     return sources[:3]
+
+
+def _credit_card_products_from_docs(docs: list[Document]) -> list[str]:
+    """Extract a conservative credit-card product list from retrieved catalog chunks."""
+    candidates = [
+        "Kreditní karta EASY",
+        "Kreditní karta STYLE",
+        "Kreditní karta RB PREMIUM",
+        "Kreditní karta Visa Gold",
+        "Kreditní karta O2 RB",
+        "Partnerská kreditní karta O2 RB Club",
+    ]
+    hay = "\n".join(
+        " ".join([
+            str(doc.metadata.get("title") or doc.metadata.get("file_name") or ""),
+            str(doc.metadata.get("source_url") or doc.metadata.get("url") or ""),
+            doc.page_content[:5000],
+        ])
+        for doc in docs
+    ).lower()
+    products = [name for name in candidates if name.lower() in hay]
+    if not products and any(term in hay for term in ("kreditní karty raiffeisenbank", "kreditni-karty", "kreditní karta")):
+        products = ["Kreditní karty Raiffeisenbank"]
+    return list(dict.fromkeys(products))[:5]
+
+
+def _format_credit_card_catalog_answer(docs: list[Document]) -> str | None:
+    products = _credit_card_products_from_docs(docs)
+    if not products:
+        return None
+    lines = ["Raiffeisenbank v dostupných zdrojích uvádí tyto kreditní karty / kreditní produkty:", ""]
+    for product in products:
+        if "easy" in product.lower():
+            desc = "základní kreditní karta zaměřená na jednoduché používání."
+        elif "style" in product.lower():
+            desc = "kreditní karta s odměnami / výhodami."
+        elif "premium" in product.lower():
+            desc = "prémiovější kreditní karta."
+        elif "visa gold" in product.lower():
+            desc = "kreditní karta typu Visa Gold."
+        elif "o2" in product.lower():
+            desc = "partnerská kreditní karta O2 RB Club."
+        else:
+            desc = "katalog kreditních karet Raiffeisenbank."
+        lines.append(f"- {product}: {desc}")
+    lines.extend([
+        "",
+        "Pro výběr konkrétní karty doporučuji otevřít detail produktu a porovnat podmínky, limity, bonusy a poplatky.",
+    ])
+    first = docs[0]
+    source = first.metadata.get("source_url") or first.metadata.get("url") or first.metadata.get("file_name") or "rb.cz"
+    lines.append(f"\nZdroj: {source}")
+    return "\n".join(lines)
 
 
 def format_structured_pricing_answer(docs: list[Document], max_products: int = 3) -> str:
@@ -791,6 +887,28 @@ class BankingRAGChain:
         if self.chat_history:  # rewriting probíhá jen pokud existuje historie
             logger.info(f"⏱ Query rewriting: {rewrite_ms:.0f}ms")
 
+        # 1b. Explicit ambiguity/advisory policy before retrieval.
+        ambiguity_intent = _ambiguity_intent(retrieval_query)
+        if ambiguity_intent:
+            answer = _clarification_answer(ambiguity_intent)
+            total_ms = (time.perf_counter() - t_ask) * 1000
+            return {
+                "answer": answer,
+                "sources": [],
+                "rewritten_query": retrieval_query,
+                "retrieval_debug": [{
+                    "retrieval_route": "clarification",
+                    "intent_class": "ambiguous" if ambiguity_intent != "account_advisory" else "advisory",
+                    "ambiguity_intent": ambiguity_intent,
+                    "faq_priority_used": False,
+                    "metadata_boost_reason": [],
+                    "rewritten_query": retrieval_query,
+                }],
+                "answer_strategy": "clarification_direct",
+                "answer_confidence": "high",
+                "timing_ms": {"retrieval": 0, "total": round(total_ms), "llm": 0},
+            }
+
         # 2. Retrieval
         t_retrieval = time.perf_counter()
         source_docs: list[Document] = self._retriever.invoke(retrieval_query)
@@ -813,6 +931,21 @@ class BankingRAGChain:
 
         top_doc = source_docs[0]
         structured_docs = _structured_pricing_docs(source_docs)
+        query_profile = classify_query(retrieval_query)
+        if "credit_card_catalog" in query_profile.labels:
+            catalog_answer = _format_credit_card_catalog_answer(source_docs)
+            if catalog_answer:
+                total_ms = (time.perf_counter() - t_ask) * 1000
+                logger.info("Answer strategy: credit_card_catalog_direct (LLM skipped)")
+                return {
+                    "answer": catalog_answer,
+                    "sources": source_docs,
+                    "rewritten_query": retrieval_query,
+                    "answer_strategy": "credit_card_catalog_direct",
+                    "answer_confidence": "high",
+                    "retrieval_debug": self._retrieval_debug(source_docs, "credit_card_catalog_direct"),
+                    "timing_ms": {"retrieval": round(retrieval_ms), "total": round(total_ms), "llm": 0},
+                }
         answer_strategy = "generic_llm"
         answer_confidence = "medium"
         if top_doc in structured_docs:
@@ -869,6 +1002,7 @@ class BankingRAGChain:
         answer = self._llm.invoke(messages)
         llm_ms = (time.perf_counter() - t_llm) * 1000
         answer_text = answer if isinstance(answer, str) else str(answer)
+        answer_text = _normalize_answer_text(answer_text, answer_strategy=answer_strategy)
         if answer_strategy.startswith("pricing_") and any(marker in answer_text.lower() for marker in NO_ANSWER_MARKERS):
             structured_fallback_docs = _structured_pricing_docs(source_docs)
             if structured_fallback_docs:
@@ -928,6 +1062,18 @@ class BankingRAGChain:
                 "rerank_score": doc.metadata.get("rerank_score"),
                 "reasons": doc.metadata.get("retrieval_reasons"),
                 "query_labels": doc.metadata.get("query_labels"),
+                "rewritten_query": doc.metadata.get("rewritten_query"),
+                "retrieval_route": doc.metadata.get("retrieval_route"),
+                "fallback_used": doc.metadata.get("fallback_used"),
+                "fallback_retrieval_used": doc.metadata.get("fallback_retrieval_used"),
+                "expanded_query": doc.metadata.get("expanded_query"),
+                "fallback_source_count": doc.metadata.get("fallback_source_count"),
+                "catalog_intent_detected": doc.metadata.get("catalog_intent_detected"),
+                "boosted_product_group": doc.metadata.get("boosted_product_group"),
+                "expanded_credit_card_terms": doc.metadata.get("expanded_credit_card_terms"),
+                "matched_credit_card_sources": doc.metadata.get("matched_credit_card_sources"),
+                "metadata_boost_reason": doc.metadata.get("metadata_boost_reason"),
+                "faq_priority_used": doc.metadata.get("faq_priority_used"),
                 "answer_strategy": answer_strategy,
             }
             for doc in source_docs

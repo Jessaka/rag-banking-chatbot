@@ -22,6 +22,20 @@ PERSONAL_ACCOUNT_TERMS = (
 PERSONAL_SOURCE_TERMS = ("osobni", "osobní", "cenik-pi", "ekonto", "aktivni-ucet", "bezny-ucet")
 BUSINESS_SOURCE_TERMS = ("ceniky-fop", "cenik-fop", "cenik-corp", "podnikatele", "firmy", "corp", "corporate", "fop")
 ARCHIVE_QUERY_TERMS = ("starý", "stary", "historický", "historicky", "již nenabízený", "jiz nenabizeny", "již nenabízené", "jiz nenabizene", "archiv")
+FAQ_TERMS = ("jak", "kde", "co dělat", "co delat", "mohu", "lze", "funguje", "nastav", "změn", "zmen", "doklad", "dokument")
+COMPLAINT_TERMS = ("reklamac", "reklamovat", "neoprávněn", "neopravnen", "podezřelou transakci", "stav reklamace")
+RB_KEY_TERMS = ("rb klíč", "rb klic", "klíč", "klic", "mobilní klíč", "mobilni klic")
+WALLET_TERMS = ("apple pay", "google pay", "placení mobilem", "placeni mobilem", "hodinky", "wallet")
+PAYMENT_RAIL_TERMS = ("sepa", "swift", "zahraniční plat", "zahranicni plat", "eur", "slovensko")
+CREDIT_CARD_TERMS = (
+    "kreditka", "kreditku", "kreditky", "kreditek", "kreditní karta", "kreditni karta",
+    "kreditní karty", "kreditni karty", "karta na splátky", "karta na splatky",
+    "splátková karta", "splatkova karta", "credit card",
+)
+CATALOG_TERMS = (
+    "jaké máte", "jake mate", "co nabízíte", "co nabizite", "nabízíte", "nabizite", "nabízí", "nabizi",
+    "druhy", "typy", "jakou", "jaké jsou", "jake jsou", "můžu založit", "muzu zalozit", "založit", "zalozit",
+)
 
 
 @dataclass(frozen=True)
@@ -59,12 +73,37 @@ def classify_query(query: str) -> QueryProfile:
         labels.add("business_account")
         if any(k in q for k in ("podnikatel", "podnikatelsk", "osvč", "osvc", "živnostník", "zivnostnik")):
             labels.add("entrepreneur_account")
-    if any(k in q for k in ("karta", "karty", "limit karty", "kreditní", "debetní", "výběr", "bankomat")):
+    has_catalog_intent = any(k in q for k in CATALOG_TERMS)
+    has_credit_card_term = any(k in q for k in CREDIT_CARD_TERMS)
+
+    if any(k in q for k in ("karta", "karty", "limit karty", "kreditní", "kreditni", "kreditka", "kreditku", "kreditky", "kreditek", "debetní", "výběr", "bankomat", "credit card")):
         labels.add("cards")
+    if has_credit_card_term:
+        labels.add("credit_card")
+        labels.add("cards")
+    if has_catalog_intent:
+        labels.add("catalog_intent")
+    if has_catalog_intent and "cards" in labels and "debet" not in q:
+        labels.add("credit_card_catalog")
+        labels.add("credit_card")
     if any(k in q for k in ("hypot", "úvěr na bydlení", "uver na bydleni")):
         labels.add("mortgages")
     if any(k in q for k in ("invest", "fond", "dip", "akcie", "dluhopis")):
         labels.add("investing")
+    if any(k in q for k in FAQ_TERMS):
+        labels.add("faq")
+    if any(k in q for k in COMPLAINT_TERMS):
+        labels.add("complaints")
+        labels.add("support")
+    if any(k in q for k in RB_KEY_TERMS):
+        labels.add("rb_key")
+        labels.add("support")
+    if any(k in q for k in WALLET_TERMS):
+        labels.add("wallets")
+        labels.add("cards")
+    if any(k in q for k in PAYMENT_RAIL_TERMS):
+        labels.add("sepa_swift")
+        labels.add("payments")
     if any(k in q for k in ("pojiště", "pojist", "cestovní pojištění")):
         labels.add("insurance")
     if any(k in q for k in ("jak", "změnit", "zmenit", "nastavit", "ztráta", "blokace", "podpora", "kontakt")):
@@ -90,6 +129,24 @@ def classify_query(query: str) -> QueryProfile:
         vector_weight = 0.7
         preferred_chunk_types.append("faq")
         rerank_min_score = -1.0
+    if "faq" in labels and "pricing" not in labels:
+        bm25_weight = min(bm25_weight, 0.35)
+        vector_weight = max(vector_weight, 0.65)
+        preferred_chunk_types.extend(["faq", "html", "text"])
+        preferred_categories.extend(["faq", "support"])
+        rerank_min_score = -1.0
+    if "complaints" in labels:
+        preferred_urls.extend(["reklamace", "stiznosti", "formulare"])
+        preferred_categories.extend(["support", "complaints"])
+    if "rb_key" in labels:
+        preferred_urls.extend(["rb-klic", "rb-klíč", "mobilni", "bezpecnost"])
+        preferred_categories.extend(["security", "digital", "support"])
+    if "wallets" in labels:
+        preferred_urls.extend(["apple-pay", "google-pay", "karty", "mobilni-platby"])
+        preferred_categories.extend(["cards", "payments", "digital"])
+    if "sepa_swift" in labels:
+        preferred_urls.extend(["sepa", "swift", "zahranicni-platby", "zahraniční-platby", "platby"])
+        preferred_categories.extend(["payments", "foreign_payments"])
     if "retail_banking" in labels:
         preferred_urls.append("/osobni/")
         preferred_categories.extend(["retail", "accounts", "retail_banking"])
@@ -103,11 +160,20 @@ def classify_query(query: str) -> QueryProfile:
     if "cards" in labels:
         preferred_categories.append("cards")
         preferred_urls.append("/karty")
+    if "credit_card" in labels:
+        preferred_categories.extend(["cards", "credit_cards", "kreditni_karty"])
+        preferred_urls.extend(["kreditni-karty", "kreditni-karta", "kreditni", "credit-card", "/karty"])
+        bm25_weight = max(bm25_weight, 0.45)
+        vector_weight = min(vector_weight, 0.55)
+    if "credit_card_catalog" in labels:
+        preferred_chunk_types.extend(["section_text", "html", "faq", "pricing"])
+        rerank_min_score = -10.0
     if "mortgages" in labels:
         preferred_categories.append("mortgages")
         preferred_urls.append("/hypotek")
     if "investing" in labels:
         preferred_categories.append("investments")
+        preferred_urls.extend(["investice", "fondy", "dip"])
     if "insurance" in labels:
         preferred_categories.append("insurance")
 
@@ -135,6 +201,31 @@ def expand_query(query: str, profile: QueryProfile | None = None) -> str:
         terms.extend(["eKonto", "ekonto", "ekonta", "vedení účtu", "vedeni uctu", "běžný účet", "bezny ucet"])
     if any(k in q for k in ("vedení", "vedeni", "účtu", "uctu")):
         terms.extend(["vedení účtu", "vedeni uctu", "měsíční poplatek", "mesicni poplatek"])
+    if "complaints" in profile.labels:
+        terms.extend([
+            "reklamace platby", "reklamace transakce", "neoprávněná transakce",
+            "chargeback", "karetní reklamace", "vrácení platby", "dispute transaction",
+            "stížnost na platbu", "reklamace karetní transakce", "reklamovat",
+            "formulář reklamace", "kartová transakce",
+        ])
+    if "rb_key" in profile.labels:
+        terms.extend(["RB klíč", "RB klic", "mobilní aplikace", "autorizace", "potvrzení platby", "aktivace"])
+    if "wallets" in profile.labels:
+        terms.extend(["Apple Pay", "Google Pay", "mobilní platby", "platební karta", "digital wallet"])
+    if "credit_card" in profile.labels:
+        terms.extend([
+            "kreditka", "kreditku", "kreditky", "kreditní karta", "kreditní karty",
+            "splátková karta", "karta na splátky", "Mastercard kreditní karta",
+            "Visa kreditní karta", "credit card", "Kreditní karta EASY",
+            "Kreditní karta STYLE", "Kreditní karta RB PREMIUM", "Kreditní karta Visa Gold",
+            "Kreditní karta O2 RB",
+        ])
+    if "sepa_swift" in profile.labels:
+        terms.extend(["SEPA", "SWIFT", "zahraniční platba", "EUR platba", "IBAN", "BIC"])
+    if "investing" in profile.labels:
+        terms.extend(["investice", "fondy", "DIP", "rizika", "prodej investice", "cenné papíry"])
+    if "faq" in profile.labels:
+        terms.extend(["návod", "postup", "často kladené dotazy", "FAQ", "jak postupovat"])
     # Preserve original phrasing first, append unique expansions for BM25 exact-match recall.
     unique = [term for term in dict.fromkeys(terms) if term.lower() not in q]
     return " ".join([query, *unique]).strip()
@@ -210,6 +301,24 @@ def source_priority(doc: Document, profile: QueryProfile) -> tuple[float, list[s
             score -= 0.035; reasons.append("corporate wording penalty")
     if "pricing" in profile.labels and any(k in content for k in ("kč", "poplatek", "zdarma", "měsíčně", "ceník", "sazebník")):
         score += 0.025; reasons.append("pricing terms in content")
+    if "faq" in profile.labels and (chunk_type == "faq" or any(k in hay for k in ("faq", "často", "casto", "jak", "návod", "navod"))):
+        score += 0.120; reasons.append("faq_priority_used")
+    if "complaints" in profile.labels and any(k in hay for k in ("reklamac", "stížnost", "stiznost", "formulář", "formular")):
+        score += 0.180; reasons.append("complaint metadata/content boost")
+    if "rb_key" in profile.labels and any(k in hay for k in ("rb klíč", "rb klic", "mobilní klíč", "mobilni klic", "autorizace")):
+        score += 0.180; reasons.append("rb_key metadata/content boost")
+    if "wallets" in profile.labels and any(k in hay for k in ("apple pay", "google pay", "mobilní plat", "mobilni plat", "karty")):
+        score += 0.160; reasons.append("wallet metadata/content boost")
+    if "credit_card" in profile.labels:
+        credit_terms = ("kreditni-karty", "kreditní karta", "kreditni karta", "kreditní karty", "kreditka", "mastercard", "visa", "o2 rb", "rb premium", "style", "easy")
+        if any(k in hay for k in credit_terms):
+            score += 0.260; reasons.append("boosted_product_group=kreditni_karta")
+        if any(k in hay for k in ("debetní", "debetni")) and not any(k in hay for k in ("kreditní", "kreditni", "kreditka")):
+            score -= 0.100; reasons.append("debit card penalty for credit_card query")
+    if "sepa_swift" in profile.labels and any(k in hay for k in ("sepa", "swift", "iban", "bic", "zahraniční", "zahranicni")):
+        score += 0.160; reasons.append("sepa_swift metadata/content boost")
+    if "investing" in profile.labels and any(k in hay for k in ("invest", "fond", "dip", "cenné papíry", "cenne papiry")):
+        score += 0.120; reasons.append("investing metadata/content boost")
 
     if not reasons:
         reasons.append("base hybrid relevance")

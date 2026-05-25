@@ -36,6 +36,31 @@ def test_eval_queries_classification():
         assert expected.issubset(classify_query(query).labels)
 
 
+def test_credit_card_catalog_queries_are_classified_and_expanded():
+    for query in ["Jaké máte kreditky?", "Jaké kreditní karty nabízíte?", "Jaké jsou druhy kreditek?"]:
+        profile = classify_query(query)
+        assert {"cards", "credit_card", "credit_card_catalog", "catalog_intent"}.issubset(profile.labels)
+        expanded = expand_query(query, profile).lower()
+        assert "kreditní karta" in expanded
+        assert "splátková karta" in expanded
+
+
+def test_credit_card_catalog_source_priority_boosts_credit_sources():
+    profile = classify_query("Jaké máte kreditky?")
+    credit_doc = Document(
+        page_content="Kreditní karta EASY Kreditní karta STYLE Mastercard Visa kreditní karta",
+        metadata={"source_url": "https://www.rb.cz/osobni/kreditni-karty", "category": "cards", "chunk_type": "section_text"},
+    )
+    generic_doc = Document(
+        page_content="Debetní karty k osobním účtům",
+        metadata={"source_url": "https://www.rb.cz/osobni/debetni-karty", "category": "cards", "chunk_type": "section_text"},
+    )
+    credit_score, reasons = source_priority(credit_doc, profile)
+    generic_score, _ = source_priority(generic_doc, profile)
+    assert credit_score > generic_score
+    assert any("boosted_product_group=kreditni_karta" in reason for reason in reasons)
+
+
 def test_bezny_ucet_is_personal_retail_without_business_terms():
     profile = classify_query("Jaký je poplatek za vedení běžného účtu?")
     assert "personal_retail_account" in profile.labels
