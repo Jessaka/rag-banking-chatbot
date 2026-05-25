@@ -72,6 +72,13 @@ def validate_pdf(path: Path) -> dict[str, Any]:
         rec["pages"] = doc.page_count
         if doc.page_count == 0:
             rec["issues"].append("empty_pdf_zero_pages")
+        # PDF metadata extraction
+        meta = doc.metadata or {}
+        rec["pdf_metadata"] = {
+            k: v for k, v in meta.items() if v and k in {"title", "author", "producer", "creator", "subject", "format"}
+        }
+        if meta.get("modDate"):
+            rec["pdf_metadata"]["mod_date"] = meta["modDate"]
         text = "\n".join(page.get_text("text") for page in doc)
         rec["text_chars"] = len(text)
         rec["ocr_garbage_ratio"] = ocr_garbage_ratio(text)
@@ -81,6 +88,13 @@ def validate_pdf(path: Path) -> dict[str, Any]:
             rec["issues"].append("ocr_garbage_suspected")
         if meaningful_len(text) < 200:
             rec["issues"].append("boilerplate_or_too_short")
+        # Check PDF/A compatibility marker
+        try:
+            xmp = doc.metadata.get("format") or ""
+            if "pdf/a" in xmp.lower():
+                rec["pdf_metadata"]["pdf_a_compatible"] = True
+        except Exception:
+            pass
         doc.close()
     except Exception as exc:
         rec["issues"].append("corrupted_pdf_parse_error")
@@ -90,7 +104,8 @@ def validate_pdf(path: Path) -> dict[str, Any]:
 
 def validate_text(path: Path) -> dict[str, Any]:
     text, issues = read_text_file(path)
-    rec: dict[str, Any] = {"path": str(path), "type": path.suffix.lstrip(".").lower(), "size_bytes": path.stat().st_size, "text_chars": len(text), "ocr_garbage_ratio": ocr_garbage_ratio(text), "issues": issues}
+    ext = path.suffix.lstrip(".").lower()
+    rec: dict[str, Any] = {"path": str(path), "type": ext, "size_bytes": path.stat().st_size, "text_chars": len(text), "ocr_garbage_ratio": ocr_garbage_ratio(text), "issues": issues}
     if path.stat().st_size == 0 or not text.strip():
         rec["issues"].append("empty_file")
     if rec["ocr_garbage_ratio"] > 0.75 and len(text) > 100:
@@ -102,6 +117,30 @@ def validate_text(path: Path) -> dict[str, Any]:
     content_words = sum(text.lower().count(w) for w in ["sazebník", "podmínky", "úrok", "poplatek", "karta", "hypotéka", "úvěr"])
     if nav_words >= 5 and content_words == 0 and mlen < 800:
         rec["issues"].append("nav_only_page")
+    # JSON schema validation for structured JSON files
+    if ext == "json" and text.strip():
+        try:
+            data = json.loads(text)
+            if isinstance(data, dict):
+                required_keys = ["url", "title", "section", "sections"]
+                missing = [k for k in required_keys if k not in data]
+                if missing:
+                    rec["issues"].append(f"json_missing_keys: {','.join(missing)}")
+                if not data.get("sections"):
+                    rec["issues"].append("json_empty_sections")
+            elif not isinstance(data, list):
+                rec["issues"].append("json_unexpected_type")
+        except json.JSONDecodeError as exc:
+            rec["issues"].append(f"json_decode_error: {exc.msg}")
+    # Title/boilerplate ratio check for HTML
+    if ext in {"html", "htm"} and text.strip():
+        title_match = re.search(r"<title[^>]*>(.*?)</title>", text, re.IGNORECASE)
+        if title_match:
+            title = title_match.group(1).strip()
+            if mlen > 200 and len(title) > 5:
+                ratio = len(title) / mlen
+                if ratio > 0.15:
+                    rec["issues"].append("title_dominated_high_ratio")
     return rec
 
 

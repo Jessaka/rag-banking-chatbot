@@ -23,10 +23,12 @@ Deterministické point IDs:
 from __future__ import annotations
 
 import pickle
+import gc
 import hashlib
 import json
 import random
 import re
+import resource
 import time
 from collections import deque
 from pathlib import Path
@@ -41,12 +43,22 @@ from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-_UPSERT_BATCH_SIZE = 64
+_UPSERT_BATCH_SIZE = 16
 _SCROLL_BATCH_SIZE = 1000
 MAX_EMBED_CHARS = 4000
 MAX_EMBED_TOKENS_APPROX = 1500
-_OPENAI_MAX_RETRIES = 8
-_OPENAI_MAX_BATCH_TOKENS = 6000
+_OPENAI_MAX_BATCH_TOKENS = 3500
+
+
+def _rss_mb() -> float:
+    """Best-effort resident set size in MB for memory-pressure logging."""
+    usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    # Linux reports KB, macOS bytes. This environment is Linux, keep fallback sane.
+    return usage / 1024 if usage < 10**9 else usage / (1024 * 1024)
+
+
+def log_memory(stage: str) -> None:
+    logger.info(f"Memory RSS stage={stage}: {_rss_mb():.1f} MB")
 
 
 # ---------------------------------------------------------------------------
@@ -64,6 +76,7 @@ def _get_embeddings():
         return OpenAIEmbeddings(
             model=config.OPENAI_EMBED_MODEL,
             api_key=config.OPENAI_API_KEY,
+            request_timeout=config.OPENAI_EMBED_TIMEOUT_SECONDS,
         )
 
     if config.EMBEDDING_BACKEND != "ollama":
@@ -73,7 +86,7 @@ def _get_embeddings():
 
 
 def _get_qdrant_client() -> QdrantClient:
-    return QdrantClient(host=config.QDRANT_HOST, port=config.QDRANT_PORT)
+    return QdrantClient(host=config.QDRANT_HOST, port=config.QDRANT_PORT, timeout=config.QDRANT_TIMEOUT_SECONDS)
 
 
 # ---------------------------------------------------------------------------
@@ -234,15 +247,15 @@ def _progress_path() -> Path:
 def _load_progress() -> dict:
     path = _progress_path()
     if not path.exists():
-        return {"last_successful_batch": -1, "completed_chunk_ids": []}
+        return {"last_successful_batch": -1, "completed_chunk_ids": [], "failed_chunk_ids": []}
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception as exc:
         logger.warning(f"Nelze načíst embedding progress {path}: {exc}")
-        return {"last_successful_batch": -1, "completed_chunk_ids": []}
+        return {"last_successful_batch": -1, "completed_chunk_ids": [], "failed_chunk_ids": []}
 
 
-def _save_progress(batch_index: int, chunk_ids: list[str]) -> None:
+def _save_progress(batch_index: int, chunk_ids: list[str], failed_chunk_ids: list[str] | None = None) -> None:
     config.INDEX_DIR.mkdir(parents=True, exist_ok=True)
     path = _progress_path()
     payload = {
@@ -252,9 +265,14 @@ def _save_progress(batch_index: int, chunk_ids: list[str]) -> None:
         "vector_size": config.QDRANT_VECTOR_SIZE,
         "last_successful_batch": batch_index,
         "completed_chunk_ids": chunk_ids,
+        "failed_chunk_ids": failed_chunk_ids or [],
+        "completed_count": len(chunk_ids),
+        "failed_count": len(failed_chunk_ids or []),
         "updated_at": time.time(),
     }
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp_path.replace(path)
 
 
 def _clear_progress() -> None:
@@ -265,7 +283,7 @@ def _clear_progress() -> None:
 
 def _make_embedding_batches(chunks: list[Document]) -> list[list[Document]]:
     """Batchuje podle počtu chunků i odhadovaného token countu."""
-    max_items = config.OPENAI_EMBED_BATCH_SIZE if config.EMBEDDING_BACKEND == "openai" else _UPSERT_BATCH_SIZE
+    max_items = min(max(1, config.OPENAI_EMBED_BATCH_SIZE), 16) if config.EMBEDDING_BACKEND == "openai" else min(max(1, config.OLLAMA_EMBED_BATCH_SIZE), 16)
     max_tokens = _OPENAI_MAX_BATCH_TOKENS if config.EMBEDDING_BACKEND == "openai" else 10**9
     batches: list[list[Document]] = []
     current: list[Document] = []
@@ -303,6 +321,17 @@ def _is_rate_limit_error(exc: Exception) -> bool:
     return "ratelimit" in name or "rate_limit" in message or "rate limit" in message or "429" in message
 
 
+def _is_transient_embedding_error(exc: Exception) -> bool:
+    name = exc.__class__.__name__.lower()
+    message = str(exc).lower()
+    transient_markers = (
+        "readtimeout", "timeout", "timed out", "temporarily unavailable",
+        "connection", "connecterror", "remoteprotocolerror", "server disconnected",
+        "503", "502", "504", "500",
+    )
+    return _is_rate_limit_error(exc) or any(marker in name or marker in message for marker in transient_markers)
+
+
 def _embed_batch_with_retry(embeddings, texts: list[str], batch_index: int, batch_tokens: int, metrics: dict) -> list[list[float]]:
     attempt = 0
     while True:
@@ -312,16 +341,18 @@ def _embed_batch_with_retry(embeddings, texts: list[str], batch_index: int, batc
             metrics["tokens"].append((time.time(), batch_tokens))
             return vectors
         except Exception as exc:
-            if not _is_rate_limit_error(exc) or attempt >= _OPENAI_MAX_RETRIES:
+            if not _is_transient_embedding_error(exc) or attempt >= config.OPENAI_EMBED_MAX_RETRIES:
+                metrics["failed_batches"] += 1
                 raise
             attempt += 1
             metrics["retry_count"] += 1
             retry_after = _retry_after_seconds(exc)
             if retry_after is None:
-                retry_after = min(120.0, (2 ** attempt) + random.uniform(0, 1.5))
+                retry_after = min(120.0, (2 ** attempt) + random.uniform(0, 2.0))
             logger.warning(
-                f"OpenAI RateLimitError batch={batch_index}, retry={attempt}/{_OPENAI_MAX_RETRIES}, "
-                f"čekám {retry_after:.1f}s, estimated_tokens={batch_tokens}"
+                f"Embedding transient error batch={batch_index}, retry={attempt}/{config.OPENAI_EMBED_MAX_RETRIES}, "
+                f"error={exc.__class__.__name__}: {exc}, čekám {retry_after:.1f}s, "
+                f"estimated_tokens={batch_tokens}"
             )
             time.sleep(retry_after)
 
@@ -356,6 +387,11 @@ def _make_points(batch_chunks: list[Document], batch_vecs: list[list[float]]) ->
             payload={"page_content": chunk.page_content, **chunk.metadata},
         ))
     return points
+
+
+def _flush_gc(stage: str) -> None:
+    collected = gc.collect()
+    logger.info(f"GC flush stage={stage}: collected={collected}, rss={_rss_mb():.1f} MB")
 
 
 # ---------------------------------------------------------------------------
@@ -472,7 +508,7 @@ def _embed_and_upsert(
     client: QdrantClient,
     embeddings,
     resume: bool = False,
-) -> None:
+) -> dict:
     """
     Embedduje chunky a vloží je do Qdrant.
 
@@ -480,7 +516,7 @@ def _embed_and_upsert(
     Chunky bez chunk_id dostanou fallback hash z prvních 100 znaků obsahu.
     """
     if not chunks:
-        return
+        return {"indexed": 0, "failed": 0, "indexed_chunk_ids": [], "failed_chunk_ids": [], "retry_count": 0}
 
     chunks = _guard_embed_chunks(chunks)
     texts = [c.page_content for c in chunks]
@@ -491,23 +527,27 @@ def _embed_and_upsert(
         f"dim: {config.QDRANT_VECTOR_SIZE})…"
     )
     batches = _make_embedding_batches(chunks)
-    progress = _load_progress() if resume else {"last_successful_batch": -1, "completed_chunk_ids": []}
+    progress = _load_progress() if resume else {"last_successful_batch": -1, "completed_chunk_ids": [], "failed_chunk_ids": []}
     last_successful = int(progress.get("last_successful_batch", -1))
     completed_chunk_ids = list(progress.get("completed_chunk_ids", []))
+    failed_chunk_ids = list(progress.get("failed_chunk_ids", []))
     completed_set = set(completed_chunk_ids)
+    run_completed_chunk_ids: list[str] = []
     if resume and last_successful >= 0:
         logger.info(
             f"Resume embedding progress: poslední hotový batch={last_successful}, "
             f"({len(completed_chunk_ids)} chunků)"
         )
 
-    metrics = {"requests": deque(), "tokens": deque(), "retry_count": 0}
+    metrics = {"requests": deque(), "tokens": deque(), "retry_count": 0, "failed_batches": 0}
     sleep_s = max(0, config.OPENAI_EMBED_SLEEP_MS) / 1000
 
     logger.info(
         f"Embedding batches: {len(batches)} "
         f"(backend={config.EMBEDDING_BACKEND}, max_batch_size="
-        f"{config.OPENAI_EMBED_BATCH_SIZE if config.EMBEDDING_BACKEND == 'openai' else _UPSERT_BATCH_SIZE})"
+        f"{min(max(1, config.OPENAI_EMBED_BATCH_SIZE), 16) if config.EMBEDDING_BACKEND == 'openai' else min(max(1, config.OLLAMA_EMBED_BATCH_SIZE), 16)}, "
+        f"timeout={config.OPENAI_EMBED_TIMEOUT_SECONDS if config.EMBEDDING_BACKEND == 'openai' else 'backend-default'}s, "
+        f"qdrant_flush=per_batch)"
     )
 
     for batch_index, batch_chunks in enumerate(tqdm(batches, desc="Embedding+Qdrant upsert")):
@@ -518,22 +558,50 @@ def _embed_and_upsert(
         batch_texts = [c.page_content for c in batch_chunks]
         batch_tokens = sum(_approx_tokens(text) for text in batch_texts)
 
-        if config.EMBEDDING_BACKEND == "openai":
+        try:
             batch_vecs = _embed_batch_with_retry(embeddings, batch_texts, batch_index, batch_tokens, metrics)
+        except Exception:
+            failed_now = [c.metadata.get("chunk_id", "") for c in batch_chunks if c.metadata.get("chunk_id")]
+            failed_chunk_ids.extend(failed_now)
+            _save_progress(batch_index - 1, completed_chunk_ids, failed_chunk_ids)
+            logger.exception(
+                f"Embedding batch failed permanently batch={batch_index + 1}/{len(batches)}, "
+                f"failed_chunks_total={len(failed_chunk_ids)}, indexed_chunks={len(completed_chunk_ids)}, "
+                f"retry_count={metrics['retry_count']}. Checkpoint uložen pro resume."
+            )
+            raise
+
+        if config.EMBEDDING_BACKEND == "openai":
             _log_openai_throughput(batch_index, len(batches), len(batch_chunks), batch_tokens, metrics)
             if sleep_s:
                 time.sleep(sleep_s)
-        else:
-            batch_vecs = embeddings.embed_documents(batch_texts)
 
         points = _make_points(batch_chunks, batch_vecs)
         client.upsert(collection_name=config.QDRANT_COLLECTION, points=points)
+        del points, batch_vecs, batch_texts
         new_completed = [c.metadata.get("chunk_id", "") for c in batch_chunks if c.metadata.get("chunk_id")]
         completed_chunk_ids.extend(new_completed)
+        run_completed_chunk_ids.extend(new_completed)
         completed_set.update(new_completed)
-        _save_progress(batch_index, completed_chunk_ids)
+        if failed_chunk_ids:
+            recovered_now = set(new_completed)
+            failed_chunk_ids = [cid for cid in failed_chunk_ids if cid not in recovered_now]
+        _save_progress(batch_index, completed_chunk_ids, failed_chunk_ids)
+        logger.info(
+            f"Qdrant flush hotový batch={batch_index + 1}/{len(batches)}, "
+            f"batch_chunks={len(batch_chunks)}, indexed_chunks={len(completed_chunk_ids)}, "
+            f"failed_chunks={len(failed_chunk_ids)}, retry_count={metrics['retry_count']}"
+        )
+        _flush_gc(f"embedding_batch_{batch_index + 1}")
 
-    _clear_progress()
+    return {
+        "indexed": len(run_completed_chunk_ids),
+        "failed": len(failed_chunk_ids),
+        "indexed_chunk_ids": run_completed_chunk_ids,
+        "checkpoint_completed_total": len(completed_chunk_ids),
+        "failed_chunk_ids": failed_chunk_ids,
+        "retry_count": metrics["retry_count"],
+    }
 
 
 def index_to_qdrant(
@@ -634,6 +702,34 @@ def update_bm25_index(new_chunks: list[Document]) -> int:
     return len(all_chunks)
 
 
+def append_bm25_docs_store_memory_safe(new_chunks: list[Document]) -> int:
+    """Memory-safe BM25 companion flush.
+
+    BM25Okapi itself is not appendable without rebuilding the full token matrix.
+    In memory-safe mode we therefore persist newly indexed docs to a JSONL sidecar
+    per batch and avoid rebuilding the whole BM25 object during the OOM-sensitive
+    ingest run. Dense Qdrant retrieval is immediately updated; BM25 rebuild can be
+    run later outside memory-safe mode if needed.
+    """
+    if not new_chunks:
+        return 0
+    config.INDEX_DIR.mkdir(parents=True, exist_ok=True)
+    sidecar = config.INDEX_DIR / "bm25_incremental_pending.jsonl"
+    with sidecar.open("a", encoding="utf-8") as f:
+        for chunk in new_chunks:
+            f.write(json.dumps({"page_content": chunk.page_content, "metadata": chunk.metadata}, ensure_ascii=False) + "\n")
+    logger.info(f"BM25 memory-safe flush: +{len(new_chunks)} docs → {sidecar} (BM25 rebuild deferred)")
+    _flush_gc("bm25_memory_safe_flush")
+    try:
+        if config.DOCS_STORE_PATH.exists():
+            with open(config.DOCS_STORE_PATH, "rb") as f:
+                existing_count = len(pickle.load(f))
+            return existing_count + len(new_chunks)
+    except Exception as exc:
+        logger.warning(f"Nelze spočítat existující BM25 docs store: {exc}")
+    return len(new_chunks)
+
+
 # ---------------------------------------------------------------------------
 # Hlavní entry points
 # ---------------------------------------------------------------------------
@@ -656,6 +752,15 @@ def run_incremental_indexing(chunks: list[Document]) -> dict:
         return {"new": 0, "skipped": 0, "total_qdrant": 0, "total_bm25": 0}
 
     chunks = _guard_embed_chunks(chunks)
+    progress = _load_progress()
+    resume_completed_ids = {
+        cid for cid in progress.get("completed_chunk_ids", []) if cid
+    }
+    if resume_completed_ids:
+        logger.info(
+            f"Incremental resume checkpoint nalezen: {len(resume_completed_ids)} chunků už bylo upsertováno; "
+            "po ověření Qdrant doplním BM25 a budu pokračovat zbytkem."
+        )
 
     client = _get_qdrant_client()
     embeddings = _get_embeddings()
@@ -668,6 +773,18 @@ def run_incremental_indexing(chunks: list[Document]) -> dict:
     existing_ids = get_existing_chunk_ids(client)
     logger.info(f"  Qdrant obsahuje {len(existing_ids)} existujících chunk_id")
 
+    recovery_chunks = []
+    if resume_completed_ids:
+        recovery_chunks = [
+            c for c in chunks
+            if c.metadata.get("chunk_id") in resume_completed_ids and c.metadata.get("chunk_id") in existing_ids
+        ]
+        if recovery_chunks:
+            logger.info(
+                f"Resume recovery: {len(recovery_chunks)} checkpointovaných chunků je v Qdrantu; "
+                "zařazuji je pro BM25 merge kvůli předchozímu pádu před BM25."
+            )
+
     # Krok 3: Filtrujeme nové chunky
     new_chunks, skipped = filter_new_chunks(chunks, existing_ids)
     logger.info(
@@ -676,13 +793,17 @@ def run_incremental_indexing(chunks: list[Document]) -> dict:
     )
 
     # Krok 4: Indexujeme nové chunky do Qdrant
+    embed_stats = {"indexed": 0, "failed": 0, "indexed_chunk_ids": [], "failed_chunk_ids": [], "retry_count": 0}
     if new_chunks:
-        _embed_and_upsert(new_chunks, client, embeddings)
+        embed_stats = _embed_and_upsert(new_chunks, client, embeddings, resume=True)
     else:
         logger.info("Žádné nové chunky – Qdrant je aktuální")
 
     # Krok 5: Aktualizujeme BM25
-    total_bm25 = update_bm25_index(new_chunks)
+    indexed_ids = set(embed_stats.get("indexed_chunk_ids", []))
+    bm25_chunks = recovery_chunks + [c for c in new_chunks if c.metadata.get("chunk_id") in indexed_ids or not c.metadata.get("chunk_id")]
+    total_bm25 = update_bm25_index(bm25_chunks)
+    _clear_progress()
 
     # Celkový počet bodů v Qdrantu
     total_qdrant = client.get_collection(config.QDRANT_COLLECTION).points_count or 0
@@ -694,7 +815,99 @@ def run_incremental_indexing(chunks: list[Document]) -> dict:
     )
     return {
         "new": len(new_chunks),
+        "indexed": embed_stats.get("indexed", 0),
+        "failed": embed_stats.get("failed", 0),
+        "retry_count": embed_stats.get("retry_count", 0),
+        "recovered_for_bm25": len(recovery_chunks),
         "skipped": skipped,
+        "total_qdrant": total_qdrant,
+        "total_bm25": total_bm25,
+    }
+
+
+def run_incremental_indexing_stream(chunk_batches, *, memory_safe: bool = True) -> dict:
+    """Incremental indexing over lazy chunk batches.
+
+    Does not recreate/delete Qdrant collection. Designed for OOM-sensitive ingest:
+    one chunk batch is embedded/upserted/flushed at a time and then released.
+    """
+    client = _get_qdrant_client()
+    embeddings = _get_embeddings()
+    _ensure_collection_exists(client)
+    logger.info("Memory-safe incremental index: načítám existující chunk_id z Qdrantu…")
+    existing_ids = get_existing_chunk_ids(client)
+    logger.info(f"Memory-safe incremental index: Qdrant obsahuje {len(existing_ids)} chunk_id")
+    log_memory("stream_start_after_existing_ids")
+
+    progress = _load_progress()
+    resume_completed_ids = {cid for cid in progress.get("completed_chunk_ids", []) if cid}
+    total_seen = 0
+    total_new = 0
+    total_skipped = 0
+    total_indexed = 0
+    total_failed = 0
+    total_retries = 0
+    total_bm25 = 0
+    recovered_for_bm25 = 0
+
+    for batch_no, batch in enumerate(chunk_batches, start=1):
+        log_memory(f"stream_batch_{batch_no}_received")
+        if not batch:
+            continue
+        total_seen += len(batch)
+
+        recovery_chunks = []
+        if resume_completed_ids:
+            recovery_chunks = [
+                c for c in batch
+                if c.metadata.get("chunk_id") in resume_completed_ids and c.metadata.get("chunk_id") in existing_ids
+            ]
+            recovered_for_bm25 += len(recovery_chunks)
+
+        new_chunks, skipped = filter_new_chunks(batch, existing_ids)
+        total_new += len(new_chunks)
+        total_skipped += skipped
+        logger.info(
+            f"Memory-safe batch {batch_no}: received={len(batch)}, new={len(new_chunks)}, "
+            f"skipped={skipped}, recovered_for_bm25={len(recovery_chunks)}"
+        )
+
+        embed_stats = {"indexed": 0, "failed": 0, "indexed_chunk_ids": [], "failed_chunk_ids": [], "retry_count": 0}
+        if new_chunks:
+            embed_stats = _embed_and_upsert(new_chunks, client, embeddings, resume=True)
+            indexed_ids = set(embed_stats.get("indexed_chunk_ids", []))
+            existing_ids.update(indexed_ids)
+        else:
+            indexed_ids = set()
+
+        bm25_chunks = recovery_chunks + [
+            c for c in new_chunks
+            if c.metadata.get("chunk_id") in indexed_ids or not c.metadata.get("chunk_id")
+        ]
+        if memory_safe:
+            total_bm25 = append_bm25_docs_store_memory_safe(bm25_chunks)
+        else:
+            total_bm25 = update_bm25_index(bm25_chunks)
+
+        total_indexed += int(embed_stats.get("indexed", 0))
+        total_failed += int(embed_stats.get("failed", 0))
+        total_retries += int(embed_stats.get("retry_count", 0))
+        logger.info(
+            f"Memory-safe progress batch={batch_no}: total_seen={total_seen}, "
+            f"total_indexed={total_indexed}, total_failed={total_failed}, retries={total_retries}"
+        )
+        del batch, new_chunks, bm25_chunks, recovery_chunks
+        _flush_gc(f"stream_batch_{batch_no}_done")
+
+    _clear_progress()
+    total_qdrant = client.get_collection(config.QDRANT_COLLECTION).points_count or 0
+    return {
+        "new": total_new,
+        "indexed": total_indexed,
+        "failed": total_failed,
+        "retry_count": total_retries,
+        "recovered_for_bm25": recovered_for_bm25,
+        "skipped": total_skipped,
         "total_qdrant": total_qdrant,
         "total_bm25": total_bm25,
     }
@@ -720,5 +933,6 @@ def run_full_indexing(chunks: list[Document], resume: bool = False) -> None:
 
     index_to_qdrant(chunks, client=client, embeddings=embeddings, resume=resume)
     save_bm25_index(chunks)
+    _clear_progress()
 
     logger.info("[bold green]Full indexace dokončena úspěšně[/bold green]")

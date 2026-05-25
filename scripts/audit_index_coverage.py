@@ -7,6 +7,7 @@ import json
 import pickle
 import sys
 from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,7 @@ logger = get_logger(__name__)
 
 HIGH_VALUE = ["html", "pdf", "pricing", "kreditni-karty", "debetni-karty", "faq", "bezpecnost"]
 CREDIT_TERMS = {"kreditni_karta": ["kreditni", "kreditní", "kreditka"], "debetni_karta": ["debetni", "debetní"], "mastercard": ["mastercard"], "visa": ["visa"], "easy_karta": ["easy"], "style_karta": ["style"]}
+TREND_HISTORY_PATH = config.DISCOVERY_DIR / "index_trend.jsonl"
 
 
 def qdrant_payloads() -> list[dict[str, Any]]:
@@ -80,32 +82,74 @@ def section_kind(p: dict[str, Any]) -> str:
     return "general"
 
 
-def audit() -> dict[str, Any]:
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def audit(json_only: bool = False) -> dict[str, Any]:
     q = qdrant_payloads()
     b = bm25_payloads()
     combined = q or b
     by_source = Counter(source_kind(p) for p in combined)
     by_section = Counter(section_kind(p) for p in combined)
     pricing_rows = sum(1 for p in combined if p.get("chunk_type") == "pricing_row" or source_kind(p) == "pricing")
+    # Pricing metadata depth
+    pricing_chunks = [p for p in combined if p.get("chunk_type") == "pricing_row"]
+    pricing_confidence_scores = [float(p.get("confidence", 0)) for p in pricing_chunks if p.get("confidence")]
+    avg_pricing_confidence = round(sum(pricing_confidence_scores) / len(pricing_confidence_scores), 3) if pricing_confidence_scores else None
+    pricing_by_product = Counter(p.get("product_name", "unknown") for p in pricing_chunks if p.get("product_name"))
     hay = " ".join(" ".join(str(p.get(k, "")) for k in ["source_url", "url", "title", "page_content", "product_name"]) for p in combined).lower()
     credit = {key: {"covered": any(term in hay for term in terms), "chunks": sum(1 for p in combined if any(term in " ".join(str(v).lower() for v in p.values()) for term in terms))} for key, terms in CREDIT_TERMS.items()}
     missing = [item for item in HIGH_VALUE if by_source.get(item, 0) == 0 and by_section.get(item, 0) == 0]
-    return {"qdrant_chunks": len(q), "bm25_chunks": len(b), "audited_chunks": len(combined), "by_source_type": dict(by_source), "by_section": dict(by_section), "pricing_rows_indexed": pricing_rows, "missing_sections_or_types": missing, "credit_card_chunk_coverage": credit, "recommendations": (["Spusťte scripts/ingest.py po enterprise crawlu, protože index je prázdný."] if not combined else []) + (["Doplnit crawl/ingest pro: " + ", ".join(missing)] if missing else [])}
+    # Pricing specific missing detection
+    pricing_high_value = ["osobni", "podnikatele", "firmy", "hypoteky", "uvery", "pujcky"]
+    pricing_missing = [s for s in pricing_high_value if pricing_by_product.get(s, 0) == 0]
+    recommendations = (["Spusťte scripts/ingest.py po enterprise crawlu, protože index je prázdný."] if not combined else []) + (["Doplnit crawl/ingest pro: " + ", ".join(missing)] if missing else []) + (["Chybí pricing rows pro sekce: " + ", ".join(pricing_missing)] if pricing_missing else [])
+    return {
+        "qdrant_chunks": len(q), "bm25_chunks": len(b), "audited_chunks": len(combined),
+        "by_source_type": dict(by_source), "by_section": dict(by_section),
+        "pricing_rows_indexed": pricing_rows,
+        "avg_pricing_confidence": avg_pricing_confidence,
+        "pricing_by_product": dict(pricing_by_product),
+        "pricing_missing_sections": pricing_missing,
+        "missing_sections_or_types": missing,
+        "credit_card_chunk_coverage": credit,
+        "recommendations": recommendations,
+    }
 
 
 @app.callback(invoke_without_command=True)
-def main() -> None:
-    report = audit()
+def main(json_only: bool = typer.Option(False, "--json-only", help="Jen JSON výstup, bez tabulek.")) -> None:
+    report = audit(json_only=json_only)
+    config.DISCOVERY_DIR.mkdir(parents=True, exist_ok=True)
+    report_path = config.DISCOVERY_DIR / "index_audit_report.json"
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    # Append trend snapshot
+    try:
+        TREND_HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+        trend = {k: report.get(k) for k in ["qdrant_chunks", "bm25_chunks", "audited_chunks", "pricing_rows_indexed", "avg_pricing_confidence", "missing_sections_or_types"]}
+        trend["generated_at"] = now_iso()
+        with TREND_HISTORY_PATH.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(trend, ensure_ascii=False) + "\n")
+    except Exception as exc:
+        logger.warning(f"Nepodařilo se zapsat trend: {exc}")
+    if json_only:
+        console.print_json(json.dumps(report, ensure_ascii=False))
+        return
     table = Table(title="Index coverage audit")
     table.add_column("Metric"); table.add_column("Value", justify="right")
     for k in ["qdrant_chunks", "bm25_chunks", "audited_chunks", "pricing_rows_indexed"]:
         table.add_row(k, str(report[k]))
+    if report.get("avg_pricing_confidence") is not None:
+        table.add_row("avg_pricing_confidence", str(report["avg_pricing_confidence"]))
     console.print(table)
     sec = Table(title="Chunks by source/type")
     sec.add_column("Type"); sec.add_column("Chunks", justify="right")
     for k, v in sorted(report["by_source_type"].items()):
         sec.add_row(k, str(v))
     console.print(sec)
+    if report.get("pricing_missing_sections"):
+        console.print(f"[yellow]⚠ Chybí pricing rows pro sekce: {', '.join(report['pricing_missing_sections'])}[/yellow]")
     console.print_json(json.dumps(report, ensure_ascii=False))
 
 

@@ -55,8 +55,8 @@ def load_dataset(path: Path, only_category: str | None = None) -> list[dict[str,
     return items
 
 
-def post_chat(question: str, api_url: str, timeout: float = 120.0) -> tuple[dict[str, Any], float, int, str]:
-    payload = json.dumps({"question": question, "session_id": f"eval-{time.time_ns()}"}).encode("utf-8")
+def post_chat(question: str, api_url: str, timeout: float = 120.0, session_id: str | None = None) -> tuple[dict[str, Any], float, int, str]:
+    payload = json.dumps({"question": question, "session_id": session_id or f"eval-{time.time_ns()}"}).encode("utf-8")
     req = urllib.request.Request(api_url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
     t0 = time.perf_counter()
     try:
@@ -257,10 +257,21 @@ def classify_failure(item: dict[str, Any], result: dict[str, Any], metrics: dict
 
 
 def evaluate_item(item: dict[str, Any], api_url: str, timeout: float = 120.0) -> dict[str, Any]:
-    question = item["question"]
+    question = item.get("question") or (item.get("turns") or [{}])[-1].get("question", "")
     started_at = datetime.now(UTC).isoformat(timespec="seconds")
     try:
-        response, latency_s, status_code, response_body = post_chat(question, api_url, timeout=timeout)
+        if item.get("turns"):
+            session_id = f"eval-{time.time_ns()}"
+            total_latency = 0.0
+            response: dict[str, Any] = {}
+            status_code: int | None = None
+            response_body = ""
+            for turn in item["turns"]:
+                response, latency_s, status_code, response_body = post_chat(turn["question"], api_url, timeout=timeout, session_id=session_id)
+                total_latency += latency_s
+            latency_s = total_latency
+        else:
+            response, latency_s, status_code, response_body = post_chat(question, api_url, timeout=timeout)
     except Exception as exc:
         response, latency_s, status_code, response_body = {"error": str(exc)}, 0.0, None, ""
 
@@ -289,7 +300,7 @@ def evaluate_item(item: dict[str, Any], api_url: str, timeout: float = 120.0) ->
         "unexpected_present": unexpected_present,
     }
     metrics["retrieval_precision_at_3"] = retrieval_precision_at_k({**temp, **response}, item, k=3) if isinstance(response, dict) else None
-    metrics["confidence_bucket"] = confidence_bucket({**temp, **response}) if isinstance(response, dict) else "unknown"
+    metrics["confidence_bucket"] = response.get("confidence_bucket") or confidence_bucket({**temp, **response}) if isinstance(response, dict) else "unknown"
     failure_type = classify_failure(item, temp, metrics)
     passed = status_code is not None and status_code < 500 and failure_type is None and ok_contains and ok_not_contains
 

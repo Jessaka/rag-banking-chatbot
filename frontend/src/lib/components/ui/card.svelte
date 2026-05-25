@@ -9,7 +9,7 @@
 	}: {
 		class?: string;
 		children?: Snippet;
-	} & import('svelte/elements').HTMLDivAttributes = $props();
+	} & Record<string, unknown> = $props();
 </script>
 
 <div class={cn('rounded-2xl border bg-white dark:bg-dark-surface dark:border-dark-border shadow-sm', className)} {...rest}>

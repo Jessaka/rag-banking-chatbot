@@ -42,8 +42,12 @@ DEBUG_API_ERRORS: bool = _env_bool("DEBUG_API_ERRORS", "false")
 EMBEDDING_BACKEND: str = os.getenv("EMBEDDING_BACKEND", "ollama").lower()
 OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
 OPENAI_EMBED_MODEL: str = os.getenv("OPENAI_EMBED_MODEL", "text-embedding-3-small")
-OPENAI_EMBED_BATCH_SIZE: int = int(os.getenv("OPENAI_EMBED_BATCH_SIZE", "16"))
+OPENAI_EMBED_BATCH_SIZE: int = int(os.getenv("OPENAI_EMBED_BATCH_SIZE", "8"))
 OPENAI_EMBED_SLEEP_MS: int = int(os.getenv("OPENAI_EMBED_SLEEP_MS", "250"))
+OPENAI_EMBED_TIMEOUT_SECONDS: float = float(os.getenv("OPENAI_EMBED_TIMEOUT_SECONDS", "240"))
+OPENAI_EMBED_MAX_RETRIES: int = int(os.getenv("OPENAI_EMBED_MAX_RETRIES", "8"))
+OLLAMA_EMBED_BATCH_SIZE: int = int(os.getenv("OLLAMA_EMBED_BATCH_SIZE", "16"))
+QDRANT_TIMEOUT_SECONDS: float = float(os.getenv("QDRANT_TIMEOUT_SECONDS", "300"))
 
 # Backward-compatible název Ollama embedding modelu.
 EMBED_MODEL: str = os.getenv("EMBED_MODEL", "nomic-embed-text")

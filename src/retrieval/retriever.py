@@ -76,6 +76,99 @@ CREDIT_CARD_RELEVANCE_TERMS = (
     "karta easy",
     "karta o2",
 )
+CARD_OVERVIEW_EXPANSION_TERMS = (
+    "platební karty",
+    "debetní karta",
+    "kreditní karta",
+    "Mastercard",
+    "Visa",
+    "virtuální karta",
+)
+CARD_OVERVIEW_RELEVANCE_TERMS = (
+    "platební karta",
+    "platebni karta",
+    "platební karty",
+    "platebni karty",
+    "debetní karta",
+    "debetni karta",
+    "debetní karty",
+    "debetni karty",
+    "kreditní karta",
+    "kreditni karta",
+    "kreditní karty",
+    "kreditni karty",
+    "mastercard",
+    "visa",
+    "virtuální karta",
+    "virtualni karta",
+    "karty raiffeisenbank",
+)
+
+# --- General overview fallback route definitions ---
+# Maps overview label → (expansion_terms, relevance_terms)
+OVERVIEW_ROUTES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
+    "account_overview": (
+        (
+            "běžný účet", "osobní účet", "podnikatelský účet",
+            "základní účet", "ekonto", "aktivní účet", "firemní účet",
+        ),
+        (
+            "běžný účet", "bezny ucet", "osobní účet", "osobni ucet",
+            "podnikatelský účet", "podnikatelsky ucet", "firemní účet", "firemni ucet",
+            "ekonto", "aktivní účet", "aktivni ucet", "účet", "ucet",
+        ),
+    ),
+    "mortgage_overview": (
+        (
+            "hypotéka", "úvěr na bydlení", "refinancování", "fixace",
+            "hypoteční úvěr",
+        ),
+        (
+            "hypotéka", "hypoteka", "hypoteční", "hypotecni",
+            "úvěr na bydlení", "uver na bydleni", "refinancování", "refinancovani",
+        ),
+    ),
+    "investment_overview": (
+        (
+            "investice", "fondy", "podílové fondy", "rizika investování",
+            "dluhopis", "DIP", "akcie",
+        ),
+        (
+            "investice", "fondy", "podílové fondy", "podilove fondy",
+            "dluhopis", "dip", "akcie", "cenné papíry", "cenne papiry",
+        ),
+    ),
+    "rb_key_overview": (
+        (
+            "RB klíč", "mobilní aplikace", "ověření", "přihlášení",
+            "autorizace", "bezpečnost",
+        ),
+        (
+            "rb klíč", "rb klic", "rb-klic", "mobilní klíč", "mobilni klic",
+            "mobilní aplikace", "mobilni aplikace", "autorizace", "přihlášení", "prihlaseni",
+        ),
+    ),
+    "payment_overview": (
+        (
+            "platba", "převod", "tuzemská platba", "zahraniční platba",
+            "platební metody",
+        ),
+        (
+            "platba", "převod", "prevod", "tuzemská", "zahraniční", "zahranicni",
+            "platební metody", "platebni metody",
+        ),
+    ),
+    "sepa_swift_overview": (
+        (
+            "SEPA", "SWIFT", "zahraniční platba", "IBAN", "BIC",
+            "EUR platba",
+        ),
+        (
+            "sepa", "swift", "zahraniční", "zahranicni", "iban", "bic",
+            "zahraniční platba", "zahranicni platba", "eur platba",
+        ),
+    ),
+}
 
 
 def _source_key(doc: Document) -> str:
@@ -112,6 +205,132 @@ def _is_credit_card_relevant(doc: Document) -> bool:
         doc.page_content[:3000],
     ]).lower()
     return any(term in hay for term in CREDIT_CARD_RELEVANCE_TERMS)
+
+
+def _is_card_overview_relevant(doc: Document) -> bool:
+    md = doc.metadata
+    hay = " ".join([
+        str(md.get("source_url") or md.get("url") or ""),
+        str(md.get("title") or md.get("file_name") or ""),
+        str(md.get("category") or ""),
+        doc.page_content[:3000],
+    ]).lower()
+    return any(term in hay for term in CARD_OVERVIEW_RELEVANCE_TERMS)
+
+
+def _expanded_card_overview_query(query: str) -> str:
+    q = query.lower()
+    terms = [term for term in CARD_OVERVIEW_EXPANSION_TERMS if term.lower() not in q]
+    return " ".join([query, *terms]).strip()
+
+
+def _overview_route_for_labels(labels: set[str]) -> str | None:
+    """Return the first matching overview route label."""
+    for route in OVERVIEW_ROUTES:
+        if route in labels:
+            return route
+    return None
+
+
+def _is_overview_relevant(doc: Document, relevance_terms: tuple[str, ...]) -> bool:
+    """Check if a document is relevant for an overview route."""
+    md = doc.metadata
+    hay = " ".join([
+        str(md.get("source_url") or md.get("url") or ""),
+        str(md.get("title") or md.get("file_name") or ""),
+        str(md.get("category") or ""),
+        doc.page_content[:3000],
+    ]).lower()
+    return any(term in hay for term in relevance_terms)
+
+
+def _expanded_overview_query(query: str, expansion_terms: tuple[str, ...]) -> str:
+    q = query.lower()
+    terms = [term for term in expansion_terms if term.lower() not in q]
+    return " ".join([query, *terms]).strip()
+
+
+def _overview_fallback(
+    query: str,
+    query_profile: QueryProfile,
+    final_docs: list[Document],
+    candidates: list[Document],
+    hybrid_top_k: int,
+    rerank_top_k: int,
+    metadata_filters: dict | None,
+    bm25_weight: float,
+    vector_weight: float,
+) -> list[Document]:
+    """Generic overview fallback: expand query, re-retrieve, filter by relevance."""
+    overview_route = _overview_route_for_labels(query_profile.labels)
+    if not overview_route:
+        return final_docs
+
+    expansion_terms, relevance_terms = OVERVIEW_ROUTES[overview_route]
+    overview_source_count = _unique_source_count([doc for doc in final_docs if _is_overview_relevant(doc, relevance_terms)])
+
+    if not final_docs or overview_source_count == 0:
+        expanded_query = _expanded_overview_query(query, expansion_terms)
+        logger.warning(
+            f"{overview_route} fallback retrieval: "
+            f"source_count={overview_source_count}, expanded_query='{expanded_query[:180]}'"
+        )
+        fallback_profile = classify_query(expanded_query)
+        fallback_candidates = hybrid_search(
+            query=expanded_query,
+            top_k=max(hybrid_top_k, 8),
+            bm25_weight=bm25_weight,
+            vector_weight=vector_weight,
+            metadata_filters=metadata_filters,
+            query_profile=fallback_profile,
+        )
+        relevant_fallback_docs = [doc for doc in fallback_candidates if _is_overview_relevant(doc, relevance_terms)]
+        if relevant_fallback_docs:
+            final_docs = [
+                Document(
+                    page_content=doc.page_content,
+                    metadata={
+                        **doc.metadata,
+                        "retrieval_route": overview_route,
+                        "overview_route_used": True,
+                        "overview_type": overview_route,
+                        "supported_domain_detected": True,
+                        "unsupported_guard_bypassed": True,
+                        "fallback_overview_retrieval_used": True,
+                        "expanded_query": expanded_query,
+                        "fallback_source_count": _unique_source_count(relevant_fallback_docs),
+                    },
+                )
+                for doc in relevant_fallback_docs[:rerank_top_k]
+            ]
+            logger.info(
+                f"{overview_route} fallback succeeded: "
+                f"{len(final_docs)} docs, {_unique_source_count(final_docs)} sources"
+            )
+        else:
+            logger.warning(
+                f"{overview_route} fallback nenašel relevantní source; "
+                f"vracím {len(final_docs)} původních dokumentů"
+            )
+    else:
+        final_docs = [
+            Document(
+                page_content=doc.page_content,
+                metadata={
+                    **doc.metadata,
+                    "retrieval_route": overview_route,
+                    "overview_route_used": True,
+                    "overview_type": overview_route,
+                    "supported_domain_detected": True,
+                    "unsupported_guard_bypassed": True,
+                    "fallback_overview_retrieval_used": False,
+                    "fallback_source_count": overview_source_count,
+                },
+            )
+            for doc in final_docs
+        ]
+
+    return final_docs
 
 
 class BankingRetriever(BaseRetriever):
@@ -317,6 +536,75 @@ class BankingRetriever(BaseRetriever):
                     )
                     for doc in final_docs
                 ]
+
+        if "card_overview" in query_profile.labels:
+            overview_source_count = _unique_source_count([doc for doc in final_docs if _is_card_overview_relevant(doc)])
+            if not final_docs or overview_source_count == 0:
+                expanded_query = _expanded_card_overview_query(query)
+                fallback_profile = classify_query(expanded_query)
+                fallback_candidates = hybrid_search(
+                    query=expanded_query,
+                    top_k=max(self.hybrid_top_k, 8),
+                    bm25_weight=self.bm25_weight,
+                    vector_weight=self.vector_weight,
+                    metadata_filters=self.metadata_filters,
+                    query_profile=fallback_profile,
+                )
+                relevant_fallback_docs = [doc for doc in fallback_candidates if _is_card_overview_relevant(doc)]
+                if relevant_fallback_docs:
+                    final_docs = [
+                        Document(
+                            page_content=doc.page_content,
+                            metadata={
+                                **doc.metadata,
+                                "retrieval_route": "card_overview",
+                                "overview_route_used": True,
+                                "overview_type": "card_overview",
+                                "supported_domain_detected": True,
+                                "unsupported_guard_bypassed": True,
+                                "fallback_card_retrieval_used": True,
+                                "expanded_query": expanded_query,
+                                "fallback_source_count": _unique_source_count(relevant_fallback_docs),
+                            },
+                        )
+                        for doc in relevant_fallback_docs[: self.rerank_top_k]
+                    ]
+                    logger.info(
+                        "Card overview fallback succeeded: "
+                        f"{len(final_docs)} docs, {_unique_source_count(final_docs)} sources"
+                    )
+            else:
+                final_docs = [
+                    Document(
+                        page_content=doc.page_content,
+                        metadata={
+                            **doc.metadata,
+                            "retrieval_route": "card_overview",
+                            "overview_route_used": True,
+                            "overview_type": "card_overview",
+                            "supported_domain_detected": True,
+                            "unsupported_guard_bypassed": True,
+                            "fallback_card_retrieval_used": False,
+                            "fallback_source_count": overview_source_count,
+                        },
+                    )
+                    for doc in final_docs
+                ]
+
+        # Generic overview fallback for all other supported product overview routes.
+        overview_route = _overview_route_for_labels(query_profile.labels)
+        if overview_route:
+            final_docs = _overview_fallback(
+                query=query,
+                query_profile=query_profile,
+                final_docs=final_docs,
+                candidates=candidates,
+                hybrid_top_k=self.hybrid_top_k,
+                rerank_top_k=self.rerank_top_k,
+                metadata_filters=self.metadata_filters,
+                bm25_weight=self.bm25_weight,
+                vector_weight=self.vector_weight,
+            )
 
         total_retrieval_ms = (time.perf_counter() - t_total) * 1000
         logger.info(

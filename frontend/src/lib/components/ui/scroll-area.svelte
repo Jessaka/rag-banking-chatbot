@@ -9,7 +9,7 @@
 	}: {
 		class?: string;
 		children?: Snippet;
-	} & import('svelte/elements').HTMLDivAttributes = $props();
+	} & Record<string, unknown> = $props();
 </script>
 
 <div class={cn('overflow-y-auto', className)} {...rest}>

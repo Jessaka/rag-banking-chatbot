@@ -3,17 +3,27 @@
 	import { cn, formatTime } from '$lib/utils';
 	import Markdown from './Markdown.svelte';
 	import SourcesCard from './SourcesCard.svelte';
+	import ConfidenceBadge from './ConfidenceBadge.svelte';
+	import ClarificationChips from './ClarificationChips.svelte';
+	import GuidedFlowCard from './GuidedFlowCard.svelte';
+	import UnsupportedCard from './UnsupportedCard.svelte';
+	import EscalationCTA from './EscalationCTA.svelte';
+	import MessageActions from './MessageActions.svelte';
+	import { clarificationOptions, isGuidedFlow, isUnsupported, shouldShowEscalation } from '$lib/chat-ux';
+	import { emitChatEvent } from '$lib/monitoring';
 	import { User, Bot, RotateCcw, AlertCircle } from '@lucide/svelte';
 	import { Button } from '$ui';
 
 	let {
 		message,
 		isLatest = false,
-		onretry
+		onretry,
+		onask
 	}: {
 		message: Message;
 		isLatest?: boolean;
 		onretry?: () => void;
+		onask?: (text: string) => void;
 	} = $props();
 
 	let displayContent = $state('');
@@ -54,6 +64,16 @@
 		}, 20);
 
 		return () => clearInterval(interval);
+	});
+
+	$effect(() => {
+		if (message.role === 'assistant' && message.content && message.confidence_bucket) {
+			emitChatEvent('chat_confidence_shown', {
+				message_id: message.id,
+				confidence_bucket: message.confidence_bucket,
+				answer_strategy: message.answer_strategy
+			});
+		}
 	});
 </script>
 
@@ -107,9 +127,19 @@
 						</div>
 					</div>
 				{:else if message.role === 'assistant'}
-					<div class="prose-custom">
-						<Markdown content={displayContent} />
+					<div class="mb-2">
+						<ConfidenceBadge bucket={message.confidence_bucket} reason={message.confidence_reason} />
 					</div>
+
+					{#if isGuidedFlow(message)}
+						<GuidedFlowCard content={displayContent} onask={onask} />
+					{:else if isUnsupported(message)}
+						<UnsupportedCard content={displayContent} reason={message.unsupported_reason} onask={onask} />
+					{:else}
+						<div class="prose-custom">
+							<Markdown content={displayContent} />
+						</div>
+					{/if}
 
 					{#if isTyping && !typingComplete}
 						<span class="inline-flex gap-0.5 ml-0.5">
@@ -119,10 +149,26 @@
 						</span>
 					{/if}
 
+					{#if typingComplete && message.clarification_required}
+						<div class="mt-3">
+							<ClarificationChips options={clarificationOptions(message)} onselect={onask} />
+						</div>
+					{/if}
+
+					{#if typingComplete && shouldShowEscalation(message) && !isGuidedFlow(message) && !isUnsupported(message)}
+						<div class="mt-3">
+							<EscalationCTA variant={message.confidence_bucket === 'low' ? 'low-confidence' : 'default'} onask={onask} />
+						</div>
+					{/if}
+
 					{#if typingComplete && message.sources && message.sources.length > 0}
 						<div class="mt-3">
-							<SourcesCard sources={message.sources} />
+							<SourcesCard sources={message.sources} strategy={message.answer_strategy} />
 						</div>
+					{/if}
+
+					{#if typingComplete}
+						<MessageActions content={message.content} canRetry={message.error || message.confidence_bucket === 'low'} onretry={onretry} />
 					{/if}
 				{:else}
 					<div class="prose-custom">

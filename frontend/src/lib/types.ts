@@ -11,6 +11,8 @@ export interface SourceDocument {
 	preview: string;
 }
 
+export type ConfidenceBucket = 'high' | 'medium' | 'low';
+
 export interface ChatResponse {
 	answer: string;
 	sources: SourceDocument[];
@@ -18,7 +20,10 @@ export interface ChatResponse {
 	processing_time_ms: number;
 	request_id: string | null;
 	answer_strategy: string | null;
-	answer_confidence?: string | null;
+	confidence_bucket: ConfidenceBucket | null;
+	confidence_reason: string | null;
+	clarification_required: boolean | null;
+	unsupported_reason: string | null;
 	error: string | null;
 	traceback: string | null;
 	retrieval_debug: unknown | null;
@@ -32,8 +37,12 @@ export interface Message {
 	sources?: SourceDocument[];
 	retrieval_debug?: unknown | null;
 	answer_strategy?: string | null;
-	answer_confidence?: string | null;
+	confidence_bucket?: ConfidenceBucket | null;
+	confidence_reason?: string | null;
+	clarification_required?: boolean | null;
+	unsupported_reason?: string | null;
 	processing_time_ms?: number;
+	request_id?: string | null;
 	error?: boolean;
 }
 

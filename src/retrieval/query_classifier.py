@@ -32,9 +32,55 @@ CREDIT_CARD_TERMS = (
     "kreditní karty", "kreditni karty", "karta na splátky", "karta na splatky",
     "splátková karta", "splatkova karta", "credit card",
 )
+CARD_OVERVIEW_TERMS = (
+    "platební karta", "platebni karta", "platební karty", "platebni karty",
+    "platebních karet", "platebnich karet", "typy karet", "druhy karet",
+    "jaké karty", "jake karty", "karty nabízíte", "karty nabizite",
+)
 CATALOG_TERMS = (
     "jaké máte", "jake mate", "co nabízíte", "co nabizite", "nabízíte", "nabizite", "nabízí", "nabizi",
     "druhy", "typy", "jakou", "jaké jsou", "jake jsou", "můžu založit", "muzu zalozit", "založit", "zalozit",
+)
+
+ACCOUNT_OVERVIEW_TERMS = (
+    "jaké účty", "jake ucty", "jaké máte účty", "jake mate ucty",
+    "jaké jsou účty", "jake jsou ucty", "účty nabízíte", "ucty nabizite",
+    "typy účtů", "typy uctu", "druhy účtů", "druhy uctu",
+    "jaký typ účtu", "jaky typ uctu",
+)
+MORTGAGE_OVERVIEW_TERMS = (
+    "jaké hypotéky", "jake hypoteky", "jaké máte hypotéky", "jake mate hypoteky",
+    "jaké jsou hypotéky", "jake jsou hypoteky", "hypotéky nabízíte", "hypoteky nabizite",
+    "typy hypoték", "typy hypotek", "druhy hypoték", "druhy hypotek",
+)
+INVESTMENT_OVERVIEW_TERMS = (
+    "jaké investice", "jake investice", "jaké máte investice", "jake mate investice",
+    "jaké jsou investice", "jake jsou investice", "investice nabízíte", "investice nabizite",
+    "typy investic", "druhy investic",
+)
+RB_KEY_OVERVIEW_TERMS = (
+    "co je rb klíč", "co je rb klic", "co je to rb klíč", "co je to rb klic",
+    "co je mobilní klíč", "co je mobilni klic", "rb klíč co to je", "rb klic co to je",
+    "jak funguje rb klíč", "jak funguje rb klic",
+    "k čemu slouží rb klíč", "k cemu slouzi rb klic",
+)
+PAYMENT_OVERVIEW_TERMS = (
+    "jaké typy plateb", "jake typy plateb", "jaké jsou platební metody", "jake jsou platebni metody",
+    "jak platit", "typy plateb", "druhy plateb",
+    "jaké platební metody", "jake platebni metody",
+)
+SEPA_SWIFT_OVERVIEW_TERMS = (
+    "jak funguje sepa", "jak fungují sepa", "jak funguji sepa",
+    "co je sepa",
+    "jak funguje swift", "jak fungují swift", "jak funguji swift",
+    "co je swift",
+    "co je to sepa", "co je to swift",
+    "jak funguje zahraniční platba", "jak fungují zahraniční platby",
+    "jak funguje zahranicni platba", "jak funguji zahranicni platby",
+    "sepa jak", "swift jak",
+    "sepa swift", "sepa/swift",
+    "sepa platba", "swift platba",
+    "zahraniční platba jak", "zahranicni platba jak",
 )
 
 
@@ -75,17 +121,71 @@ def classify_query(query: str) -> QueryProfile:
             labels.add("entrepreneur_account")
     has_catalog_intent = any(k in q for k in CATALOG_TERMS)
     has_credit_card_term = any(k in q for k in CREDIT_CARD_TERMS)
+    has_card_overview_term = any(k in q for k in CARD_OVERVIEW_TERMS)
 
-    if any(k in q for k in ("karta", "karty", "limit karty", "kreditní", "kreditni", "kreditka", "kreditku", "kreditky", "kreditek", "debetní", "výběr", "bankomat", "credit card")):
+    if any(k in q for k in ("karta", "karty", "karet", "platební", "platebni", "limit karty", "kreditní", "kreditni", "kreditka", "kreditku", "kreditky", "kreditek", "debetní", "debetni", "výběr", "bankomat", "credit card")):
         labels.add("cards")
     if has_credit_card_term:
         labels.add("credit_card")
         labels.add("cards")
     if has_catalog_intent:
         labels.add("catalog_intent")
-    if has_catalog_intent and "cards" in labels and "debet" not in q:
+    if has_catalog_intent and (has_card_overview_term or ("cards" in labels and "plateb" in q)):
+        labels.add("card_overview")
+        labels.add("product_overview")
+        labels.add("supported_domain")
+    if has_catalog_intent and "cards" in labels and "debet" not in q and (has_credit_card_term or "card_overview" not in labels):
         labels.add("credit_card_catalog")
         labels.add("credit_card")
+
+    # --- General supported product overview detection ---
+    has_account_overview = has_catalog_intent and any(k in q for k in ACCOUNT_OVERVIEW_TERMS)
+    has_mortgage_overview = has_catalog_intent and any(k in q for k in MORTGAGE_OVERVIEW_TERMS)
+    has_investment_overview = has_catalog_intent and any(k in q for k in INVESTMENT_OVERVIEW_TERMS)
+    has_payment_overview = has_catalog_intent and any(k in q for k in PAYMENT_OVERVIEW_TERMS)
+    has_rb_key_overview = any(k in q for k in RB_KEY_OVERVIEW_TERMS)
+    has_sepa_swift_overview = any(k in q for k in SEPA_SWIFT_OVERVIEW_TERMS)
+
+    if has_account_overview:
+        labels.add("account_overview")
+        labels.add("product_overview")
+        labels.add("supported_domain")
+        labels.add("retail_banking")
+    if has_mortgage_overview:
+        labels.add("mortgage_overview")
+        labels.add("product_overview")
+        labels.add("supported_domain")
+        labels.add("mortgages")
+    if has_investment_overview:
+        labels.add("investment_overview")
+        labels.add("product_overview")
+        labels.add("supported_domain")
+        labels.add("investing")
+    if has_payment_overview:
+        labels.add("payment_overview")
+        labels.add("product_overview")
+        labels.add("supported_domain")
+        labels.add("payments")
+    if has_rb_key_overview:
+        labels.add("rb_key_overview")
+        labels.add("product_overview")
+        labels.add("supported_domain")
+        labels.add("rb_key")
+        labels.add("support")
+    if has_sepa_swift_overview:
+        labels.add("sepa_swift_overview")
+        labels.add("product_overview")
+        labels.add("supported_domain")
+        labels.add("sepa_swift")
+        labels.add("payments")
+
+    # General catalog-without-unsupported-intent → safe product overview.
+    if has_catalog_intent and "product_overview" not in labels and not any(k in q for k in ("krypto", "bitcoin", "ethereum", "nft")):
+        # If catalog_intent is present and no unsupported topics, add
+        # product_overview + supported_domain as a safe default for
+        # queries like "Co nabízíte?" in a banking context.
+        labels.add("product_overview")
+        labels.add("supported_domain")
     if any(k in q for k in ("hypot", "úvěr na bydlení", "uver na bydleni")):
         labels.add("mortgages")
     if any(k in q for k in ("invest", "fond", "dip", "akcie", "dluhopis")):
@@ -160,6 +260,48 @@ def classify_query(query: str) -> QueryProfile:
     if "cards" in labels:
         preferred_categories.append("cards")
         preferred_urls.append("/karty")
+    if "card_overview" in labels:
+        preferred_categories.extend(["cards", "payments", "digital"])
+        preferred_urls.extend(["karty", "platebni-karty", "debetni-karty", "kreditni-karty", "virtualni-karta"])
+        preferred_chunk_types.extend(["section_text", "html", "faq", "pricing", "pdf_text"])
+        bm25_weight = max(bm25_weight, 0.50)
+        vector_weight = min(vector_weight, 0.50)
+        rerank_min_score = -10.0
+    if "account_overview" in labels:
+        preferred_categories.extend(["retail", "accounts", "retail_banking"])
+        preferred_urls.extend(["osobni", "ucty", "ekonto", "bezny-ucet", "podnikatele", "firmy"])
+        preferred_chunk_types.extend(["section_text", "html", "faq", "pdf_text"])
+        bm25_weight = max(bm25_weight, 0.50)
+        vector_weight = min(vector_weight, 0.50)
+        rerank_min_score = -10.0
+    if "mortgage_overview" in labels:
+        preferred_categories.extend(["mortgages", "hypoteky"])
+        preferred_urls.extend(["hypoteky", "hypoteka"])
+        preferred_chunk_types.extend(["section_text", "html", "faq", "pdf_text"])
+        bm25_weight = max(bm25_weight, 0.50)
+        vector_weight = min(vector_weight, 0.50)
+        rerank_min_score = -10.0
+    if "investment_overview" in labels:
+        preferred_categories.extend(["investments", "investice"])
+        preferred_urls.extend(["investice", "fondy", "dip"])
+        preferred_chunk_types.extend(["section_text", "html", "faq", "pdf_text"])
+        bm25_weight = max(bm25_weight, 0.50)
+        vector_weight = min(vector_weight, 0.50)
+        rerank_min_score = -10.0
+    if "payment_overview" in labels or "sepa_swift_overview" in labels:
+        preferred_categories.extend(["payments", "foreign_payments", "digital"])
+        preferred_urls.extend(["platby", "sepa", "swift", "zahranicni-platby", "zahraniční-platby"])
+        preferred_chunk_types.extend(["section_text", "html", "faq", "pdf_text"])
+        bm25_weight = max(bm25_weight, 0.50)
+        vector_weight = min(vector_weight, 0.50)
+        rerank_min_score = -10.0
+    if "rb_key_overview" in labels:
+        preferred_categories.extend(["security", "digital", "support"])
+        preferred_urls.extend(["rb-klic", "rb-klíč", "mobilni", "bezpecnost"])
+        preferred_chunk_types.extend(["section_text", "html", "faq", "pdf_text"])
+        bm25_weight = max(bm25_weight, 0.50)
+        vector_weight = min(vector_weight, 0.50)
+        rerank_min_score = -10.0
     if "credit_card" in labels:
         preferred_categories.extend(["cards", "credit_cards", "kreditni_karty"])
         preferred_urls.extend(["kreditni-karty", "kreditni-karta", "kreditni", "credit-card", "/karty"])
@@ -212,6 +354,41 @@ def expand_query(query: str, profile: QueryProfile | None = None) -> str:
         terms.extend(["RB klíč", "RB klic", "mobilní aplikace", "autorizace", "potvrzení platby", "aktivace"])
     if "wallets" in profile.labels:
         terms.extend(["Apple Pay", "Google Pay", "mobilní platby", "platební karta", "digital wallet"])
+    if "card_overview" in profile.labels:
+        terms.extend([
+            "platební karty", "debetní karta", "kreditní karta", "Mastercard",
+            "Visa", "virtuální karta", "karty Raiffeisenbank", "debetní karty k účtu",
+        ])
+    if "account_overview" in profile.labels:
+        terms.extend([
+            "běžný účet", "osobní účet", "podnikatelský účet", "základní účet",
+            "ekonto", "aktivní účet", "firemní účet",
+        ])
+    if "mortgage_overview" in profile.labels:
+        terms.extend([
+            "hypotéka", "úvěr na bydlení", "refinancování", "fixace",
+            "hypoteční úvěr",
+        ])
+    if "investment_overview" in profile.labels:
+        terms.extend([
+            "investice", "fondy", "podílové fondy", "rizika investování",
+            "dluhopis", "DIP",
+        ])
+    if "rb_key_overview" in profile.labels:
+        terms.extend([
+            "RB klíč", "mobilní aplikace", "ověření", "přihlášení",
+            "autorizace", "bezpečnost",
+        ])
+    if "payment_overview" in profile.labels:
+        terms.extend([
+            "platba", "převod", "tuzemská platba", "zahraniční platba",
+            "platební metody",
+        ])
+    if "sepa_swift_overview" in profile.labels:
+        terms.extend([
+            "SEPA", "SWIFT", "zahraniční platba", "IBAN", "BIC",
+            "EUR platba",
+        ])
     if "credit_card" in profile.labels:
         terms.extend([
             "kreditka", "kreditku", "kreditky", "kreditní karta", "kreditní karty",
@@ -309,6 +486,40 @@ def source_priority(doc: Document, profile: QueryProfile) -> tuple[float, list[s
         score += 0.180; reasons.append("rb_key metadata/content boost")
     if "wallets" in profile.labels and any(k in hay for k in ("apple pay", "google pay", "mobilní plat", "mobilni plat", "karty")):
         score += 0.160; reasons.append("wallet metadata/content boost")
+    if "card_overview" in profile.labels:
+        card_terms = ("platební karta", "platebni karta", "platební karty", "debetní", "debetni", "kreditní", "kreditni", "mastercard", "visa", "virtuální karta", "virtualni karta", "kreditni-karty", "debetni-karty")
+        if any(k in hay for k in card_terms):
+            score += 0.240; reasons.append("card overview metadata/content boost")
+        if "uniqa" in hay or "pojišťovna" in hay or "pojistovna" in hay:
+            score -= 0.180; reasons.append("cross-domain insurance penalty for card overview")
+    if "account_overview" in profile.labels:
+        account_terms = ("běžný účet", "bezny ucet", "osobní účet", "osobni ucet", "ekonto", "aktivní účet", "aktivni ucet", "podnikatelský účet", "podnikatelsky ucet", "firemní účet", "firemni ucet")
+        if any(k in hay for k in account_terms):
+            score += 0.240; reasons.append("account overview metadata/content boost")
+        if "uniqa" in hay or "pojišťovna" in hay or "hypot" in hay:
+            score -= 0.180; reasons.append("cross-domain penalty for account overview")
+    if "mortgage_overview" in profile.labels:
+        mortgage_terms = ("hypotéka", "hypoteka", "hypoteční", "hypotecni", "úvěr na bydlení", "uver na bydleni", "refinancování", "refinancovani")
+        if any(k in hay for k in mortgage_terms):
+            score += 0.240; reasons.append("mortgage overview metadata/content boost")
+        if "uniqa" in hay or "pojišťovna" in hay:
+            score -= 0.180; reasons.append("cross-domain insurance penalty for mortgage overview")
+    if "investment_overview" in profile.labels:
+        investment_terms = ("investice", "fondy", "podílové fondy", "podilove fondy", "dluhopis", "dip", "akcie")
+        if any(k in hay for k in investment_terms):
+            score += 0.240; reasons.append("investment overview metadata/content boost")
+        if "uniqa" in hay or "pojišťovna" in hay:
+            score -= 0.180; reasons.append("cross-domain insurance penalty for investment overview")
+    if "payment_overview" in profile.labels or "sepa_swift_overview" in profile.labels:
+        payment_terms = ("platba", "převod", "prevod", "tuzemská", "zahraniční", "zahranicni", "sepa", "swift", "iban", "bic", "platební metody", "platebni metody")
+        if any(k in hay for k in payment_terms):
+            score += 0.240; reasons.append("payment overview metadata/content boost")
+        if "uniqa" in hay or "pojišťovna" in hay:
+            score -= 0.180; reasons.append("cross-domain insurance penalty for payment overview")
+    if "rb_key_overview" in profile.labels:
+        rb_key_terms = ("rb klíč", "rb klic", "rb-klic", "rb-klíč", "mobilní klíč", "mobilni klic", "mobilní aplikace", "mobilni aplikace", "autorizace", "přihlášení", "prihlaseni")
+        if any(k in hay for k in rb_key_terms):
+            score += 0.240; reasons.append("rb_key overview metadata/content boost")
     if "credit_card" in profile.labels:
         credit_terms = ("kreditni-karty", "kreditní karta", "kreditni karta", "kreditní karty", "kreditka", "mastercard", "visa", "o2 rb", "rb premium", "style", "easy")
         if any(k in hay for k in credit_terms):

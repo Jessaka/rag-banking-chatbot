@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import gc
 import json
 import pickle
 import re
+import resource
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -23,6 +25,15 @@ DOCUMENTS_DIR = config.DATA_DIR / "documents"
 MANIFEST_PATH = config.DATA_DIR / "ingestion_manifest.json"
 MAX_EMBED_CHARS = 4000
 MAX_EMBED_TOKENS_APPROX = 1500
+
+
+def _rss_mb() -> float:
+    usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return usage / 1024 if usage < 10**9 else usage / (1024 * 1024)
+
+
+def _log_memory(stage: str) -> None:
+    logger.info(f"Memory RSS stage={stage}: {_rss_mb():.1f} MB")
 
 PRICING_TERMS = (
     "sazebník", "sazebnik", "ceník", "cenik", "fee", "price", "poplatek", "poplatky",
@@ -463,7 +474,12 @@ def _enforce_embed_limits(chunks: list[Document]) -> list[Document]:
 
 def load_structured_pages(structured_dir: Path = STRUCTURED_DIR, chunk_size: int = 1100, overlap: int = 150) -> list[Document]:
     docs: list[Document] = []
+    MAX_STRUCTURED_BYTES = 5 * 1024 * 1024  # 5 MB — skip media exports, PPTX
+    skipped_large = 0
     for path in sorted(structured_dir.glob("*.json")):
+        if path.stat().st_size > MAX_STRUCTURED_BYTES:
+            skipped_large += 1
+            continue
         try:
             page = json.loads(path.read_text(encoding="utf-8"))
         except Exception as exc:
@@ -501,6 +517,8 @@ def load_structured_pages(structured_dir: Path = STRUCTURED_DIR, chunk_size: int
             content = card.get("content", "")
             if len(_clean(content)) > 50:
                 docs.append(_make_doc(content, _base_metadata(url, title, card.get("title") or title, "web", document_type, None, category, "section_text", path), idx)); idx += 1
+    if skipped_large:
+        logger.info(f"Skipped {skipped_large} large structured JSONs (>5 MB)")
     logger.info(f"Structured pages → {len(docs)} semantic chunků")
     return docs
 
@@ -533,7 +551,17 @@ def load_pdf_documents(pdf_dir: Path = DOCUMENTS_DIR, chunk_size: int = 1100, ov
                 metadata_by_file[row.get("filename", "")] = row
             except Exception:
                 pass
+    MAX_PDF_BYTES = 20 * 1024 * 1024  # 20 MB — skip annual reports, magazines
+    skipped_large = 0
+    skipped_non_pdf = 0
     for pdf_path in sorted(pdf_dir.glob("*.pdf")):
+        if pdf_path.suffix.lower() != ".pdf":
+            skipped_non_pdf += 1
+            continue
+        if pdf_path.stat().st_size > MAX_PDF_BYTES:
+            skipped_large += 1
+            logger.info(f"Skipping large PDF ({pdf_path.stat().st_size / 1024 / 1024:.0f} MB): {pdf_path.name}")
+            continue
         row = metadata_by_file.get(pdf_path.name, {})
         title = row.get("title") or pdf_path.stem
         source_url = row.get("url") or row.get("final_url") or f"file://{pdf_path}"
@@ -550,8 +578,140 @@ def load_pdf_documents(pdf_dir: Path = DOCUMENTS_DIR, chunk_size: int = 1100, ov
                 # src.ingestion.pricing_extractor into data/pricing/pricing_rows.jsonl.
                 # Do not create pricing_row chunks from markdown/raw OCR-like PDF text.
                 docs.append(_make_doc(part, md, idx))
+    if skipped_large:
+        logger.info(f"Skipped {skipped_large} large PDFs (>20 MB)")
+    if skipped_non_pdf:
+        logger.info(f"Skipped {skipped_non_pdf} non-PDF files")
     logger.info(f"PDF documents → {len(docs)} chunků")
     return docs
+
+
+def _iter_structured_documents(structured_dir: Path = STRUCTURED_DIR, chunk_size: int = 1100, overlap: int = 150):
+    MAX_STRUCTURED_BYTES = 5 * 1024 * 1024
+    for path in sorted(structured_dir.glob("*.json")):
+        if path.stat().st_size > MAX_STRUCTURED_BYTES:
+            continue
+        try:
+            page = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            logger.warning(f"Structured JSON nelze číst {path}: {exc}")
+            continue
+        url = page.get("url", "")
+        title = page.get("title", "") or url
+        meta = page.get("metadata", {}) or {}
+        category = classify_business_category(url, title, fallback=meta.get("category") or "unknown")
+        document_type = meta.get("document_type") or classify_document_type(url, title, fallback="product_page")
+        idx = 0
+        for section in page.get("sections", []):
+            section_title = section.get("heading") or title
+            for part in _split_text(section.get("content", ""), chunk_size, overlap):
+                yield _make_doc(part, _base_metadata(url, title, section_title, "web", document_type, None, category, "section_text", path), idx)
+                idx += 1
+        for item in page.get("faq", []):
+            content = f"FAQ: {item.get('question', '')}\n\nOdpověď:\n{item.get('answer', '')}"
+            if len(_clean(content)) > 30:
+                md = _base_metadata(url, title, item.get("section_title") or title, "web", "faq", None, category, "faq", path)
+                md["faq_question"] = item.get("question", "")
+                yield _make_doc(content, md, idx); idx += 1
+        for table in page.get("tables", []):
+            content = table.get("markdown", "")
+            if len(_clean(content)) > 20:
+                md = _base_metadata(url, title, table.get("section_title") or table.get("caption") or title, "web", document_type, None, category, "table", path)
+                md["table_caption"] = table.get("caption", "")
+                headers, rows = _parse_markdown_table_rows(content)
+                for row_doc in _make_pricing_row_docs(headers, rows, md, table.get("caption") or md.get("section_title") or title, idx):
+                    yield row_doc
+                    idx += 1
+                yield _make_doc(content, md, idx); idx += 1
+        for card in page.get("cards", []):
+            content = card.get("content", "")
+            if len(_clean(content)) > 50:
+                yield _make_doc(content, _base_metadata(url, title, card.get("title") or title, "web", document_type, None, category, "section_text", path), idx)
+                idx += 1
+        del page
+
+
+def _iter_pdf_documents(pdf_dir: Path = DOCUMENTS_DIR, chunk_size: int = 1100, overlap: int = 150):
+    metadata_by_file = {}
+    metadata_path = pdf_dir / "metadata.jsonl"
+    if metadata_path.exists():
+        for line in metadata_path.read_text(encoding="utf-8").splitlines():
+            try:
+                row = json.loads(line)
+                metadata_by_file[row.get("filename", "")] = row
+            except Exception:
+                pass
+    MAX_PDF_BYTES = 20 * 1024 * 1024
+    for pdf_path in sorted(pdf_dir.glob("*.pdf")):
+        if pdf_path.stat().st_size > MAX_PDF_BYTES:
+            continue
+        row = metadata_by_file.get(pdf_path.name, {})
+        title = row.get("title") or pdf_path.stem
+        source_url = row.get("url") or row.get("final_url") or f"file://{pdf_path}"
+        category = classify_business_category(source_url, title, pdf_path.name, fallback=row.get("category") or "unknown")
+        doc_type = classify_document_type(source_url, title, pdf_path.name, fallback="document")
+        for page_doc in parse_pdf(pdf_path):
+            page_num = page_doc.metadata.get("page")
+            chunk_type = "pdf_table" if page_doc.metadata.get("has_tables") else "pdf_text"
+            for idx, part in enumerate(_split_text(page_doc.page_content, chunk_size, overlap)):
+                md = _base_metadata(source_url, title, title, "pdf", doc_type, page_num, category, chunk_type, pdf_path)
+                md.update({"total_pages": page_doc.metadata.get("total_pages"), "has_tables": page_doc.metadata.get("has_tables"), "table_count": page_doc.metadata.get("table_count", 0)})
+                yield _make_doc(part, md, idx)
+
+
+def iter_enterprise_chunk_batches(
+    include_structured: bool = True,
+    include_markdown: bool = False,
+    include_pdfs: bool = True,
+    structured_dir: Path = STRUCTURED_DIR,
+    pdf_dir: Path = DOCUMENTS_DIR,
+    chunk_size: int = 1100,
+    overlap: int = 150,
+    batch_size: int = 256,
+):
+    """Yield deduplicated enterprise chunks in bounded memory batches."""
+    seen: set[str] = set()
+    batch: list[Document] = []
+    total = 0
+
+    def emit_if_ready(force: bool = False):
+        nonlocal batch, total
+        if batch and (force or len(batch) >= batch_size):
+            limited = _enforce_embed_limits(batch)
+            total += len(limited)
+            logger.info(f"Memory-safe enterprise batch emit: size={len(limited)}, total_emitted={total}")
+            _log_memory("enterprise_batch_emit")
+            out = limited
+            batch = []
+            gc.collect()
+            return out
+        return None
+
+    sources = []
+    if include_structured:
+        sources.append(_iter_structured_documents(structured_dir, chunk_size, overlap))
+    if include_markdown:
+        # Markdown is usually fallback-only; keep existing loader for compatibility, but batch it.
+        sources.append(iter(load_markdown_exports(structured_dir, chunk_size, overlap)))
+    if include_pdfs:
+        sources.append(_iter_pdf_documents(pdf_dir, chunk_size, overlap))
+
+    for source in sources:
+        for doc in source:
+            cid = doc.metadata.get("chunk_id")
+            if cid and cid in seen:
+                continue
+            if cid:
+                seen.add(cid)
+            batch.append(doc)
+            emitted = emit_if_ready(False)
+            if emitted is not None:
+                yield emitted
+        gc.collect()
+    emitted = emit_if_ready(True)
+    if emitted is not None:
+        yield emitted
+    logger.info(f"Memory-safe enterprise chunks emitted total={total}, dedupe_seen={len(seen)}")
 
 
 def build_enterprise_chunks(

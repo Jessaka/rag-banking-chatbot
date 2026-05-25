@@ -19,8 +19,13 @@ env/
 # === Data – runtime artifacts, downloads, indexes, datasets ===
 data/
 
-# === Logs ===
-logs/
+# === Eval run reports (generated, not source) ===
+evals/runs/
+
+# === Generic runtime artifacts ===
+*.log
+*.tmp
+*.pid
 
 # === IDE / editors ===
 .idea/

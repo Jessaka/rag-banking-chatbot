@@ -11,7 +11,7 @@
 		variant?: 'default' | 'secondary' | 'outline' | 'success' | 'warning';
 		class?: string;
 		children?: Snippet;
-	} & import('svelte/elements').HTMLSpanAttributes = $props();
+	} & Record<string, unknown> = $props();
 </script>
 
 <span

@@ -57,7 +57,7 @@
 			bind:value={text}
 			onkeydown={handleKeydown}
 			oninput={autoResize}
-			placeholder="Zeptejte se na bankovní produkty, poplatky..."
+			placeholder={disabled ? 'Čekám na odpověď…' : 'Zeptejte se na bankovní produkty, poplatky...'}
 			rows={1}
 			disabled={disabled}
 			class="flex-1 resize-none bg-transparent text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none dark:text-dark-text dark:placeholder:text-gray-500"
@@ -66,6 +66,7 @@
 		<button
 			type="submit"
 			disabled={!text.trim() || disabled}
+			aria-label={disabled ? 'Odpověď se připravuje' : 'Odeslat zprávu'}
 			class={cn(
 				'flex h-8 w-8 shrink-0 items-center justify-center rounded-xl transition-all duration-200',
 				text.trim() && !disabled

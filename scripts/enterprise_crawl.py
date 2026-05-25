@@ -57,8 +57,19 @@ CRAWL_LOG_PATH = CRAWL_DIR / "crawl_log.jsonl"
 MANIFEST_PATH = config.CRAWL_MANIFEST_PATH
 DOC_METADATA_PATH = DOCUMENTS_DIR / "metadata.jsonl"
 
-DOCUMENT_EXTENSIONS = (".pdf", ".doc", ".docx", ".xls", ".xlsx", ".csv", ".zip", ".xml")
-SKIP_PREFIXES = ("/en/", "/uk/", "/o-nas/kariera", "/attachments/kariera", "/promo/", "/test/")
+DOCUMENT_EXTENSIONS = (".pdf", ".doc", ".docx")
+SKIP_PREFIXES = (
+    "/en/", "/uk/", "/promo/", "/test/",
+    "/o-nas/", "/kariera/", "/attachments/kariera",
+    "/pro-media/", "/tiskove-zpravy/", "/novinky/", "/blog/",
+    "/investor-relations/",
+)
+SKIP_URL_CONTAINS = (
+    "/attachments/media/", "/attachments/ris/", "/ris/",
+    "tiskove-zpravy", "pro-media", "novinky", "blog",
+    "kariera", "black-tie", "magazin", "magazín",
+    "investor-relations", "index-exportu",
+)
 SECTION_NAMES = [
     "osobni", "podnikatele", "firmy", "hypoteky", "pujcky", "uvery", "kreditni-karty",
     "debetni-karty", "investice", "sporeni", "pojisteni", "bezpecnost", "premium", "ceniky",
@@ -84,7 +95,12 @@ CREDIT_CARD_QUERIES = ["kreditni karta", "kreditní karta", "kreditni karty", "k
 EXPLICIT_CREDIT_CARD_URLS = [
     f"{BASE_URL}/osobni/karty", f"{BASE_URL}/osobni/karty/kreditni-karty", f"{BASE_URL}/osobni/karty/debetni-karty",
     f"{BASE_URL}/osobni/karty/platebni-karty", f"{BASE_URL}/osobni/ucty/sluzby-k-uctum/platebni-karty",
+    f"{BASE_URL}/osobni/karty/kreditni-karty/mastercard", f"{BASE_URL}/osobni/karty/kreditni-karty/visa",
+    f"{BASE_URL}/osobni/karty/debetni-karty/easy-karta", f"{BASE_URL}/osobni/karty/debetni-karty/style-karta",
+    f"{BASE_URL}/osobni/karty/debetni-karty/embosovana-debetni-karta",
+    f"{BASE_URL}/osobni/karty/kreditni-karty/charge-cards",
 ]
+HIGH_VALUE_SECTION_PRIORITY = ["hypoteky", "pujcky", "uvery", "kreditni-karty", "debetni-karty", "ceniky", "sazebniky", "podminky", "bezpecnost", "faq"]
 
 
 @dataclass
@@ -94,6 +110,7 @@ class CrawlItem:
     source: str = "sitemap"
     priority: str | None = None
     lastmod: str | None = None
+    playwright_force: bool = False
 
 
 @dataclass
@@ -150,8 +167,8 @@ def is_internal(url: str) -> bool:
 
 
 def should_skip_url(url: str) -> bool:
-    path = urlparse(url).path
-    return any(path.startswith(prefix) for prefix in SKIP_PREFIXES)
+    path = urlparse(url).path.lower()
+    return any(path.startswith(prefix) for prefix in SKIP_PREFIXES) or any(token in path for token in SKIP_URL_CONTAINS)
 
 
 def is_document_url(url: str) -> bool:
@@ -233,7 +250,16 @@ def read_json(path: Path, default: Any) -> Any:
 
 def write_json(path: Path, data: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        path.unlink()
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def write_text_replace(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        path.unlink()
+    path.write_text(text, encoding="utf-8")
 
 
 def append_jsonl(path: Path, record: dict[str, Any]) -> None:
@@ -462,17 +488,26 @@ async def render_page(url: str) -> str:
         return html
 
 
-async def fetch_html(url: str, rp: RobotFileParser) -> str:
+async def fetch_html(url: str, rp: RobotFileParser, *, playwright_force: bool = False) -> str:
     if not allowed(rp, url):
         raise PermissionError(f"robots.txt disallow: {url}")
     try:
         return await render_page(url)
     except Exception as exc:
+        if playwright_force:
+            raise RuntimeError(f"Playwright rendering required but failed for {url}: {exc}") from exc
         logger.warning(f"Playwright fallback to requests for {url}: {exc}")
         s = session()
         resp = fetch_with_retries(s, url)
         resp.raise_for_status()
         return resp.text
+
+
+async def discover_links(url: str, rp: RobotFileParser, *, playwright_force: bool = False) -> dict[str, Any]:
+    """Only discover links and documents from a URL via JS-rendered page, don't save."""
+    html = await fetch_html(url, rp, playwright_force=playwright_force)
+    links, docs = extract_links_and_documents(html, url)
+    return {"url": url, "html_links": sorted(links), "document_links": sorted(docs), "total_links": len(links), "total_docs": len(docs)}
 
 
 def download_document(doc_url: str, page_url: str, manifest: dict[str, Any], rp: RobotFileParser, dry_run: bool = False) -> dict[str, Any]:
@@ -523,7 +558,7 @@ def download_document(doc_url: str, page_url: str, manifest: dict[str, Any], rp:
 
 
 async def process_url(item: CrawlItem, manifest: dict[str, Any], rp: RobotFileParser, docs_only: bool, dry_run: bool) -> tuple[str, list[str], list[str], dict[str, Any]]:
-    html = await fetch_html(item.url, rp)
+    html = await fetch_html(item.url, rp, playwright_force=item.playwright_force)
     content_hash = sha256_text(html)
     previous = manifest["urls"].get(item.url)
     if previous and previous.get("content_hash") == content_hash and previous.get("status") == "ok" and not docs_only:
@@ -537,16 +572,16 @@ async def process_url(item: CrawlItem, manifest: dict[str, Any], rp: RobotFilePa
     json_path = STRUCTURED_DIR / f"{slug}.json"
     md_path = STRUCTURED_DIR / f"{slug}.md"
     if not dry_run:
-        html_path.write_text(html, encoding="utf-8")
+        write_text_replace(html_path, html)
         write_json(json_path, structured)
-        md_path.write_text(markdown, encoding="utf-8")
+        write_text_replace(md_path, markdown)
     meta = {"url": item.url, "status": "ok", "depth": item.depth, "source": item.source, "section": structured["section"], "title": structured["title"], "content_hash": content_hash, "text_hash": structured["metadata"]["content_hash"], "crawled_at": now_iso(), "raw_html_path": str(html_path), "json_path": str(json_path), "markdown_path": str(md_path), "document_links": len(docs), "internal_links": len(links), "lastmod": item.lastmod, "priority": item.priority}
     manifest["urls"][item.url] = meta
     append_jsonl(CRAWL_LOG_PATH, meta)
     return "ok", sorted(links), sorted(docs), meta
 
 
-def build_initial_queue(records: list[dict[str, Any]], section: str | None, docs_only: bool) -> deque[CrawlItem]:
+def build_initial_queue(records: list[dict[str, Any]], section: str | None, docs_only: bool, *, playwright_force: bool = False) -> deque[CrawlItem]:
     queue: deque[CrawlItem] = deque()
     for rec in records:
         url = normalize_url(rec["url"])
@@ -554,22 +589,61 @@ def build_initial_queue(records: list[dict[str, Any]], section: str | None, docs
         if section and sec != section:
             continue
         if is_html_url(url) or (docs_only and is_document_url(url)):
-            queue.append(CrawlItem(url=url, depth=0, source="sitemap", priority=rec.get("priority"), lastmod=rec.get("lastmod")))
+            queue.append(CrawlItem(url=url, depth=0, source="sitemap", priority=rec.get("priority"), lastmod=rec.get("lastmod"), playwright_force=playwright_force))
     for url in EXPLICIT_CREDIT_CARD_URLS:
         if not section or section in {"kreditni-karty", "debetni-karty"}:
-            queue.append(CrawlItem(url=normalize_url(url), depth=0, source="credit-card-explicit"))
+            queue.append(CrawlItem(url=normalize_url(url), depth=0, source="credit-card-explicit", playwright_force=playwright_force))
     for rec in records:
         hay = rec["url"].lower()
         if any(q.replace(" ", "-") in hay or q in hay for q in CREDIT_CARD_QUERIES):
-            queue.append(CrawlItem(url=normalize_url(rec["url"]), depth=0, source="credit-card-sitemap", priority=rec.get("priority"), lastmod=rec.get("lastmod")))
+            queue.append(CrawlItem(url=normalize_url(rec["url"]), depth=0, source="credit-card-sitemap", priority=rec.get("priority"), lastmod=rec.get("lastmod"), playwright_force=playwright_force))
     return queue
 
 
-async def run_crawl(sitemap_only: bool, section: str | None, max_pages: int | None, dry_run: bool, resume: bool, docs_only: bool) -> Stats:
+async def run_crawl(
+    sitemap_only: bool, section: str | None, max_pages: int | None,
+    dry_run: bool, resume: bool, docs_only: bool,
+    playwright_force: bool = False, discover_only: bool = False,
+) -> Stats:
     ensure_dirs()
     records = discover_sitemaps() if not SITEMAPS_PATH.exists() or sitemap_only else load_sitemap_records()
     stats = Stats(sitemap_urls=len(records))
     if sitemap_only:
+        return stats
+    if discover_only:
+        logger.info(f"Discovery mód z {len(records)} sitemap URL")
+        rp = load_robots()
+        discovered: list[dict[str, Any]] = []
+        queue = build_initial_queue(records, section, docs_only, playwright_force=playwright_force)
+        seen = set()
+        count = 0
+        with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), BarColumn(), MofNCompleteColumn(), console=console) as progress:
+            task = progress.add_task("Discovering links via JS", total=max_pages or len(queue) or None)
+            while queue and (max_pages is None or count < max_pages):
+                item = queue.popleft()
+                item.url = normalize_url(item.url)
+                if item.url in seen or should_skip_url(item.url):
+                    continue
+                seen.add(item.url)
+                try:
+                    result = await discover_links(item.url, rp, playwright_force=playwright_force)
+                    discovered.append(result)
+                    stats.discovered_links += result["total_links"]
+                    for link in result["html_links"]:
+                        if link not in seen and is_html_url(link):
+                            if section and classify_section(link) != section:
+                                continue
+                            queue.append(CrawlItem(url=link, depth=item.depth + 1, source=item.url, playwright_force=playwright_force))
+                    count += 1
+                    stats.crawled += 1
+                except Exception as exc:
+                    stats.failed += 1
+                    logger.warning(f"Discovery failed for {item.url}: {exc}")
+                progress.advance(task)
+        # Save discovered links report
+        disc_path = DISCOVERY_DIR / "discovered_links.json"
+        write_json(disc_path, {"generated_at": now_iso(), "total_discovered": len(discovered), "total_new_links": stats.discovered_links, "results": discovered})
+        stats.outputs.append(f"Discovered {stats.discovered_links} new links, saved to {disc_path}")
         return stats
     if section and section not in SECTION_NAMES:
         raise typer.BadParameter(f"Neznámá sekce {section}. Povolené: {', '.join(SECTION_NAMES)}")
@@ -615,7 +689,7 @@ async def run_crawl(sitemap_only: bool, section: str | None, max_pages: int | No
                         if link not in seen and is_html_url(link):
                             if section and classify_section(link) != section:
                                 continue
-                            queue.append(CrawlItem(url=link, depth=item.depth + 1, source=item.url))
+                            queue.append(CrawlItem(url=link, depth=item.depth + 1, source=item.url, playwright_force=item.playwright_force))
                 manifest["failed"].pop(item.url, None)
             except Exception as exc:
                 attempts += 1
@@ -640,8 +714,13 @@ def main(
     dry_run: bool = typer.Option(False, "--dry-run", help="Jen vypíše/ověří bez ukládání obsahu a dokumentů."),
     resume: bool = typer.Option(False, "--resume", help="Pokračovat podle manifestu."),
     docs_only: bool = typer.Option(False, "--docs-only", help="Jen objevovat/stahovat dokumenty z HTML stránek."),
+    playwright_force: bool = typer.Option(False, "--playwright-force", help="Vyžadovat Playwright; fail pokud není k dispozici."),
+    discover_only: bool = typer.Option(False, "--discover-only", help="Jen objevovat JS-rendered linky bez ukládání."),
 ) -> None:
-    stats = asyncio.run(run_crawl(sitemap_only, section, max_pages, dry_run, resume, docs_only))
+    stats = asyncio.run(run_crawl(
+        sitemap_only, section, max_pages, dry_run, resume, docs_only,
+        playwright_force=playwright_force, discover_only=discover_only,
+    ))
     table = Table(title="Enterprise rb.cz crawl summary")
     table.add_column("Metric")
     table.add_column("Value", justify="right")

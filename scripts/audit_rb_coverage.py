@@ -7,6 +7,7 @@ import json
 import pickle
 import sys
 from collections import Counter, defaultdict
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,7 @@ logger = get_logger(__name__)
 
 SECTIONS = ["osobni", "podnikatele", "firmy", "hypoteky", "pujcky", "uvery", "kreditni-karty", "debetni-karty", "investice", "sporeni", "pojisteni", "bezpecnost", "premium", "ceniky", "sazebniky", "dokumenty", "podminky", "faq", "api", "kurzy", "bankovnictvi", "mobilni-aplikace", "general"]
 CREDIT_KEYS = {"kreditni_karta": ["kreditni", "kreditní", "kreditka"], "debetni_karta": ["debetni", "debetní"], "mastercard": ["mastercard"], "visa": ["visa"], "easy_karta": ["easy"], "style_karta": ["style"]}
+TREND_HISTORY_PATH = config.DISCOVERY_DIR / "coverage_trend.jsonl"
 
 
 def read_json(path: Path, default: Any) -> Any:
@@ -132,6 +134,19 @@ def build_report() -> dict[str, Any]:
     depth_dist = Counter(str(r.get("depth", 0)) for r in crawled_ok)
     haystack = " ".join([str(r.get("url", "")) + " " + str(r.get("title", "")) for r in crawled_ok] + [str(m.get("url", "")) for m in doc_meta]).lower()
     credit = {key: any(n in haystack for n in needles) for key, needles in CREDIT_KEYS.items()}
+    credit_chunks: dict[str, int] = {}
+    # Fallback to index (Qdrant/BM25) for credit card coverage if crawl is sparse
+    if not any(credit.values()) and qpayloads:
+        idx_hay = " ".join(str(p.get(k, "")) for p in qpayloads for k in ["source_url", "url", "title", "page_content", "product_name"]).lower()
+        credit_idx = {key: any(n in idx_hay for n in needles) for key, needles in CREDIT_KEYS.items()}
+        if any(credit_idx.values()):
+            credit = credit_idx  # index-based coverage is more accurate
+        # Chunk counts from index
+        for key, terms in CREDIT_KEYS.items():
+            credit_chunks[key] = sum(1 for p in qpayloads if any(term in " ".join(str(v).lower() for v in p.values()) for term in terms))
+    elif qpayloads:
+        for key, terms in CREDIT_KEYS.items():
+            credit_chunks[key] = sum(1 for p in qpayloads if any(term in " ".join(str(v).lower() for v in p.values()) for term in terms))
     missing_high = [s for s in ["hypoteky", "kreditni-karty", "debetni-karty", "ceniky", "sazebniky", "podminky", "bezpecnost", "faq"] if by_section[s]["coverage_pct"] < 50]
     top_uncovered = sorted(list(sitemap_url_set - crawled_urls))[:100]
     recommendations = []
@@ -141,14 +156,41 @@ def build_report() -> dict[str, Any]:
         recommendations.append("Spustit enterprise_crawl.py --resume pro retry failed URL.")
     if any(not v for v in credit.values()):
         recommendations.append("Doplnit explicitní crawl kreditních/debetních karet a dokumentů Mastercard/Visa/EASY/STYLE.")
-    return {"total_crawled_urls": len(crawled_urls), "total_indexed_docs": total_indexed, "total_pdfs": ext_counts.get("pdf", 0), "total_pricing_rows": pricing_rows, "sitemap_coverage_percent": round((len(crawled_urls & sitemap_url_set) / len(sitemap_url_set) * 100) if sitemap_url_set else 0.0, 2), "by_section": by_section, "by_document_type": dict(ext_counts), "missing_high_value_sections": missing_high, "top_uncovered_urls": top_uncovered, "duplicate_files": duplicate_files, "empty_files": empty_files, "broken_downloads": broken, "http_failures": failures, "crawl_depth_distribution": dict(depth_dist), "credit_card_coverage": credit, "recommendations": recommendations}
+    trend = {
+        "generated_at": now_iso(),
+        "total_crawled_urls": len(crawled_urls),
+        "total_indexed_docs": total_indexed,
+        "total_pdfs": ext_counts.get("pdf", 0),
+        "total_pricing_rows": pricing_rows,
+        "sitemap_coverage_percent": round((len(crawled_urls & sitemap_url_set) / len(sitemap_url_set) * 100) if sitemap_url_set else 0.0, 2),
+        "failed_crawl_urls": len(failures),
+        "broken_downloads": len(broken),
+        "duplicate_groups": len(duplicate_files),
+        "empty_files": empty_files,
+        "missing_high_value_sections": missing_high,
+    }
+    return {"total_crawled_urls": len(crawled_urls), "total_indexed_docs": total_indexed, "total_pdfs": ext_counts.get("pdf", 0), "total_pricing_rows": pricing_rows, "sitemap_coverage_percent": round((len(crawled_urls & sitemap_url_set) / len(sitemap_url_set) * 100) if sitemap_url_set else 0.0, 2), "by_section": by_section, "by_document_type": dict(ext_counts), "missing_high_value_sections": missing_high, "top_uncovered_urls": top_uncovered, "duplicate_files": duplicate_files, "empty_files": empty_files, "broken_downloads": broken, "http_failures": failures, "crawl_depth_distribution": dict(depth_dist), "credit_card_coverage": credit, "credit_card_chunks": credit_chunks, "recommendations": recommendations, "trend": trend}
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 @app.callback(invoke_without_command=True)
-def main() -> None:
+def main(json_only: bool = typer.Option(False, "--json-only", help="Jen JSON výstup, bez tabulek.")) -> None:
     report = build_report()
     config.DISCOVERY_DIR.mkdir(parents=True, exist_ok=True)
-    (config.DISCOVERY_DIR / "coverage_report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    report_path = config.DISCOVERY_DIR / "coverage_report.json"
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    # Append trend snapshot
+    try:
+        with TREND_HISTORY_PATH.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(report.get("trend", {}), ensure_ascii=False) + "\n")
+    except Exception as exc:
+        logger.warning(f"Nepodařilo se zapsat trend: {exc}")
+    if json_only:
+        console.print_json(json.dumps(report, ensure_ascii=False))
+        return
     table = Table(title="rb.cz coverage audit")
     table.add_column("Metric")
     table.add_column("Value", justify="right")

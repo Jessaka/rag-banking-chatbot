@@ -90,6 +90,10 @@ class ChatResponse(BaseModel):
     error: str | None = Field(None, description="Chybová zpráva pouze v debug/error odpovědích.")
     traceback: str | None = Field(None, description="Traceback pouze pokud DEBUG_API_ERRORS=true.")
     retrieval_debug: Any | None = Field(None, description="Debug retrievalu pouze pro eval/debug odpovědi.")
+    confidence_bucket: str | None = Field(None, description="UX confidence bucket: high | medium | low.")
+    confidence_reason: str | None = Field(None, description="Stručné vysvětlení confidence pro UX/eval.")
+    clarification_required: bool | None = Field(None, description="Zda je vhodné vyžádat upřesnění.")
+    unsupported_reason: str | None = Field(None, description="Důvod bezpečného unsupported fallbacku.")
 
 
 class ComponentStatus(BaseModel):
@@ -679,6 +683,10 @@ async def chat(request: ChatRequest) -> ChatResponse:
         request_id=request_id,
         answer_strategy=result.get("answer_strategy"),
         retrieval_debug=result.get("retrieval_debug") if config.DEBUG_API_ERRORS else None,
+        confidence_bucket=result.get("confidence_bucket"),
+        confidence_reason=result.get("confidence_reason"),
+        clarification_required=result.get("clarification_required"),
+        unsupported_reason=result.get("unsupported_reason"),
     )
 
 

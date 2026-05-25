@@ -8,7 +8,7 @@
 	}: {
 		orientation?: 'horizontal' | 'vertical';
 		class?: string;
-	} & import('svelte/elements').HTMLHRElementAttributes = $props();
+	} & Record<string, unknown> = $props();
 </script>
 
 <hr

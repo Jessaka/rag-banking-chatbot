@@ -42,8 +42,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
 from src.ingestion.chunker import chunk_documents
 from src.ingestion.downloader import download_all, load_urls_from_file
-from src.ingestion.enterprise import build_enterprise_chunks, reclassify_metadata
-from src.ingestion.indexer import run_full_indexing, run_incremental_indexing
+from src.ingestion.enterprise import build_enterprise_chunks, iter_enterprise_chunk_batches, reclassify_metadata
+from src.ingestion.indexer import log_memory, run_full_indexing, run_incremental_indexing, run_incremental_indexing_stream
+from src.ingestion.ocr_pipeline import batch_ocr, is_scanned_pdf, validate_ocr_quality
 from src.ingestion.parser import parse_all_pdfs
 from src.ingestion.pricing_extractor import extract_pricing_rows_from_dir
 from src.utils.logger import get_logger
@@ -132,6 +133,26 @@ def main(
         "--pricing-max-pages",
         help="Maximální počet stran na PDF pro structured pricing extraction; 0 = bez limitu.",
     ),
+    clean_docs: bool = typer.Option(
+        False,
+        "--clean-docs",
+        help="Před ingestem spustí validaci dokumentů a odstraní broken/empty/duplicitní soubory.",
+    ),
+    ocr_fallback: bool = typer.Option(
+        False,
+        "--ocr-fallback",
+        help="Detekuje scanned PDF a aplikuje OCR fallback před chunkingem.",
+    ),
+    max_workers: int = typer.Option(
+        2,
+        "--max-workers",
+        help="Maximální počet workerů pro paměťově náročné kroky. Memory-safe režim vynutí 1.",
+    ),
+    memory_safe_mode: bool = typer.Option(
+        False,
+        "--memory-safe-mode",
+        help="Paměťově bezpečný incremental ingest: workers=1, malé batche, streaming chunky, okamžitý Qdrant flush.",
+    ),
 ) -> None:
     """
     Spustí ingestion pipeline pro Raiffeisenbank dokumenty.
@@ -142,6 +163,15 @@ def main(
     """
     start_time = time.time()
     documents_count = 0
+    if memory_safe_mode:
+        max_workers = 1
+        config.OPENAI_EMBED_BATCH_SIZE = min(config.OPENAI_EMBED_BATCH_SIZE, 4)
+        config.OLLAMA_EMBED_BATCH_SIZE = min(config.OLLAMA_EMBED_BATCH_SIZE, 4)
+        console.print("[yellow]Memory-safe mode: workers=1, embed batch<=4, streaming chunks, immediate flush.[/yellow]")
+    else:
+        max_workers = max(1, min(max_workers, 2))
+    console.print(f"[dim]Max workers: {max_workers}[/dim]")
+    log_memory("ingest_start")
 
     if reclassify_metadata_only:
         console.print(Panel.fit("[bold cyan]Metadata reclassification[/bold cyan]\nBM25 docs store + Qdrant payload bez re-embeddingu", border_style="cyan"))
@@ -154,7 +184,7 @@ def main(
 
     mode_label = "[red]FULL reindexace[/red]" if full else "[green]Incremental[/green]"
     if resume and not full:
-        console.print("[yellow]--resume má efekt pouze s --full; pokračuji v incremental režimu bez resume.[/yellow]")
+        console.print("[yellow]Incremental režim používá checkpoint/resume automaticky; --resume není potřeba.[/yellow]")
     console.print(
         Panel.fit(
             "[bold cyan]RAG Banking Chatbot – Ingestion Pipeline[/bold cyan]\n"
@@ -165,6 +195,26 @@ def main(
 
     if enterprise:
         console.print("\n[bold]Enterprise ingestion: structured JSON/Markdown + PDF semantic chunks…[/bold]")
+
+        # ── Clean docs step ──────────────────────────────────────────────────
+        if clean_docs:
+            console.print("[bold]Validace dokumentů a čištění…[/bold]")
+            from scripts.validate_documents import scan as validate_scan
+            validation = validate_scan(documents_dir, fix=True)
+            cleaned = len(validation.get("summary", {}).get("fixed_deleted", []))
+            console.print(f"[green]✓[/green] Validace: {validation['summary']['total_files']} souborů, {cleaned} smazáno")
+
+        # ── OCR fallback step ──────────────────────────────────────────────────
+        if ocr_fallback:
+            console.print("[bold]OCR detekce a fallback pro scanned PDF…[/bold]")
+            ocr_output_dir = documents_dir / "_ocr_output"
+            ocr_results = batch_ocr(str(documents_dir), str(ocr_output_dir), {"recursive": True})
+            ocr_applied = sum(1 for r in ocr_results if r.get("ocr_applied"))
+            ocr_failed = sum(1 for r in ocr_results if r.get("status") == "failed")
+            ocr_scanned = sum(1 for r in ocr_results if r.get("is_scanned"))
+            console.print(f"[green]✓[/green] OCR: {ocr_scanned} scanned, {ocr_applied} OCR'd, {ocr_failed} failed")
+
+        # ── Pricing extraction ─────────────────────────────────────────────────
         if extract_pricing:
             console.print("[bold]Structured pricing extraction: PDF tabulky → JSONL…[/bold]")
             pricing_stats = extract_pricing_rows_from_dir(
@@ -173,20 +223,36 @@ def main(
                 max_pages_per_pdf=pricing_max_pages or None,
             )
             console.print(f"[green]✓[/green] Structured pricing rows: {pricing_stats['rows']} → {pricing_stats['output_path']}")
-        chunks = build_enterprise_chunks(
-            include_structured=True,
-            include_markdown=include_markdown,
-            include_pdfs=True,
-            structured_dir=structured_dir,
-            pdf_dir=documents_dir,
-            chunk_size=chunk_size,
-            overlap=chunk_overlap,
-        )
-        if not chunks:
-            console.print("[red]✗ Enterprise ingestion nevytvořil žádné chunky.[/red]")
-            raise typer.Exit(code=1)
-        documents_count = len({c.metadata.get("source") for c in chunks})
-        console.print(f"[green]✓[/green] Enterprise chunky: {len(chunks)} ze zdrojů: {documents_count}")
+
+        if memory_safe_mode and not full:
+            chunks = None
+            documents_count = 0
+            chunk_batches = iter_enterprise_chunk_batches(
+                include_structured=True,
+                include_markdown=include_markdown,
+                include_pdfs=True,
+                structured_dir=structured_dir,
+                pdf_dir=documents_dir,
+                chunk_size=chunk_size,
+                overlap=chunk_overlap,
+                batch_size=128,
+            )
+            console.print("[green]✓[/green] Enterprise chunky poběží streamingově po batchech (memory-safe)")
+        else:
+            chunks = build_enterprise_chunks(
+                include_structured=True,
+                include_markdown=include_markdown,
+                include_pdfs=True,
+                structured_dir=structured_dir,
+                pdf_dir=documents_dir,
+                chunk_size=chunk_size,
+                overlap=chunk_overlap,
+            )
+            if not chunks:
+                console.print("[red]✗ Enterprise ingestion nevytvořil žádné chunky.[/red]")
+                raise typer.Exit(code=1)
+            documents_count = len({c.metadata.get("source") for c in chunks})
+            console.print(f"[green]✓[/green] Enterprise chunky: {len(chunks)} ze zdrojů: {documents_count}")
     else:
         # ── Krok 1: Stažení PDF ──────────────────────────────────────────────
         if not skip_download:
@@ -238,6 +304,27 @@ def main(
 
     elapsed = time.time() - start_time
 
+    if memory_safe_mode and full:
+        console.print("[red]✗ --memory-safe-mode je povolený pouze pro incremental ingest; nepřepisuji Qdrant collection.[/red]")
+        raise typer.Exit(code=1)
+
+    if memory_safe_mode and enterprise:
+        stats = run_incremental_indexing_stream(chunk_batches, memory_safe=True)
+        console.print(
+            Panel.fit(
+                f"[bold green]✓ Memory-safe incremental indexace dokončena za {time.time() - start_time:.1f}s[/bold green]\n"
+                f"  Nově nalezeno:     [green]{stats['new']}[/green]\n"
+                f"  Qdrant upsert:     [green]{stats.get('indexed', stats['new'])}[/green]\n"
+                f"  Failed chunků:     [red]{stats.get('failed', 0)}[/red]\n"
+                f"  Retry pokusů:      [yellow]{stats.get('retry_count', 0)}[/yellow]\n"
+                f"  BM25 pending flush:[cyan]{stats.get('total_bm25', 0)}[/cyan]\n"
+                f"  Přeskočeno (dup.): [dim]{stats['skipped']}[/dim]\n"
+                f"  Qdrant celkem:     {stats['total_qdrant']} bodů",
+                border_style="green",
+            )
+        )
+        return
+
     if full:
         run_full_indexing(chunks, resume=resume)
         console.print(
@@ -256,6 +343,10 @@ def main(
                 f"[bold green]✓ Incremental indexace dokončena za {elapsed:.1f}s[/bold green]\n"
                 f"  Zpracováno chunků:  {len(chunks)}\n"
                 f"  Nově indexováno:   [green]{stats['new']}[/green]\n"
+                f"  Qdrant upsert:     [green]{stats.get('indexed', stats['new'])}[/green]\n"
+                f"  Failed chunků:     [red]{stats.get('failed', 0)}[/red]\n"
+                f"  Retry pokusů:      [yellow]{stats.get('retry_count', 0)}[/yellow]\n"
+                f"  BM25 recovery:     [cyan]{stats.get('recovered_for_bm25', 0)}[/cyan]\n"
                 f"  Přeskočeno (dup.): [dim]{stats['skipped']}[/dim]\n"
                 f"  Qdrant celkem:     {stats['total_qdrant']} bodů\n"
                 f"  BM25 celkem:       {stats['total_bm25']} dokumentů",

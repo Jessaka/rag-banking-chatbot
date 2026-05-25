@@ -1,0 +1,4 @@
+[
+  {"id":"conversation.001","category":"conversation","subcategory":"ekonto_clarification","tags":["multi_turn","clarification"],"turns":[{"question":"Kolik stojí eKonto?"},{"question":"osobní"}],"expected_behavior":"direct_answer","expected_contains":["eKonto"],"expected_not_contains":["UNIQA","500 Kč","250 Kč","```"],"requires_sources":false,"should_clarify":false,"min_grounding_score":0.0,"format_expectations":{"forbid_raw_json":true,"max_answer_chars":1200}},
+  {"id":"conversation.002","category":"conversation","subcategory":"identity","tags":["multi_turn","identity"],"turns":[{"question":"kdo jste"},{"question":"co umíte"}],"expected_behavior":"direct_answer","expected_contains":["Raiffeisenbank","AI asistent"],"expected_not_contains":["UNIQA","pojišťovna","nevím"],"requires_sources":false,"should_clarify":false,"min_grounding_score":0.0,"format_expectations":{"forbid_raw_json":true,"max_answer_chars":900}}
+]

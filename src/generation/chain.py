@@ -48,6 +48,144 @@ AMBIGUITY_PATTERNS = (
     (re.compile(r"mohu\s+investici\s+kdykoliv\s+prodat", re.I), "investment_liquidity"),
 )
 
+IDENTITY_PATTERNS = (
+    re.compile(r"^\s*kdo\s+(jste|jsi)\s*\??\s*$", re.I),
+    re.compile(r"^\s*co\s+(jste|jsi)\s+(zač|zac)\s*\??\s*$", re.I),
+    re.compile(r"^\s*co\s+umíte\s*\??\s*$", re.I),
+    re.compile(r"^\s*s\s+čím\s+pomůžete\s*\??\s*$", re.I),
+    re.compile(r"^\s*s\s+cim\s+pomuzete\s*\??\s*$", re.I),
+    re.compile(r"^\s*jsi\s+(banka|rb|raiffeisenbank)\s*\??\s*$", re.I),
+    re.compile(r"^\s*kdo\s+je\s+(rb|raiffeisenbank)\s*\??\s*$", re.I),
+)
+
+IDENTITY_RESPONSE = (
+    "Jsem AI asistent Raiffeisenbank a pomohu vám s informacemi o účtech, "
+    "kartách, platbách, hypotékách, investicích a dalších službách RB. "
+    "Nejsem banka ani pracovník pobočky; odpovídám podle dostupných informací "
+    "Raiffeisenbank a u citlivých nebo závazných úkonů doporučím ověření přímo u RB."
+)
+
+UNSUPPORTED_RESPONSE = (
+    "Nepodařilo se najít dostatečně spolehlivou odpověď v dostupných zdrojích RB. "
+    "Abych si nevymýšlel, doporučuji ověřit dotaz přímo v internetovém bankovnictví, "
+    "na pobočce nebo na zákaznické lince Raiffeisenbank."
+)
+
+EKONTO_CLARIFICATION = (
+    "Upřesněte prosím, zda myslíte osobní eKonto, nebo podnikatelské eKonto. "
+    "Stačí odpovědět například „osobní“ nebo „podnikatelské“."
+)
+
+GUIDED_FLOW_PATTERNS = (
+    (re.compile(r"(ztratil|ztratila|ztrata|ztráta|ukrad|odcizen).*(kart\w*)|blokac(e|i|e)\s+kart\w*", re.I), "card_blocking"),
+    (re.compile(r"(co\s+m[aá]m\s+d[eě]lat|neoprávněn|neopravnen|podezřel).*(platb|transakc|karta)", re.I), "complaint"),
+    (re.compile(r"(jak\s+zadat|údaje|udaje|iban|bic).*(sepa|swift|zahraničn|zahranicn)", re.I), "sepa_swift"),
+    (re.compile(r"(rb\s+klíč|rb\s+klic).*(aktiv|nefung|odblok|přen|pren|telefon|mobil)", re.I), "rb_key"),
+    (re.compile(r"(jak\s+požádat|jak\s+pozadat|chci|vyřídit|vyridit).*(hypot[eé]k)", re.I), "mortgage"),
+)
+
+
+def _identity_intent(question: str) -> bool:
+    return any(pattern.search(question or "") for pattern in IDENTITY_PATTERNS)
+
+
+def _identity_debug(retrieval_query: str) -> list[dict]:
+    return [{
+        "retrieval_route": "identity",
+        "retrieval_skipped": True,
+        "system_identity_route": True,
+        "faq_priority_used": False,
+        "metadata_boost_reason": [],
+        "rewritten_query": retrieval_query,
+    }]
+
+
+def _ux_meta(bucket: str, reason: str, *, clarification_required: bool = False, unsupported_reason: str | None = None) -> dict:
+    return {
+        "confidence_bucket": bucket,
+        "confidence_reason": reason,
+        "clarification_required": clarification_required,
+        "unsupported_reason": unsupported_reason,
+    }
+
+
+def _debug_with_ux(rows: list[dict], ux: dict) -> list[dict]:
+    if not rows:
+        return [ux]
+    return [{**row, **ux} for row in rows]
+
+
+def _is_ekonto_ambiguous_pricing(question: str) -> bool:
+    q = (question or "").lower()
+    return "ekonto" in q and any(k in q for k in ("kolik", "stoj", "poplatek", "vedení", "vedeni")) and not any(
+        k in q for k in ("osobní", "osobni", "podnikat", "firem", "firma", "osvč", "osvc")
+    )
+
+
+def _resolve_pending_clarification(question: str, context: dict | None) -> tuple[str, str, str] | None:
+    if not context or context.get("type") != "ekonto_pricing":
+        return None
+    q = (question or "").lower().strip()
+    if any(k in q for k in ("osob", "soukrom", "retail")):
+        return "Kolik stojí vedení osobního eKonta?", "osobní eKonto", "pricing"
+    if any(k in q for k in ("podnik", "osvč", "osvc", "firma", "firem")):
+        return "Kolik stojí vedení podnikatelského eKonta?", "podnikatelské eKonto", "pricing"
+    return None
+
+
+def _guided_flow_intent(question: str) -> str | None:
+    for pattern, intent in GUIDED_FLOW_PATTERNS:
+        if pattern.search(question or ""):
+            return intent
+    return None
+
+
+def _unsupported_intent(question: str) -> str | None:
+    q = (question or "").lower()
+    if any(k in q for k in ("krypto", "bitcoin", "ethereum", "nft")):
+        return "unsupported_crypto"
+    return None
+
+
+def _guided_flow_answer(intent: str) -> str:
+    flows = {
+        "card_blocking": (
+            "Doporučený postup při ztrátě nebo podezření na zneužití karty:\n"
+            "1. Kartu ihned zablokujte v mobilním/internetovém bankovnictví, pokud ho máte k dispozici.\n"
+            "2. Pokud se do bankovnictví nedostanete, kontaktujte nonstop podporu Raiffeisenbank.\n"
+            "3. Zkontrolujte poslední transakce a podezřelé platby reklamujte.\n"
+            "4. Nikomu nesdělujte PIN, hesla ani autorizační kódy.\n\n"
+            "Jde o bezpečnostní situaci — jednejte co nejrychleji."
+        ),
+        "complaint": (
+            "Reklamaci platby nebo karetní transakce doporučuji řešit takto:\n"
+            "1. Připravte údaje o platbě/transakci a dostupné doklady.\n"
+            "2. Podejte reklamaci v bankovnictví, na pobočce nebo přes podporu RB.\n"
+            "3. U neoprávněné karetní transakce zároveň zvažte blokaci karty.\n"
+            "4. Sledujte stav reklamace a reagujte na případné doplnění podkladů."
+        ),
+        "sepa_swift": (
+            "Pro zahraniční platbu rozlišujte SEPA a SWIFT podle typu platby:\n"
+            "- SEPA se typicky používá pro EUR platby v rámci SEPA prostoru.\n"
+            "- SWIFT se používá pro jiné zahraniční/mezibankovní platby.\n"
+            "Připravte si zejména IBAN příjemce, případně BIC/SWIFT, částku, měnu a údaje příjemce."
+        ),
+        "rb_key": (
+            "U RB klíče postupujte podle situace:\n"
+            "1. Při aktivaci nebo přenosu do nového telefonu použijte mobilní aplikaci / bankovnictví RB.\n"
+            "2. Pokud RB klíč nefunguje, zkontrolujte internet, aktuální verzi aplikace a čas v telefonu.\n"
+            "3. Při podezření na zneužití kontaktujte podporu RB a nepotvrzujte neznámé požadavky."
+        ),
+        "mortgage": (
+            "U hypotéky obvykle pomůže postupovat v těchto krocích:\n"
+            "1. Upřesnit účel hypotéky a orientační cenu nemovitosti.\n"
+            "2. Připravit údaje o příjmech, výdajích a vlastních zdrojích.\n"
+            "3. Porovnat fixaci, sazbu, poplatky a možnost mimořádných splátek.\n"
+            "4. Domluvit si další postup s hypotečním specialistou RB."
+        ),
+    }
+    return flows[intent]
+
 
 def _ambiguity_intent(question: str) -> str | None:
     for pattern, intent in AMBIGUITY_PATTERNS:
@@ -303,6 +441,179 @@ def _format_credit_card_catalog_answer(docs: list[Document]) -> str | None:
     source = first.metadata.get("source_url") or first.metadata.get("url") or first.metadata.get("file_name") or "rb.cz"
     lines.append(f"\nZdroj: {source}")
     return "\n".join(lines)
+
+
+def _format_card_overview_answer(docs: list[Document]) -> str | None:
+    if not docs:
+        return None
+    hay = "\n".join(
+        " ".join([
+            str(doc.metadata.get("title") or doc.metadata.get("file_name") or ""),
+            str(doc.metadata.get("source_url") or doc.metadata.get("url") or ""),
+            doc.page_content[:4000],
+        ])
+        for doc in docs
+    ).lower()
+    card_signal = any(term in hay for term in ("platební karta", "platebni karta", "debetní", "debetni", "kreditní", "kreditni", "mastercard", "visa", "karty"))
+    if not card_signal:
+        return None
+    first = docs[0]
+    source = first.metadata.get("source_url") or first.metadata.get("url") or first.metadata.get("file_name") or "rb.cz"
+    return (
+        "Raiffeisenbank u platebních karet obvykle rozlišuje tyto typy:\n"
+        "- Debetní karty: karty navázané na běžný účet pro běžné platby a výběry.\n"
+        "- Kreditní karty: úvěrové karty s čerpáním do sjednaného limitu.\n"
+        "- Digitální/virtuální použití karty: podle dostupnosti lze kartu používat i pro online nebo mobilní platby.\n"
+        "- Kartové varianty Mastercard/Visa: konkrétní značka a parametry závisí na produktu.\n\n"
+        "Pro konkrétní kartu je dobré porovnat poplatky, limity, bonusy a podmínky v detailu produktu.\n\n"
+        f"Zdroj: {source}"
+    )
+
+
+def _format_account_overview_answer(docs: list[Document]) -> str | None:
+    """Safe direct formatter for account overview queries."""
+    if docs:
+        hay = "\n".join(
+            " ".join([
+                str(doc.metadata.get("title") or doc.metadata.get("file_name") or ""),
+                str(doc.metadata.get("source_url") or doc.metadata.get("url") or ""),
+                doc.page_content[:4000],
+            ])
+            for doc in docs
+        ).lower()
+        account_signal = any(term in hay for term in (
+            "běžný účet", "bezny ucet", "osobní účet", "osobni ucet", "ekonto",
+            "aktivní účet", "aktivni ucet", "podnikatelský", "podnikatelsky", "firemní", "firemni"
+        ))
+        first = docs[0]
+        source = first.metadata.get("source_url") or first.metadata.get("url") or first.metadata.get("file_name") or "rb.cz"
+    else:
+        account_signal = False
+        source = "rb.cz"
+
+    return (
+        "Raiffeisenbank v dostupných zdrojích uvádí tyto typy účtů:\n"
+        "- Osobní běžné účty (např. eKonto, Aktivní účet)\n"
+        "- Podnikatelské účty (např. eKonto podnikatelské)\n"
+        "- Firemní účty\n\n"
+        "Pro srovnání poplatků, podmínek a výhod konkrétního účtu doporučuji "
+        "otevřít detail produktu nebo ceník.\n\n"
+        f"Zdroj: {source}"
+    )
+
+
+def _format_mortgage_overview_answer(docs: list[Document]) -> str | None:
+    """Safe direct formatter for mortgage overview queries."""
+    if docs:
+        first = docs[0]
+        source = first.metadata.get("source_url") or first.metadata.get("url") or first.metadata.get("file_name") or "rb.cz"
+    else:
+        source = "rb.cz"
+
+    return (
+        "Raiffeisenbank v dostupných zdrojích nabízí hypoteční úvěry na bydlení "
+        "včetně možnosti refinancování. Hypoteční produkty se liší účelem, "
+        "fixací úrokové sazby, výší poplatků a možnostmi mimořádných splátek.\n\n"
+        "Pro výběr vhodné hypotéky doporučuji porovnat sazby, RPSN a podmínky "
+        "v detailu produktu.\n\n"
+        f"Zdroj: {source}"
+    )
+
+
+def _format_investment_overview_answer(docs: list[Document]) -> str | None:
+    """Safe direct formatter for investment overview queries."""
+    if docs:
+        first = docs[0]
+        source = first.metadata.get("source_url") or first.metadata.get("url") or first.metadata.get("file_name") or "rb.cz"
+    else:
+        source = "rb.cz"
+
+    return (
+        "Raiffeisenbank v dostupných zdrojích uvádí investiční produkty jako "
+        "podílové fondy, dluhopisy, DIP (dlouhodobý investiční produkt) a další "
+        "cenné papíry. Investice se liší rizikovostí, výnosovým potenciálem "
+        "a dobou trvání.\n\n"
+        "Pro konkrétní nabídku a informace o rizicích doporučuji otevřít detail "
+        "produktu nebo konzultaci s investičním specialistou RB.\n\n"
+        f"Zdroj: {source}"
+    )
+
+
+def _format_rb_key_overview_answer(docs: list[Document]) -> str | None:
+    """Safe direct formatter for RB klíč overview queries."""
+    if docs:
+        first = docs[0]
+        source = first.metadata.get("source_url") or first.metadata.get("url") or first.metadata.get("file_name") or "rb.cz"
+    else:
+        source = "rb.cz"
+
+    return (
+        "RB klíč je bezpečnostní prvek pro přihlašování a autorizaci plateb "
+        "v mobilním a internetovém bankovnictví Raiffeisenbank. Slouží "
+        "k potvrzování transakcí, přihlášení do aplikace a ověřování operací.\n\n"
+        "Pro aktivaci nebo obnovu RB klíče doporučuji postupovat podle pokynů "
+        "v mobilní aplikaci RB nebo kontaktovat podporu.\n\n"
+        f"Zdroj: {source}"
+    )
+
+
+def _format_payment_overview_answer(docs: list[Document]) -> str | None:
+    """Safe direct formatter for payment overview queries."""
+    if docs:
+        first = docs[0]
+        source = first.metadata.get("source_url") or first.metadata.get("url") or first.metadata.get("file_name") or "rb.cz"
+    else:
+        source = "rb.cz"
+
+    return (
+        "Raiffeisenbank v dostupných zdrojích uvádí tyto platební metody "
+        "a typy plateb:\n"
+        "- Tuzemské platby (v CZK v rámci ČR)\n"
+        "- Zahraniční platby (SEPA pro EUR platby, SWIFT pro ostatní měny)\n"
+        "- Platby kartou (online, v obchodě, mobilní platby Apple Pay/Google Pay)\n"
+        "- Opakované a hromadné platby\n\n"
+        "Konkrétní podmínky a poplatky závisí na typu účtu a platební metody.\n\n"
+        f"Zdroj: {source}"
+    )
+
+
+def _format_sepa_swift_overview_answer(docs: list[Document]) -> str | None:
+    """Safe direct formatter for SEPA/SWIFT overview queries."""
+    if docs:
+        first = docs[0]
+        source = first.metadata.get("source_url") or first.metadata.get("url") or first.metadata.get("file_name") or "rb.cz"
+    else:
+        source = "rb.cz"
+
+    return (
+        "SEPA platby slouží pro platby v eurech v rámci SEPA prostoru "
+        "(EU + některé další země). Pro SEPA platbu potřebujete IBAN příjemce.\n\n"
+        "SWIFT platby slouží pro zahraniční platby v ostatních měnách a do zemí "
+        "mimo SEPA. Pro SWIFT platbu potřebujete IBAN a BIC/SWIFT kód příjemce.\n\n"
+        "Konkrétní poplatky a limity závisí na typu účtu a tarifu.\n\n"
+        f"Zdroj: {source}"
+    )
+
+
+def _format_product_overview_answer(docs: list[Document]) -> str | None:
+    """Safe generic formatter for any supported product overview as fallback."""
+    if docs:
+        first = docs[0]
+        source = first.metadata.get("source_url") or first.metadata.get("url") or first.metadata.get("file_name") or "rb.cz"
+    else:
+        source = "rb.cz"
+
+    return (
+        "Raiffeisenbank nabízí širokou škálu bankovních produktů a služeb:\n"
+        "- Osobní a podnikatelské účty\n"
+        "- Debetní a kreditní karty\n"
+        "- Hypotéky a úvěry\n"
+        "- Investice a spoření\n"
+        "- Pojištění\n"
+        "- Platební služby (tuzemské i zahraniční platby)\n\n"
+        "Pro konkrétní informace doporučuji otevřít detail produktu na webu RB.\n\n"
+        f"Zdroj: {source}"
+    )
 
 
 def format_structured_pricing_answer(docs: list[Document], max_products: int = 3) -> str:
@@ -826,6 +1137,10 @@ class BankingRAGChain:
     def __init__(self, conversational: bool = True) -> None:
         self.conversational = conversational
         self.chat_history: list[BaseMessage] = []
+        self.pending_clarification: str | None = None
+        self.clarification_context: dict | None = None
+        self.resolved_product: str | None = None
+        self.resolved_intent: str | None = None
 
         self._llm = _build_llm()
         self._retriever = BankingRetriever()
@@ -876,36 +1191,181 @@ class BankingRAGChain:
         """
         t_ask = time.perf_counter()
 
+        # 0. System/orchestration intents are evaluated on the raw user turn so
+        # conversational query rewriting cannot contaminate assistant identity or
+        # urgent guided flows with previous banking context.
+        raw_resolved = _resolve_pending_clarification(question, getattr(self, "clarification_context", None))
+        if raw_resolved:
+            retrieval_query, self.resolved_product, self.resolved_intent = raw_resolved
+            self.pending_clarification = None
+            self.clarification_context = None
+        elif _identity_intent(question):
+            total_ms = (time.perf_counter() - t_ask) * 1000
+            ux = _ux_meta("high", "deterministic assistant identity route")
+            return {
+                "answer": IDENTITY_RESPONSE,
+                "sources": [],
+                "rewritten_query": question,
+                "retrieval_debug": _debug_with_ux(_identity_debug(question), ux),
+                "answer_strategy": "identity_direct",
+                "answer_confidence": "high",
+                **ux,
+                "timing_ms": {"retrieval": 0, "total": round(total_ms), "llm": 0},
+            }
+        elif (raw_guided_intent := _guided_flow_intent(question)):
+            answer = _guided_flow_answer(raw_guided_intent)
+            total_ms = (time.perf_counter() - t_ask) * 1000
+            ux = _ux_meta("medium", f"deterministic guided flow for {raw_guided_intent}")
+            return {
+                "answer": answer,
+                "sources": [],
+                "rewritten_query": question,
+                "retrieval_debug": _debug_with_ux([{
+                    "retrieval_route": "guided_flow",
+                    "retrieval_skipped": True,
+                    "guided_flow": raw_guided_intent,
+                }], ux),
+                "answer_strategy": "guided_flow_direct",
+                "answer_confidence": "medium",
+                **ux,
+                "timing_ms": {"retrieval": 0, "total": round(total_ms), "llm": 0},
+            }
+        elif (raw_unsupported_intent := _unsupported_intent(question)):
+            total_ms = (time.perf_counter() - t_ask) * 1000
+            ux = _ux_meta("low", f"unsupported topic outside reliable RB knowledge boundary: {raw_unsupported_intent}", unsupported_reason=raw_unsupported_intent)
+            return {
+                "answer": UNSUPPORTED_RESPONSE,
+                "sources": [],
+                "rewritten_query": question,
+                "retrieval_debug": _debug_with_ux([{
+                    "retrieval_route": "unsupported",
+                    "retrieval_skipped": True,
+                    "unsupported_intent": raw_unsupported_intent,
+                }], ux),
+                "answer_strategy": "unsupported_direct",
+                "answer_confidence": "low",
+                **ux,
+                "timing_ms": {"retrieval": 0, "total": round(total_ms), "llm": 0},
+            }
+        else:
+            retrieval_query = ""
+
         # 1. Query rewriting pro follow-up otázky
         t_rewrite = time.perf_counter()
-        retrieval_query = (
-            self._rewrite_query(question)
-            if self.conversational
-            else question
-        )
+        if not retrieval_query:
+            retrieval_query = (
+                self._rewrite_query(question)
+                if self.conversational
+                else question
+            )
         rewrite_ms = (time.perf_counter() - t_rewrite) * 1000
         if self.chat_history:  # rewriting probíhá jen pokud existuje historie
             logger.info(f"⏱ Query rewriting: {rewrite_ms:.0f}ms")
 
-        # 1b. Explicit ambiguity/advisory policy before retrieval.
-        ambiguity_intent = _ambiguity_intent(retrieval_query)
-        if ambiguity_intent:
-            answer = _clarification_answer(ambiguity_intent)
+        # 1a. Resolve short-lived clarification state before new retrieval.
+        resolved = _resolve_pending_clarification(retrieval_query, getattr(self, "clarification_context", None))
+        if resolved:
+            retrieval_query, self.resolved_product, self.resolved_intent = resolved
+            self.pending_clarification = None
+            self.clarification_context = None
+
+        # 1b. Explicit identity/system route before any retrieval.
+        if _identity_intent(retrieval_query):
             total_ms = (time.perf_counter() - t_ask) * 1000
+            ux = _ux_meta("high", "deterministic assistant identity route")
+            return {
+                "answer": IDENTITY_RESPONSE,
+                "sources": [],
+                "rewritten_query": retrieval_query,
+                "retrieval_debug": _debug_with_ux(_identity_debug(retrieval_query), ux),
+                "answer_strategy": "identity_direct",
+                "answer_confidence": "high",
+                **ux,
+                "timing_ms": {"retrieval": 0, "total": round(total_ms), "llm": 0},
+            }
+
+        # 1c. Product clarification state for ambiguous eKonto pricing.
+        if _is_ekonto_ambiguous_pricing(retrieval_query):
+            self.pending_clarification = "ekonto_pricing"
+            self.clarification_context = {"type": "ekonto_pricing", "original_query": retrieval_query}
+            total_ms = (time.perf_counter() - t_ask) * 1000
+            ux = _ux_meta("medium", "ambiguous eKonto product requires product segment clarification", clarification_required=True)
+            return {
+                "answer": EKONTO_CLARIFICATION,
+                "sources": [],
+                "rewritten_query": retrieval_query,
+                "retrieval_debug": _debug_with_ux([{
+                    "retrieval_route": "clarification",
+                    "retrieval_skipped": True,
+                    "pending_clarification": self.pending_clarification,
+                    "clarification_context": self.clarification_context,
+                }], ux),
+                "answer_strategy": "clarification_direct",
+                "answer_confidence": "medium",
+                **ux,
+                "timing_ms": {"retrieval": 0, "total": round(total_ms), "llm": 0},
+            }
+
+        guided_intent = _guided_flow_intent(retrieval_query)
+        if guided_intent:
+            answer = _guided_flow_answer(guided_intent)
+            total_ms = (time.perf_counter() - t_ask) * 1000
+            ux = _ux_meta("medium", f"deterministic guided flow for {guided_intent}")
             return {
                 "answer": answer,
                 "sources": [],
                 "rewritten_query": retrieval_query,
-                "retrieval_debug": [{
+                "retrieval_debug": _debug_with_ux([{
+                    "retrieval_route": "guided_flow",
+                    "retrieval_skipped": True,
+                    "guided_flow": guided_intent,
+                }], ux),
+                "answer_strategy": "guided_flow_direct",
+                "answer_confidence": "medium",
+                **ux,
+                "timing_ms": {"retrieval": 0, "total": round(total_ms), "llm": 0},
+            }
+
+        unsupported_intent = _unsupported_intent(retrieval_query)
+        if unsupported_intent:
+            total_ms = (time.perf_counter() - t_ask) * 1000
+            ux = _ux_meta("low", f"unsupported topic outside reliable RB knowledge boundary: {unsupported_intent}", unsupported_reason=unsupported_intent)
+            return {
+                "answer": UNSUPPORTED_RESPONSE,
+                "sources": [],
+                "rewritten_query": retrieval_query,
+                "retrieval_debug": _debug_with_ux([{
+                    "retrieval_route": "unsupported",
+                    "retrieval_skipped": True,
+                    "unsupported_intent": unsupported_intent,
+                }], ux),
+                "answer_strategy": "unsupported_direct",
+                "answer_confidence": "low",
+                **ux,
+                "timing_ms": {"retrieval": 0, "total": round(total_ms), "llm": 0},
+            }
+
+        # 1d. Explicit ambiguity/advisory policy before retrieval.
+        ambiguity_intent = _ambiguity_intent(retrieval_query)
+        if ambiguity_intent:
+            answer = _clarification_answer(ambiguity_intent)
+            total_ms = (time.perf_counter() - t_ask) * 1000
+            ux = _ux_meta("medium", "explicit ambiguity policy requires clarification", clarification_required=True)
+            return {
+                "answer": answer,
+                "sources": [],
+                "rewritten_query": retrieval_query,
+                "retrieval_debug": _debug_with_ux([{
                     "retrieval_route": "clarification",
                     "intent_class": "ambiguous" if ambiguity_intent != "account_advisory" else "advisory",
                     "ambiguity_intent": ambiguity_intent,
                     "faq_priority_used": False,
                     "metadata_boost_reason": [],
                     "rewritten_query": retrieval_query,
-                }],
+                }], ux),
                 "answer_strategy": "clarification_direct",
                 "answer_confidence": "high",
+                **ux,
                 "timing_ms": {"retrieval": 0, "total": round(total_ms), "llm": 0},
             }
 
@@ -915,35 +1375,190 @@ class BankingRAGChain:
         retrieval_ms = (time.perf_counter() - t_retrieval) * 1000
 
         if not source_docs:
-            answer = (
-                "Omlouvám se, ale k vašemu dotazu jsem nenalezl relevantní "
-                "informace v dostupné dokumentaci. Prosím kontaktujte "
-                "zákaznickou linku Raiffeisenbank na čísle 800 900 900."
-            )
+            overview_profile = classify_query(retrieval_query)
+            if "product_overview" in overview_profile.labels and "supported_domain" in overview_profile.labels:
+                # Supported overview query with empty retrieval — still provide a safe overview.
+                overview_answer = _format_product_overview_answer([])
+                if overview_answer:
+                    total_ms = (time.perf_counter() - t_ask) * 1000
+                    ux = _ux_meta("medium", "supported product overview with safe fallback (retrieval empty)")
+                    logger.info("Answer strategy: product_overview_direct (retrieval empty, safe overview)")
+                    return {
+                        "answer": overview_answer,
+                        "sources": [],
+                        "rewritten_query": retrieval_query,
+                        "answer_strategy": "product_overview_direct",
+                        "answer_confidence": "medium",
+                        "retrieval_debug": _debug_with_ux([{
+                            "retrieval_route": "product_overview",
+                            "retrieval_skipped": False,
+                            "overview_route_used": True,
+                            "supported_domain_detected": True,
+                            "unsupported_guard_bypassed": True,
+                            "fallback_overview_retrieval_used": True,
+                            "rewritten_query": retrieval_query,
+                        }], ux),
+                        **ux,
+                        "timing_ms": {"retrieval": round(retrieval_ms), "total": round(total_ms), "llm": 0},
+                    }
+            answer = UNSUPPORTED_RESPONSE
+            ux = _ux_meta("low", "retrieval returned no source documents", unsupported_reason="no_retrieval_sources")
             return {
                 "answer": answer,
                 "sources": [],
                 "rewritten_query": retrieval_query,
-                "retrieval_debug": [],
+                "retrieval_debug": _debug_with_ux([{"retrieval_route": "unsupported", "retrieval_skipped": False}], ux),
                 "answer_strategy": "fallback_no_answer",
                 "answer_confidence": "low",
+                **ux,
             }
 
         top_doc = source_docs[0]
         structured_docs = _structured_pricing_docs(source_docs)
         query_profile = classify_query(retrieval_query)
+        if "card_overview" in query_profile.labels:
+            overview_answer = _format_card_overview_answer(source_docs)
+            if overview_answer:
+                total_ms = (time.perf_counter() - t_ask) * 1000
+                ux = _ux_meta("medium", "supported card overview route with source-backed overview")
+                logger.info("Answer strategy: card_overview_direct (LLM skipped)")
+                return {
+                    "answer": overview_answer,
+                    "sources": source_docs,
+                    "rewritten_query": retrieval_query,
+                    "answer_strategy": "card_overview_direct",
+                    "answer_confidence": "medium",
+                    "retrieval_debug": _debug_with_ux(self._retrieval_debug(source_docs, "card_overview_direct"), ux),
+                    **ux,
+                    "timing_ms": {"retrieval": round(retrieval_ms), "total": round(total_ms), "llm": 0},
+                }
+        if "account_overview" in query_profile.labels:
+            overview_answer = _format_account_overview_answer(source_docs)
+            if overview_answer:
+                total_ms = (time.perf_counter() - t_ask) * 1000
+                ux = _ux_meta("medium", "supported account overview route with safe overview")
+                logger.info("Answer strategy: account_overview_direct (LLM skipped)")
+                return {
+                    "answer": overview_answer,
+                    "sources": source_docs,
+                    "rewritten_query": retrieval_query,
+                    "answer_strategy": "account_overview_direct",
+                    "answer_confidence": "medium",
+                    "retrieval_debug": _debug_with_ux(self._retrieval_debug(source_docs, "account_overview_direct"), ux),
+                    **ux,
+                    "timing_ms": {"retrieval": round(retrieval_ms), "total": round(total_ms), "llm": 0},
+                }
+        if "mortgage_overview" in query_profile.labels:
+            overview_answer = _format_mortgage_overview_answer(source_docs)
+            if overview_answer:
+                total_ms = (time.perf_counter() - t_ask) * 1000
+                ux = _ux_meta("medium", "supported mortgage overview route with safe overview")
+                logger.info("Answer strategy: mortgage_overview_direct (LLM skipped)")
+                return {
+                    "answer": overview_answer,
+                    "sources": source_docs,
+                    "rewritten_query": retrieval_query,
+                    "answer_strategy": "mortgage_overview_direct",
+                    "answer_confidence": "medium",
+                    "retrieval_debug": _debug_with_ux(self._retrieval_debug(source_docs, "mortgage_overview_direct"), ux),
+                    **ux,
+                    "timing_ms": {"retrieval": round(retrieval_ms), "total": round(total_ms), "llm": 0},
+                }
+        if "investment_overview" in query_profile.labels:
+            overview_answer = _format_investment_overview_answer(source_docs)
+            if overview_answer:
+                total_ms = (time.perf_counter() - t_ask) * 1000
+                ux = _ux_meta("medium", "supported investment overview route with safe overview")
+                logger.info("Answer strategy: investment_overview_direct (LLM skipped)")
+                return {
+                    "answer": overview_answer,
+                    "sources": source_docs,
+                    "rewritten_query": retrieval_query,
+                    "answer_strategy": "investment_overview_direct",
+                    "answer_confidence": "medium",
+                    "retrieval_debug": _debug_with_ux(self._retrieval_debug(source_docs, "investment_overview_direct"), ux),
+                    **ux,
+                    "timing_ms": {"retrieval": round(retrieval_ms), "total": round(total_ms), "llm": 0},
+                }
+        if "rb_key_overview" in query_profile.labels:
+            overview_answer = _format_rb_key_overview_answer(source_docs)
+            if overview_answer:
+                total_ms = (time.perf_counter() - t_ask) * 1000
+                ux = _ux_meta("medium", "supported RB klíč overview route with safe overview")
+                logger.info("Answer strategy: rb_key_overview_direct (LLM skipped)")
+                return {
+                    "answer": overview_answer,
+                    "sources": source_docs,
+                    "rewritten_query": retrieval_query,
+                    "answer_strategy": "rb_key_overview_direct",
+                    "answer_confidence": "medium",
+                    "retrieval_debug": _debug_with_ux(self._retrieval_debug(source_docs, "rb_key_overview_direct"), ux),
+                    **ux,
+                    "timing_ms": {"retrieval": round(retrieval_ms), "total": round(total_ms), "llm": 0},
+                }
+        if "payment_overview" in query_profile.labels:
+            overview_answer = _format_payment_overview_answer(source_docs)
+            if overview_answer:
+                total_ms = (time.perf_counter() - t_ask) * 1000
+                ux = _ux_meta("medium", "supported payment overview route with safe overview")
+                logger.info("Answer strategy: payment_overview_direct (LLM skipped)")
+                return {
+                    "answer": overview_answer,
+                    "sources": source_docs,
+                    "rewritten_query": retrieval_query,
+                    "answer_strategy": "payment_overview_direct",
+                    "answer_confidence": "medium",
+                    "retrieval_debug": _debug_with_ux(self._retrieval_debug(source_docs, "payment_overview_direct"), ux),
+                    **ux,
+                    "timing_ms": {"retrieval": round(retrieval_ms), "total": round(total_ms), "llm": 0},
+                }
+        if "sepa_swift_overview" in query_profile.labels:
+            overview_answer = _format_sepa_swift_overview_answer(source_docs)
+            if overview_answer:
+                total_ms = (time.perf_counter() - t_ask) * 1000
+                ux = _ux_meta("medium", "supported SEPA/SWIFT overview route with safe overview")
+                logger.info("Answer strategy: sepa_swift_overview_direct (LLM skipped)")
+                return {
+                    "answer": overview_answer,
+                    "sources": source_docs,
+                    "rewritten_query": retrieval_query,
+                    "answer_strategy": "sepa_swift_overview_direct",
+                    "answer_confidence": "medium",
+                    "retrieval_debug": _debug_with_ux(self._retrieval_debug(source_docs, "sepa_swift_overview_direct"), ux),
+                    **ux,
+                    "timing_ms": {"retrieval": round(retrieval_ms), "total": round(total_ms), "llm": 0},
+                }
+        if "product_overview" in query_profile.labels and "supported_domain" in query_profile.labels:
+            # Generic fallback for any supported product overview not handled above.
+            overview_answer = _format_product_overview_answer(source_docs)
+            if overview_answer:
+                total_ms = (time.perf_counter() - t_ask) * 1000
+                ux = _ux_meta("medium", "supported product overview generic route with safe overview")
+                logger.info("Answer strategy: product_overview_direct (LLM skipped)")
+                return {
+                    "answer": overview_answer,
+                    "sources": source_docs,
+                    "rewritten_query": retrieval_query,
+                    "answer_strategy": "product_overview_direct",
+                    "answer_confidence": "medium",
+                    "retrieval_debug": _debug_with_ux(self._retrieval_debug(source_docs, "product_overview_direct"), ux),
+                    **ux,
+                    "timing_ms": {"retrieval": round(retrieval_ms), "total": round(total_ms), "llm": 0},
+                }
         if "credit_card_catalog" in query_profile.labels:
             catalog_answer = _format_credit_card_catalog_answer(source_docs)
             if catalog_answer:
                 total_ms = (time.perf_counter() - t_ask) * 1000
                 logger.info("Answer strategy: credit_card_catalog_direct (LLM skipped)")
+                ux = _ux_meta("high", "deterministic product catalog answer from credit-card sources")
                 return {
                     "answer": catalog_answer,
                     "sources": source_docs,
                     "rewritten_query": retrieval_query,
                     "answer_strategy": "credit_card_catalog_direct",
                     "answer_confidence": "high",
-                    "retrieval_debug": self._retrieval_debug(source_docs, "credit_card_catalog_direct"),
+                    "retrieval_debug": _debug_with_ux(self._retrieval_debug(source_docs, "credit_card_catalog_direct"), ux),
+                    **ux,
                     "timing_ms": {"retrieval": round(retrieval_ms), "total": round(total_ms), "llm": 0},
                 }
         answer_strategy = "generic_llm"
@@ -966,13 +1581,15 @@ class BankingRAGChain:
                 if len(self.chat_history) > limit * 2:
                     self.chat_history = self.chat_history[-(limit * 2):]
             logger.info("Answer strategy: pricing_row_direct (LLM skipped)")
+            ux = _ux_meta("high", "validated structured pricing row")
             return {
                 "answer": answer_text,
                 "sources": _minimal_structured_sources(structured_docs),
                 "rewritten_query": retrieval_query,
                 "answer_strategy": answer_strategy,
                 "answer_confidence": answer_confidence,
-                "retrieval_debug": self._structured_retrieval_debug(structured_docs, answer_strategy),
+                "retrieval_debug": _debug_with_ux(self._structured_retrieval_debug(structured_docs, answer_strategy), ux),
+                **ux,
                 "timing_ms": {"retrieval": round(retrieval_ms), "total": round(total_ms), "llm": 0},
             }
 
@@ -1011,6 +1628,14 @@ class BankingRAGChain:
                 answer_confidence = "high"
                 logger.warning("LLM vrátil fallback apology navzdory pricing_row; použita strukturovaná odpověď")
 
+        confidence_bucket_value = answer_confidence if answer_confidence in {"high", "medium", "low"} else "medium"
+        confidence_reason = "structured pricing/source-backed answer" if answer_strategy.startswith("pricing_") else "source-backed generated answer"
+        if any(marker in answer_text.lower() for marker in NO_ANSWER_MARKERS):
+            confidence_bucket_value = "low"
+            confidence_reason = "model indicated insufficient support"
+            answer_text = UNSUPPORTED_RESPONSE
+        ux = _ux_meta(confidence_bucket_value, confidence_reason)
+
         total_ms = (time.perf_counter() - t_ask) * 1000
 
         # 5. Aktualizace konverzační historie
@@ -1035,7 +1660,11 @@ class BankingRAGChain:
             "rewritten_query": retrieval_query,
             "answer_strategy": answer_strategy,
             "answer_confidence": answer_confidence,
-            "retrieval_debug": self._structured_retrieval_debug(_structured_pricing_docs(source_docs), answer_strategy) if answer_strategy == "pricing_row_direct" else self._retrieval_debug(source_docs, answer_strategy),
+            "retrieval_debug": _debug_with_ux(
+                self._structured_retrieval_debug(_structured_pricing_docs(source_docs), answer_strategy) if answer_strategy == "pricing_row_direct" else self._retrieval_debug(source_docs, answer_strategy),
+                ux,
+            ),
+            **ux,
         }
 
     def _retrieval_debug(self, source_docs: list[Document], answer_strategy: str) -> list[dict]:
@@ -1072,6 +1701,12 @@ class BankingRAGChain:
                 "boosted_product_group": doc.metadata.get("boosted_product_group"),
                 "expanded_credit_card_terms": doc.metadata.get("expanded_credit_card_terms"),
                 "matched_credit_card_sources": doc.metadata.get("matched_credit_card_sources"),
+                "overview_route_used": doc.metadata.get("overview_route_used"),
+                "overview_type": doc.metadata.get("overview_type"),
+                "supported_domain_detected": doc.metadata.get("supported_domain_detected"),
+                "unsupported_guard_bypassed": doc.metadata.get("unsupported_guard_bypassed"),
+                "fallback_card_retrieval_used": doc.metadata.get("fallback_card_retrieval_used"),
+                "fallback_overview_retrieval_used": doc.metadata.get("fallback_overview_retrieval_used"),
                 "metadata_boost_reason": doc.metadata.get("metadata_boost_reason"),
                 "faq_priority_used": doc.metadata.get("faq_priority_used"),
                 "answer_strategy": answer_strategy,

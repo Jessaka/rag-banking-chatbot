@@ -17,6 +17,8 @@
 	import ChatMessage from './ChatMessage.svelte';
 	import ChatInput from './ChatInput.svelte';
 	import DebugPanel from './DebugPanel.svelte';
+	import TypingIndicator from './TypingIndicator.svelte';
+	import { emitChatEvent } from '$lib/monitoring';
 	import { Button } from '$ui';
 	import { Sparkles } from '@lucide/svelte';
 
@@ -28,6 +30,7 @@
 		$messages; // subscribe
 		if (messagesContainer) {
 			requestAnimationFrame(() => {
+				if (!messagesContainer) return;
 				messagesContainer.scrollTop = messagesContainer.scrollHeight;
 			});
 		}
@@ -85,6 +88,7 @@
 		abortController = new AbortController();
 
 		try {
+			emitChatEvent('chat_request_started', { session_id: sessionId });
 			console.debug('[Chat] fetching /chat', {
 				payload: { question: text, session_id: sessionId }
 			});
@@ -97,6 +101,16 @@
 			});
 
 			currentRequestId.set(response.request_id);
+			emitChatEvent('chat_response_received', {
+				session_id: response.session_id,
+				request_id: response.request_id,
+				answer_strategy: response.answer_strategy,
+				confidence_bucket: response.confidence_bucket,
+				processing_time_ms: response.processing_time_ms,
+				sources_count: response.sources?.length || 0,
+				unsupported: Boolean(response.unsupported_reason),
+				clarification_required: Boolean(response.clarification_required)
+			});
 
 			// Update the assistant message with real response
 			conversations.update((convos) => {
@@ -112,8 +126,12 @@
 										sources: response.sources || [],
 										retrieval_debug: response.retrieval_debug || null,
 										answer_strategy: response.answer_strategy,
-										answer_confidence: response.answer_confidence || null,
+										confidence_bucket: response.confidence_bucket || null,
+										confidence_reason: response.confidence_reason || null,
+										clarification_required: response.clarification_required || false,
+										unsupported_reason: response.unsupported_reason || null,
 										processing_time_ms: response.processing_time_ms,
+										request_id: response.request_id,
 										error: false
 									}
 								: m
@@ -137,6 +155,7 @@
 
 			const errorMsg = err instanceof Error ? err.message : 'Neočekávaná chyba';
 			console.error('[Chat] request failed', { error: errorMsg, err });
+			emitChatEvent('chat_request_failed', { session_id: sessionId, error: errorMsg });
 			error.set(errorMsg);
 
 			// Mark assistant message as error
@@ -168,6 +187,10 @@
 			// Actually simpler: just re-submit the last user question
 			handleSubmit(lastUserMsg.content);
 		}
+	}
+
+	function submitSuggestion(text: string) {
+		handleSubmit(text);
 	}
 
 	// Handle AbortController cleanup
@@ -220,19 +243,13 @@
 						message={msg}
 						isLatest={i === $messages.length - 1}
 						onretry={msg.error ? retry : undefined}
+						onask={submitSuggestion}
 					/>
 				{/each}
 
 				<!-- Loading indicator -->
 				{#if $isLoading}
-					<div class="flex items-center gap-2 text-sm text-gray-400 dark:text-gray-500 animate-fade-in">
-						<div class="flex items-center gap-1">
-							<span class="h-2 w-2 animate-pulse-dot rounded-full bg-rb-400"></span>
-							<span class="h-2 w-2 animate-pulse-dot rounded-full bg-rb-400" style="animation-delay: 0.2s"></span>
-							<span class="h-2 w-2 animate-pulse-dot rounded-full bg-rb-400" style="animation-delay: 0.4s"></span>
-						</div>
-						<span>AI přemýšlí…</span>
-					</div>
+					<TypingIndicator label="AI připravuje odpověď…" />
 				{/if}
 			</div>
 
@@ -243,7 +260,7 @@
 					<div class="mt-4 space-y-2">
 						<DebugPanel
 							strategy={lastMsg.answer_strategy}
-							confidence={lastMsg.answer_confidence}
+							confidence={lastMsg.confidence_bucket}
 							latency={lastMsg.processing_time_ms}
 							debug={lastMsg.retrieval_debug}
 							sources={(lastMsg.sources || []).map(s => ({ file_name: s.file_name, page: s.page, rerank_score: s.rerank_score }))}

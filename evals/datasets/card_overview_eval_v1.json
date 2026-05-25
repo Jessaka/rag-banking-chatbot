@@ -1,0 +1,3 @@
+[
+  {"id":"card_overview.001","question":"Jaké typy platebních karet nabízíte?","category":"card_overview","subcategory":"overview","tags":["cards","overview","supported_domain"],"expected_behavior":"direct_answer","expected_contains":["Debetní","Kreditní"],"expected_not_contains":["Nepodařilo se najít","Tady si nejsem jistý","Upřesněte","UNIQA","pojišťovna","unsupported"],"expected_sources":["karty"],"requires_sources":true,"should_clarify":false,"min_grounding_score":0.4,"format_expectations":{"forbid_raw_json":true,"max_answer_chars":1400}}
+]

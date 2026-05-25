@@ -1,28 +1,37 @@
 <script lang="ts">
 	import type { SourceDocument } from '$lib/types';
+	import { sourceRationale, sourceType } from '$lib/chat-ux';
+	import { emitChatEvent } from '$lib/monitoring';
 	import { formatSourceTitle } from '$lib/utils';
-	import { ChevronDown, ChevronUp, FileText, ExternalLink } from '@lucide/svelte';
+	import { ChevronDown, ChevronUp, FileText } from '@lucide/svelte';
 	import { Badge, Button } from '$ui';
 
 	let {
 		sources = [],
-		open = false
+		open = false,
+		strategy = null
 	}: {
 		sources?: SourceDocument[];
 		open?: boolean;
+		strategy?: string | null;
 	} = $props();
 
-	let isOpen = $state(open);
+	let isOpen = $state(false);
 	// Sync with prop changes (sources panel can be opened externally)
 	$effect(() => {
 		isOpen = open;
 	});
+
+	function toggle() {
+		isOpen = !isOpen;
+		emitChatEvent('chat_source_expanded', { open: isOpen, sources_count: sources.length });
+	}
 </script>
 
 {#if sources.length > 0}
 	<div class="rounded-2xl border bg-white dark:bg-dark-surface dark:border-dark-border overflow-hidden transition-all">
 		<button
-			onclick={() => isOpen = !isOpen}
+			onclick={toggle}
 			class="flex w-full items-center justify-between px-4 py-3 text-sm transition-colors hover:bg-surface-hover dark:hover:bg-dark-hover"
 		>
 			<span class="flex items-center gap-2 font-medium text-gray-700 dark:text-gray-300">
@@ -47,13 +56,12 @@
 									{formatSourceTitle(source.file_name)}
 								</p>
 								<div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+									<Badge variant="outline">{sourceType(source)}</Badge>
 									{#if source.page != null}
 										<span>Str. {source.page}</span>
 									{/if}
-									{#if source.rerank_score != null}
-										<span>Skóre: {source.rerank_score.toFixed(3)}</span>
-									{/if}
 								</div>
+								<p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{sourceRationale(source, strategy)}</p>
 							</div>
 						</div>
 						{#if source.preview}

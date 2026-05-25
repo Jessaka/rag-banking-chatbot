@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { sidebarOpen, conversations, currentSessionId, deleteConversation } from '$lib/stores';
+	import { fade } from 'svelte/transition';
 	import { X, Plus, Trash2, MessageSquare, RotateCcw } from '@lucide/svelte';
 	import { Button } from '$ui';
 

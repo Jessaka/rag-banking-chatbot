@@ -63,6 +63,14 @@ def hybrid_search(
     retrieval_route = (
         "pricing" if "pricing" in query_profile.labels else
         "reklamace" if "complaints" in query_profile.labels else
+        "card_overview" if "card_overview" in query_profile.labels else
+        "account_overview" if "account_overview" in query_profile.labels else
+        "mortgage_overview" if "mortgage_overview" in query_profile.labels else
+        "investment_overview" if "investment_overview" in query_profile.labels else
+        "rb_key_overview" if "rb_key_overview" in query_profile.labels else
+        "payment_overview" if "payment_overview" in query_profile.labels else
+        "sepa_swift_overview" if "sepa_swift_overview" in query_profile.labels else
+        "product_overview" if "product_overview" in query_profile.labels else
         "credit_card_catalog" if "credit_card_catalog" in query_profile.labels else
         "faq" if "faq" in query_profile.labels else
         "hybrid"
@@ -133,6 +141,20 @@ def hybrid_search(
                     **doc.metadata,
                     "rewritten_query": expanded_query,
                     "retrieval_route": retrieval_route,
+                    "overview_route_used": "product_overview" in query_profile.labels or "card_overview" in query_profile.labels,
+                    "overview_type": (
+                        "account_overview" if "account_overview" in query_profile.labels else
+                        "mortgage_overview" if "mortgage_overview" in query_profile.labels else
+                        "investment_overview" if "investment_overview" in query_profile.labels else
+                        "rb_key_overview" if "rb_key_overview" in query_profile.labels else
+                        "payment_overview" if "payment_overview" in query_profile.labels else
+                        "sepa_swift_overview" if "sepa_swift_overview" in query_profile.labels else
+                        "card_overview" if "card_overview" in query_profile.labels else
+                        "product_overview" if "product_overview" in query_profile.labels else
+                        None
+                    ),
+                    "supported_domain_detected": "supported_domain" in query_profile.labels,
+                    "unsupported_guard_bypassed": "supported_domain" in query_profile.labels,
                     "catalog_intent_detected": "catalog_intent" in query_profile.labels,
                     "boosted_product_group": "kreditni_karta" if "credit_card" in query_profile.labels else None,
                     "expanded_credit_card_terms": [
