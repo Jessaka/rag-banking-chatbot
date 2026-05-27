@@ -1,0 +1,68 @@
+[
+  {
+    "id": "source_ux_001",
+    "question": "Jaký je poplatek za vedení účtu?",
+    "expected_strategy": "pricing_row_direct",
+    "checks": {
+      "human_title_exists": true,
+      "human_title_is_readable": true,
+      "display_url_shortened": true,
+      "current_or_archived_not_none": true,
+      "hash_filenames_not_visible": true
+    }
+  },
+  {
+    "id": "source_ux_002",
+    "question": "Jak aktivovat kartu?",
+    "expected_strategy": "procedural_flow_direct",
+    "checks": {
+      "human_title_exists": true,
+      "human_title_is_readable": true,
+      "current_or_archived_is_faq_or_aktualni": true,
+      "hash_filenames_not_visible": true
+    }
+  },
+  {
+    "id": "source_ux_003",
+    "question": "Chci založit účet",
+    "expected_strategy": "guided_flow_direct",
+    "checks": {
+      "human_title_exists": true,
+      "display_url_shortened": true,
+      "source_category_not_none": true,
+      "hash_filenames_not_visible": true
+    }
+  },
+  {
+    "id": "source_ux_004",
+    "question": "Co je RB Klíč?",
+    "expected_strategy": "rb_key_overview_direct",
+    "checks": {
+      "human_title_exists": true,
+      "human_title_is_readable": true,
+      "current_or_archived_is_faq_or_aktualni": true,
+      "source_year_not_none": true
+    }
+  },
+  {
+    "id": "source_ux_005",
+    "question": "Jaké jsou úrokové sazby u hypoték?",
+    "expected_route": "mortgage_overview",
+    "checks": {
+      "human_title_exists": true,
+      "display_url_shortened": true,
+      "source_category_not_none": true,
+      "current_or_archived_not_none": true
+    }
+  },
+  {
+    "id": "source_ux_006",
+    "question": "Dokumenty k sazebníku",
+    "checks": {
+      "archived_docs_have_archivni_badge": true,
+      "current_docs_have_aktualni_badge": true,
+      "hash_filenames_not_visible": true,
+      "pricing_docs_have_cenik_badge": true
+    }
+  }
+]

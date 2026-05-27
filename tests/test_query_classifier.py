@@ -1,6 +1,6 @@
 from langchain_core.documents import Document
 
-from src.retrieval.query_classifier import classify_query, detect_chunk_quality, expand_query, freshness_priority, is_archived_doc, is_corporate_doc, is_personal_retail_doc, source_priority
+from src.retrieval.query_classifier import classify_query, detect_chunk_quality, expand_query, freshness_priority, is_archived_doc, is_corporate_doc, is_personal_retail_doc, normalize_source_metadata, source_priority
 from src.generation.prompts import format_context
 
 
@@ -185,3 +185,171 @@ def test_bad_table_row_is_penalized_and_full_table_context_filtered():
     context = format_context([good_row, table])
     assert "Produkt: eKonto" in context
     assert "| Produkt |" not in context
+
+
+# ======================================================================
+# Source UX normalization tests
+# ======================================================================
+
+def _make_source_doc(**overrides: str | int | None) -> Document:
+    """Helper to build a Document with common defaults."""
+    defaults: dict = {
+        "source_url": "https://www.rb.cz/osobni/ucty/bezne-ucty/ekonto",
+        "title": "",
+        "file_name": "produktovy-list-ekonto.pdf",
+        "category": "retail",
+        "chunk_type": "product_overview",
+        "document_type": "product_page",
+        "page": 1,
+        "rerank_score": 0.85,
+    }
+    defaults.update(overrides)
+    return Document(
+        page_content="Běžný účet eKonto s vedením zdarma.",
+        metadata=defaults,
+    )
+
+
+def test_normalize_source_human_title_from_title():
+    """If metadata has a readable title, it becomes the human_title."""
+    doc = _make_source_doc(title="eKonto — Produktový list 2026")
+    ux = normalize_source_metadata(doc)
+    assert ux["human_title"] == "eKonto — Produktový list 2026"
+
+
+def test_normalize_source_human_title_from_url():
+    """Without a title, the URL path should produce a readable title."""
+    doc = _make_source_doc(title="", source_url="https://www.rb.cz/osobni/ucty/bezne-ucty/ekonto")
+    ux = normalize_source_metadata(doc)
+    assert ux["human_title"] is not None
+    # Should contain the last 3 meaningful path segments (title-cased)
+    assert "Ucty" in ux["human_title"] or "Bezne" in ux["human_title"]
+
+
+def test_normalize_source_human_title_from_filename():
+    """Without title or URL, filename should produce a readable title."""
+    doc = _make_source_doc(
+        title="",
+        source_url="",
+        file_name="sazebnik-fyzicke-osoby-2026.pdf",
+    )
+    ux = normalize_source_metadata(doc)
+    assert ux["human_title"] is not None
+    assert len(ux["human_title"]) > 5
+
+
+def test_normalize_source_display_url_shortened():
+    """display_url should strip protocol and path noise."""
+    doc = _make_source_doc(source_url="https://www.rb.cz/attachments/sazebniky/sazebnik-fyzicke-osoby.pdf")
+    ux = normalize_source_metadata(doc)
+    assert ux["display_url"] is not None
+    assert "https://" not in ux["display_url"]
+    assert "www.rb.cz" in ux["display_url"]
+    assert len(ux["display_url"]) < len("https://www.rb.cz/attachments/sazebniky/sazebnik-fyzicke-osoby.pdf")
+
+
+def test_normalize_source_archived_badge():
+    """Archived docs get 'Archivní' badge."""
+    doc = _make_source_doc(
+        source_url="https://www.rb.cz/attachments/sazebnik-2023.pdf",
+        file_name="sazebnik-2023.pdf",
+        title="Již nenabízené produkty",
+    )
+    ux = normalize_source_metadata(doc)
+    assert ux["current_or_archived"] == "Archivní"
+    assert ux["source_category"] == "archived"
+
+
+def test_normalize_source_current_badge():
+    """Current product page gets 'Aktuální' badge."""
+    doc = _make_source_doc(
+        source_url="https://www.rb.cz/osobni/ucty/ekonto",
+        file_name="ekonto-produkt.pdf",
+    )
+    ux = normalize_source_metadata(doc)
+    assert ux["current_or_archived"] == "Aktuální"
+
+
+def test_normalize_source_pricing_badge():
+    """Pricing documents get 'Ceník' badge."""
+    doc = _make_source_doc(
+        source_url="https://www.rb.cz/attachments/sazebniky/sazebnik-fyzicke-osoby.pdf",
+        file_name="sazebnik-fyzicke-osoby.pdf",
+    )
+    ux = normalize_source_metadata(doc)
+    assert ux["current_or_archived"] == "Ceník"
+
+
+def test_normalize_source_faq_badge():
+    """FAQ docs get 'FAQ' badge."""
+    doc = _make_source_doc(
+        source_url="https://www.rb.cz/faq/jak-aktivovat-kartu",
+        file_name="faq-aktivace-karty.pdf",
+    )
+    ux = normalize_source_metadata(doc)
+    assert ux["current_or_archived"] == "FAQ"
+
+
+def test_normalize_source_year_from_url():
+    """A year in the URL should be extracted."""
+    doc = _make_source_doc(
+        source_url="https://www.rb.cz/attachments/sazebniky/sazebnik-2026.pdf",
+        file_name="sazebnik.pdf",
+    )
+    ux = normalize_source_metadata(doc)
+    assert ux["source_year"] is not None
+    assert ux["source_year"] == 2026
+
+
+def test_normalize_source_year_from_title():
+    """A year in the title should be extracted."""
+    doc = _make_source_doc(
+        source_url="https://www.rb.cz/attachments/sazebniky/sazebnik.pdf",
+        file_name="sazebnik.pdf",
+        title="Sazebník 2025",
+    )
+    ux = normalize_source_metadata(doc)
+    assert ux["source_year"] == 2025
+
+
+def test_normalize_source_hash_filenames_not_visible():
+    """Hash filenames like a043bb3907 should produce a readable title."""
+    doc = _make_source_doc(
+        title="",
+        source_url="https://www.rb.cz/attachments/a043bb3907.pdf",
+        file_name="a043bb3907.pdf",
+    )
+    ux = normalize_source_metadata(doc)
+    # The human_title should NOT be the raw hash
+    assert ux["human_title"] is not None
+    assert "a043bb3907" not in ux["human_title"]
+
+
+def test_normalize_source_category_product_page():
+    """Product page URL produces product_page category."""
+    doc = _make_source_doc(
+        source_url="https://www.rb.cz/osobni/ucty/ekonto",
+        file_name="ekonto.pdf",
+    )
+    ux = normalize_source_metadata(doc)
+    assert ux["source_category"] == "product_page"
+
+
+def test_normalize_source_label_pricing():
+    """Pricing docs get 'Ceník' label."""
+    doc = _make_source_doc(
+        source_url="https://www.rb.cz/attachments/sazebniky/sazebnik.pdf",
+        file_name="sazebnik.pdf",
+    )
+    ux = normalize_source_metadata(doc)
+    assert ux["source_label"] == "Ceník"
+
+
+def test_normalize_source_label_legal():
+    """Legal docs get 'Obchodní podmínky' label."""
+    doc = _make_source_doc(
+        source_url="https://www.rb.cz/dokumenty/vseobecne-obchodni-podminky.pdf",
+        file_name="vseobecne-obchodni-podminky.pdf",
+    )
+    ux = normalize_source_metadata(doc)
+    assert ux["source_label"] == "Obchodní podmínky"

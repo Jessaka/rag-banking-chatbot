@@ -1,0 +1,41 @@
+[
+  {
+    "id": "session_ctx_001",
+    "scenario": "single_turn",
+    "conversation": [
+      {"role": "user", "message": "Jaký je poplatek za vedení účtu?"}
+    ],
+    "checks": {
+      "answer_exists": true,
+      "no_error": true
+    }
+  },
+  {
+    "id": "session_ctx_002",
+    "scenario": "follow_up",
+    "conversation": [
+      {"role": "user", "message": "Chci založit účet"},
+      {"role": "assistant", "message_contains": ["osobní", "podnikatelsk"]},
+      {"role": "user", "message": "osobní"},
+      {"role": "user", "message": "A kolik stojí karta?"}
+    ],
+    "checks": {
+      "answer_exists": true,
+      "context_inherited": true,
+      "no_clarification_for_account": true,
+      "no_error": true
+    }
+  },
+  {
+    "id": "session_ctx_003",
+    "scenario": "no_personal_data",
+    "conversation": [
+      {"role": "user", "message": "Jaký je limit na kartě?"},
+      {"role": "user", "message": "A jak to aktivovat?"}
+    ],
+    "checks": {
+      "no_personal_data_logged": true,
+      "no_error": true
+    }
+  }
+]

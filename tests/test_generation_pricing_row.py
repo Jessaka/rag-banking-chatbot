@@ -199,6 +199,80 @@ def test_pricing_row_direct_answer_skips_llm_fallback():
     assert result["sources"] == [{"title": "Ceník Raiffeisenbank", "page": 4, "url": "https://www.rb.cz/attachments/ceniky/cenik-pi-01042018.pdf"}]
 
 
+def test_conditional_pricing_response_explains_active_and_inactive_fee():
+    doc = Document(
+        page_content="Produkt: eKonto SMART\nVedení účtu: podmíněně zdarma / jinak 99 Kč",
+        metadata={
+            "chunk_type": "pricing_row",
+            "document_type": "pricing",
+            "product_name": "eKonto SMART",
+            "fee_type": "Vedení účtu",
+            "fee_value": "podmíněně zdarma / jinak 99 Kč",
+            "period": "měsíčně",
+            "structured_pricing": True,
+            "confidence": 0.95,
+            "chunk_quality": "ok",
+            "source_url": "https://www.rb.cz",
+            "source_file": "cenik.pdf",
+            "page": 2,
+            "rerank_score": 1.0,
+            "conditional_pricing_detected": True,
+            "base_price": 99,
+            "conditional_price": 0,
+            "condition_type": "active_usage",
+            "condition_text": "při aktivním využívání účtu",
+            "pricing_logic": "conditional_price_applies_when_active_usage_else_base_price",
+        },
+    )
+    chain = BankingRAGChain.__new__(BankingRAGChain)
+    chain.conversational = False
+    chain.chat_history = []
+    chain._llm = FailingLLM()
+    chain._retriever = FakeRetriever([doc])
+
+    result = chain.ask("Kolik stojí vedení eKonto SMART?")
+
+    assert result["answer_strategy"] == "pricing_row_direct"
+    assert "eKonto SMART je zdarma při aktivním využívání účtu" in result["answer"]
+    assert "Pokud podmínka splněna není, poplatek činí 99 Kč měsíčně" in result["answer"]
+    assert "eKonto SMART je zdarma\n" not in result["answer"]
+
+
+def test_tiered_pricing_response_lists_tiers():
+    doc = Document(
+        page_content="Produkt: Prémiový účet\nTarify: tiered",
+        metadata={
+            "chunk_type": "pricing_row",
+            "document_type": "pricing",
+            "product_name": "Prémiový účet",
+            "fee_type": "Vedení účtu",
+            "fee_value": "dle tarifu",
+            "period": "měsíčně",
+            "structured_pricing": True,
+            "confidence": 0.95,
+            "chunk_quality": "ok",
+            "source_url": "https://www.rb.cz",
+            "source_file": "cenik.pdf",
+            "page": 2,
+            "rerank_score": 1.0,
+            "tiers": [
+                {"label": "při splnění prémiových podmínek", "price": 0, "currency": "CZK", "period": "měsíčně"},
+                {"label": "bez splnění podmínek", "price": 199, "currency": "CZK", "period": "měsíčně"},
+            ],
+        },
+    )
+    chain = BankingRAGChain.__new__(BankingRAGChain)
+    chain.conversational = False
+    chain.chat_history = []
+    chain._llm = FailingLLM()
+    chain._retriever = FakeRetriever([doc])
+
+    result = chain.ask("Kolik stojí prémiový účet?")
+
+    assert "* při splnění prémiových podmínek: 0 Kč měsíčně" in result["answer"]
+    assert "* bez splnění podmínek: 199 Kč měsíčně" in result["answer"]
+
+
 def test_structured_pricing_answer_groups_max_three_products():
     docs = []
     for idx, product in enumerate(["eKonto Základní", "eKonto Výhody Prémium", "eKonto SMART", "eKonto EXTRA"], start=1):
@@ -246,3 +320,80 @@ def test_normalize_product_name_strips_suffixes():
     # Empty/edge
     assert normalize_product_name("") == ""
     assert normalize_product_name(None) is None
+
+
+def test_clarification_followup_smart_maps_correctly():
+    """Follow-up 'smart' after eKonto ambiguity must resolve to eKonto SMART."""
+    chain = BankingRAGChain.__new__(BankingRAGChain)
+    chain.conversational = False
+    chain.chat_history = []
+    chain.pending_clarification = None
+    chain.clarification_context = None
+    chain.resolved_product = None
+    chain.resolved_intent = None
+    chain._llm = FailingLLM()
+    chain._retriever = FakeRetriever([_pricing_row_doc()])
+
+    first = chain.ask("Kolik stojí eKonto?")
+    assert first["answer_strategy"] == "clarification_direct"
+    assert chain.pending_clarification == "ekonto_pricing"
+    assert chain.clarification_candidates is not None
+
+    second = chain.ask("smart")
+    assert second["answer_strategy"] == "pricing_row_direct"
+    assert chain.resolved_product == "eKonto SMART"
+    assert chain.pending_clarification is None
+    assert chain.last_canonical_product == "eKonto SMART"
+
+
+def test_clarification_followup_podnikatelske_maps_correctly():
+    """Follow-up 'podnikatelské' after eKonto ambiguity must resolve to business eKonto."""
+    chain = BankingRAGChain.__new__(BankingRAGChain)
+    chain.conversational = False
+    chain.chat_history = []
+    chain.pending_clarification = None
+    chain.clarification_context = None
+    chain.resolved_product = None
+    chain.resolved_intent = None
+    chain._llm = FailingLLM()
+    chain._retriever = FakeRetriever([_pricing_row_doc()])
+
+    first = chain.ask("Kolik stojí eKonto?")
+    assert first["answer_strategy"] == "clarification_direct"
+
+    second = chain.ask("podnikatelské")
+    assert chain.resolved_product == "podnikatelské eKonto"
+
+
+def test_clarification_entity_memory_preserved(tmp_path):
+    """Session entity memory must persist across the clarification flow."""
+    from src.generation.chain import BankingRAGChain, _resolve_pending_clarification
+
+    chain = BankingRAGChain.__new__(BankingRAGChain)
+    chain.conversational = False
+    chain.chat_history = []
+    chain.pending_clarification = "ekonto_pricing"
+    chain.clarification_context = {"type": "ekonto_pricing", "original_query": "Kolik stojí eKonto?"}
+    chain.unresolved_product = "ekonto"
+    chain.unresolved_product_type = "pricing"
+    chain.clarification_candidates = ["osobní", "podnikatelské"]
+
+    resolved = _resolve_pending_clarification("osobní", chain.clarification_context)
+    assert resolved is not None
+    rewritten, product, intent = resolved
+    assert "osobního eKonta" in rewritten
+    assert product == "osobní eKonto"
+    assert intent == "pricing"
+
+
+def test_generic_bezny_ucet_not_basic_payment():
+    """Generic 'běžný účet' must NOT map to basic payment account."""
+    from src.retrieval.pricing_resolver import resolve_pricing_query
+
+    docs = resolve_pricing_query("Jaký je poplatek za vedení běžného účtu?", top_k=3)
+    assert docs
+    top = docs[0].metadata
+    # Must resolve to mainstream eKonto SMART, not basic payment account
+    assert top.get("product_name") == "eKonto SMART"
+    assert top.get("mainstream_product") is True or top.get("mainstream_boost_applied") is True
+    assert top.get("pricing_row_exact_match") is True

@@ -1,0 +1,66 @@
+[
+  {
+    "id": "cmp-001",
+    "question": "Jaký je rozdíl mezi osobním eKontem a Aktivním účtem?",
+    "expected_strategy": "comparison_direct",
+    "expected_contains": ["eKonto", "Aktivní", "účet", "Srovnání"],
+    "check_not_contains": ["nepodařilo", "nenalezl", "nevím"],
+    "tags": ["comparison", "accounts"]
+  },
+  {
+    "id": "cmp-002",
+    "question": "Jaký je rozdíl mezi debetní a kreditní kartou?",
+    "expected_strategy": "comparison_direct",
+    "expected_contains": ["debetní", "kreditní", "karta", "Srovnání"],
+    "check_not_contains": ["nepodařilo", "nenalezl"],
+    "tags": ["comparison", "cards"]
+  },
+  {
+    "id": "cmp-003",
+    "question": "Co je lepší, debetní nebo kreditní karta?",
+    "expected_strategy": "comparison_direct",
+    "expected_contains": ["debetní", "kreditní", "karta", "Srovnání"],
+    "check_not_contains": ["nepodařilo", "nenalezl"],
+    "tags": ["comparison", "cards"]
+  },
+  {
+    "id": "cmp-004",
+    "question": "Jaký je rozdíl mezi Visa a Mastercard kartou?",
+    "expected_strategy_in": ["comparison_direct", "generic_llm", "sepa_swift_overview_direct"],
+    "expected_contains": ["Visa", "Mastercard", "karta"],
+    "check_not_contains": ["nepodařilo"],
+    "tags": ["comparison", "cards", "brand"]
+  },
+  {
+    "id": "cmp-005",
+    "question": "Porovnejte osobní eKonto a Aktivní účet",
+    "expected_strategy": "comparison_direct",
+    "expected_contains": ["eKonto", "Aktivní", "Srovnání"],
+    "check_not_contains": ["nepodařilo"],
+    "tags": ["comparison", "accounts"]
+  },
+  {
+    "id": "cmp-006",
+    "question": "Čím se liší debetka od kreditky?",
+    "expected_strategy": "comparison_direct",
+    "expected_contains": ["debetní", "kreditní", "karta", "Srovnání"],
+    "check_not_contains": ["nepodařilo"],
+    "tags": ["comparison", "cards"]
+  },
+  {
+    "id": "cmp-007",
+    "question": "Jaký je rozdíl mezi eKontem a běžným účtem?",
+    "expected_strategy_in": ["comparison_direct", "account_overview_direct", "generic_llm"],
+    "expected_contains": ["eKonto"],
+    "check_not_contains": ["nepodařilo", "nevím"],
+    "tags": ["comparison", "accounts"]
+  },
+  {
+    "id": "cmp-008",
+    "question": "Která kreditní karta je výhodnější?",
+    "expected_strategy_in": ["comparison_direct", "card_overview_direct", "credit_card_catalog_direct"],
+    "expected_contains": ["kreditní", "karta"],
+    "check_not_contains": ["nepodařilo", "nevím"],
+    "tags": ["comparison", "cards"]
+  }
+]

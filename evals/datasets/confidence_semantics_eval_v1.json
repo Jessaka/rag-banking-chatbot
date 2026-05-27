@@ -1,0 +1,51 @@
+[
+  {
+    "id": "cs-001",
+    "question": "Jaký je poplatek za vedení běžného účtu?",
+    "expected_fields": ["confidence_semantic_label", "confidence_origin", "degraded_answer"],
+    "expected_confidence_origin_in": ["pricing_row", "pricing_section_llm", "llm_generated"],
+    "expected_degraded": false,
+    "notes": "Pricing query — origin should be pricing or LLM, not degraded"
+  },
+  {
+    "id": "cs-002",
+    "question": "Co dělat při podezření na phishing?",
+    "expected_fields": ["confidence_semantic_label", "confidence_origin", "degraded_answer"],
+    "expected_confidence_origin_in": ["procedural", "guided_flow_direct"],
+    "expected_degraded": false,
+    "notes": "Security/guided flow — should be medium+ with origin=procedural"
+  },
+  {
+    "id": "cs-003",
+    "question": "Co je to eKonto?",
+    "expected_fields": ["confidence_semantic_label", "confidence_origin", "degraded_answer"],
+    "expected_confidence_origin_in": ["overview_direct", "overview_fallback", "llm_generated"],
+    "expected_degraded": false,
+    "notes": "Product overview — should not be degraded"
+  },
+  {
+    "id": "cs-004",
+    "question": "Kolik stojí vedení účtu pro firmu?",
+    "expected_fields": ["confidence_semantic_label", "confidence_origin", "degraded_answer"],
+    "expected_confidence_origin_in": ["pricing_row", "overview_fallback", "llm_generated"],
+    "expected_semantic_label": "Doporučená odpověď",
+    "notes": "If pricing fails, overview fallback with correct semantic label"
+  },
+  {
+    "id": "cs-005",
+    "question": "Co je to RB Klíč?",
+    "expected_fields": ["confidence_semantic_label", "confidence_origin", "degraded_answer"],
+    "expected_confidence_origin_in": ["overview_direct", "rb_key_overview_direct"],
+    "expected_degraded": false,
+    "expected_semantic_label": "Doporučená odpověď",
+    "notes": "Deterministic overview — medium, origin=overview_direct"
+  },
+  {
+    "id": "cs-006",
+    "question": "Jak aktivovat Apple Pay?",
+    "expected_fields": ["confidence_semantic_label", "confidence_origin", "degraded_answer"],
+    "expected_confidence_origin_in": ["procedural", "guided_flow_direct", "overview_fallback"],
+    "expected_semantic_label_in": ["Doporučená odpověď", "Ověřeno ve zdrojích RB"],
+    "notes": "Should not be low confidence or degraded"
+  }
+]

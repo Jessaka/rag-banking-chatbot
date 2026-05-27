@@ -1,10 +1,10 @@
 <script lang="ts">
 	import type { SourceDocument } from '$lib/types';
-	import { sourceRationale, sourceType } from '$lib/chat-ux';
+	import { sourceRationale } from '$lib/chat-ux';
 	import { emitChatEvent } from '$lib/monitoring';
-	import { formatSourceTitle } from '$lib/utils';
+	import { getSourceHumanTitle, getSourceDisplayUrl } from '$lib/utils';
 	import { ChevronDown, ChevronUp, FileText } from '@lucide/svelte';
-	import { Badge, Button } from '$ui';
+	import { Badge } from '$ui';
 
 	let {
 		sources = [],
@@ -17,7 +17,6 @@
 	} = $props();
 
 	let isOpen = $state(false);
-	// Sync with prop changes (sources panel can be opened externally)
 	$effect(() => {
 		isOpen = open;
 	});
@@ -25,6 +24,18 @@
 	function toggle() {
 		isOpen = !isOpen;
 		emitChatEvent('chat_source_expanded', { open: isOpen, sources_count: sources.length });
+	}
+
+	// Badge color mapping
+	function badgeVariant(badge: string | null | undefined): 'default' | 'secondary' | 'outline' | 'success' | 'warning' {
+		switch (badge) {
+			case 'Aktuální': return 'success';
+			case 'Ceník': return 'default';
+			case 'FAQ': return 'default';
+			case 'Podmínky': return 'warning';
+			case 'Archivní': return 'secondary';
+			default: return 'outline';
+		}
 	}
 </script>
 
@@ -52,15 +63,33 @@
 					<div class="px-4 py-3 transition-colors hover:bg-surface-hover dark:hover:bg-dark-hover">
 						<div class="flex items-start justify-between gap-2">
 							<div class="min-w-0 flex-1">
+								<!-- Human-readable title -->
 								<p class="text-sm font-medium text-gray-900 dark:text-dark-text truncate">
-									{formatSourceTitle(source.file_name)}
+									{getSourceHumanTitle(source)}
 								</p>
+								<!-- Badge + page + year row -->
 								<div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
-									<Badge variant="outline">{sourceType(source)}</Badge>
+									{#if source.current_or_archived}
+										<Badge variant={badgeVariant(source.current_or_archived)}>
+											{source.current_or_archived}
+										</Badge>
+									{:else}
+										<Badge variant="outline">Dokument</Badge>
+									{/if}
+									{#if source.source_year}
+										<span>{source.source_year}</span>
+									{/if}
 									{#if source.page != null}
 										<span>Str. {source.page}</span>
 									{/if}
 								</div>
+								<!-- Display URL -->
+								{#if source.display_url}
+									<p class="mt-0.5 text-xs text-gray-400 dark:text-gray-500 truncate font-mono">
+										{source.display_url}
+									</p>
+								{/if}
+								<!-- Rationale -->
 								<p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{sourceRationale(source, strategy)}</p>
 							</div>
 						</div>

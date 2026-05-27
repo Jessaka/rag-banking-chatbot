@@ -1,0 +1,42 @@
+[
+  {
+    "id": "latency_001",
+    "question": "Jaký je poplatek za vedení účtu?",
+    "check": "timing_fields_exist",
+    "expected_fields": ["retrieval_latency_ms", "llm_latency_ms", "total_latency_ms"]
+  },
+  {
+    "id": "latency_002",
+    "question": "Kdo jste?",
+    "check": "timing_fields_exist",
+    "expected_strategy": "identity_direct",
+    "expected_fields": ["total_latency_ms"]
+  },
+  {
+    "id": "latency_003",
+    "question": "Jak zablokovat kartu?",
+    "check": "timing_fields_exist",
+    "expected_strategy": "guided_flow_direct",
+    "expected_fields": ["total_latency_ms"]
+  },
+  {
+    "id": "latency_004",
+    "question": "Jak aktivovat kartu?",
+    "check": "timing_fields_exist",
+    "expected_strategy": "procedural_flow_direct",
+    "expected_fields": ["total_latency_ms"]
+  },
+  {
+    "id": "latency_005",
+    "question": "Co je RB Klíč?",
+    "check": "timing_fields_exist",
+    "expected_route": "rb_key_overview",
+    "expected_fields": ["retrieval_latency_ms", "llm_latency_ms", "total_latency_ms"]
+  },
+  {
+    "id": "latency_006",
+    "question": "Pojištění k hypotéce",
+    "check": "latency_reasonable",
+    "expected_max_total_ms": 10000
+  }
+]

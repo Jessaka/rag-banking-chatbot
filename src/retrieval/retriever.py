@@ -21,10 +21,19 @@ from pydantic import Field
 
 import config
 from src.retrieval.hybrid import hybrid_search
-from src.retrieval.pricing_retriever import pricing_search
-from src.retrieval.query_classifier import classify_query
+from src.retrieval.pricing_resolver import resolve_pricing_query
+from src.retrieval.query_classifier import classify_query, is_archived_doc
 from src.retrieval.reranker import rerank
+from src.retrieval.source_governance import (
+    MAX_RECOVERY_DOCS,
+    MIN_REQUIRED_DOCS,
+    apply_governance_pipeline,
+    apply_source_diversity,
+    attach_governance_summary,
+    merge_recovery_docs,
+)
 from src.utils.logger import get_logger
+from src.utils.telemetry import telemetry
 
 logger = get_logger(__name__)
 
@@ -104,6 +113,24 @@ CARD_OVERVIEW_RELEVANCE_TERMS = (
     "karty raiffeisenbank",
 )
 
+RECOVERY_BASE_TERMS = (
+    "aktuální informace",
+    "aktuální zdroj",
+    "oficiální stránka",
+    "FAQ",
+    "podpora",
+)
+
+RECOVERY_LABEL_TERMS: dict[str, tuple[str, ...]] = {
+    "pricing": ("aktuální ceník", "poplatky", "sazebník", "platné ceny"),
+    "accounts": ("běžný účet", "osobní účet", "eKonto", "Aktivní účet"),
+    "cards": ("platební karta", "kreditní karta", "debetní karta"),
+    "payments": ("platba", "převod", "SEPA", "SWIFT"),
+    "mortgages": ("hypotéka", "úvěr na bydlení"),
+    "investments": ("investice", "fondy", "cenné papíry"),
+    "support": ("návod", "jak postupovat", "podpora"),
+}
+
 # --- General overview fallback route definitions ---
 # Maps overview label → (expansion_terms, relevance_terms)
 OVERVIEW_ROUTES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
@@ -177,6 +204,57 @@ def _source_key(doc: Document) -> str:
 
 def _unique_source_count(docs: list[Document]) -> int:
     return len({key for doc in docs if (key := _source_key(doc))})
+
+
+def _recovery_query(query: str, labels: set[str]) -> str:
+    """Build a broader recovery query without changing embeddings or index."""
+    q = query.lower()
+    terms: list[str] = []
+    for term in RECOVERY_BASE_TERMS:
+        if term.lower() not in q:
+            terms.append(term)
+    for label, label_terms in RECOVERY_LABEL_TERMS.items():
+        if label in labels:
+            for term in label_terms:
+                if term.lower() not in q:
+                    terms.append(term)
+    return " ".join([query, *terms[:8]]).strip()
+
+
+def _family_key(doc: Document) -> str:
+    return str(
+        doc.metadata.get("document_family")
+        or doc.metadata.get("canonical_product")
+        or doc.metadata.get("product_name")
+        or doc.metadata.get("source_url")
+        or doc.metadata.get("url")
+        or doc.metadata.get("file_name")
+        or ""
+    ).strip().lower()
+
+
+def _is_current_preferred_recovery_doc(doc: Document) -> bool:
+    tier = str(doc.metadata.get("canonical_source_type") or doc.metadata.get("authority_tier") or "").lower()
+    if tier in {"historical_pdf", "migration_notice", "archived_legal"}:
+        return False
+    return not is_archived_doc(doc)
+
+
+def _restricted_recovery_docs(
+    recovery_docs: list[Document],
+    current_docs: list[Document],
+    original_candidates: list[Document],
+) -> list[Document]:
+    """Prefer recovery docs from known source families and current sources."""
+    allowed_families = {
+        key
+        for doc in [*current_docs, *original_candidates[:12]]
+        if (key := _family_key(doc)) and not is_archived_doc(doc)
+    }
+    current_first = [doc for doc in recovery_docs if _is_current_preferred_recovery_doc(doc)]
+    pool = current_first or recovery_docs
+    restricted = [doc for doc in pool if not allowed_families or _family_key(doc) in allowed_families]
+    return restricted or pool
 
 
 def _is_complaint_relevant(doc: Document) -> bool:
@@ -349,6 +427,85 @@ class BankingRetriever(BaseRetriever):
     bm25_weight: float = Field(default=0.4)
     vector_weight: float = Field(default=0.6)
     metadata_filters: dict | None = Field(default=None)
+    last_governance_meta: dict = Field(default_factory=dict, exclude=True)
+
+    def _apply_governance_with_recovery(
+        self,
+        query: str,
+        docs: list[Document],
+        original_candidates: list[Document],
+        query_profile,
+    ) -> tuple[list[Document], dict, float, float]:
+        """Apply governance, then run controlled recovery if collapse is detected."""
+        t_gov = time.perf_counter()
+        governed_docs, gov_meta = apply_governance_pipeline(docs, query_profile)
+        gov_ms = (time.perf_counter() - t_gov) * 1000
+        final_docs = governed_docs
+        recovery_ms = 0.0
+
+        if gov_meta.get("recovery_pass_needed"):
+            recovery_query = _recovery_query(query, query_profile.labels)
+            t_recovery = time.perf_counter()
+            recovery_profile = classify_query(recovery_query)
+            logger.warning(
+                "Retrieval recovery pass triggered: "
+                f"reason={gov_meta.get('recovery_reason')}, "
+                f"suppression_ratio={gov_meta.get('suppression_ratio')}, "
+                f"final_docs={len(final_docs)}, recovery_query='{recovery_query[:180]}'"
+            )
+            recovery_candidates = hybrid_search(
+                query=recovery_query,
+                top_k=max(self.hybrid_top_k * 2, 12),
+                bm25_weight=max(self.bm25_weight, 0.55),
+                vector_weight=min(self.vector_weight, 0.45),
+                metadata_filters=self.metadata_filters,
+                query_profile=recovery_profile,
+            )
+            recovery_ranked = rerank(
+                query=recovery_query,
+                documents=recovery_candidates,
+                top_k=max(self.rerank_top_k, MIN_REQUIRED_DOCS + MAX_RECOVERY_DOCS),
+                query_profile=recovery_profile,
+            )
+            recovery_governed, _recovery_gov_meta = apply_governance_pipeline(recovery_ranked, recovery_profile)
+            recovery_pool = _restricted_recovery_docs(recovery_governed, final_docs, original_candidates)
+            merged_docs, added_count = merge_recovery_docs(
+                final_docs,
+                recovery_pool,
+                recovery_reason=str(gov_meta.get("recovery_reason") or "retrieval_collapse"),
+                recovery_query=recovery_query,
+            )
+            diversified_docs, diversity_meta = apply_source_diversity(merged_docs)
+            final_docs = diversified_docs or merged_docs
+            recovery_ms = (time.perf_counter() - t_recovery) * 1000
+            gov_meta.update(diversity_meta)
+            gov_meta.update({
+                "recovery_pass_used": True,
+                "recovery_reason": gov_meta.get("recovery_reason") or "retrieval_collapse",
+                "recovery_query": recovery_query,
+                "recovery_result_count": added_count,
+                "recovery_pass_latency_ms": round(recovery_ms, 1),
+                "retrieval_collapse_detected": added_count == 0 and len(final_docs) < MIN_REQUIRED_DOCS,
+                "resilience_strategy": "governance_recovery" if added_count else "collapse_detected_no_recovery",
+                "final_source_count": len(final_docs),
+                "output_count": len(final_docs),
+            })
+            attach_governance_summary(final_docs, gov_meta)
+            logger.info(
+                "Retrieval recovery pass completed: "
+                f"added={added_count}, candidates={len(recovery_candidates)}, "
+                f"ranked={len(recovery_ranked)}, final={len(final_docs)}, latency={recovery_ms:.0f}ms"
+            )
+
+        if not final_docs and docs:
+            # Preserve governance semantics: do not reintroduce suppressed/stale docs.
+            gov_meta["retrieval_collapse_detected"] = True
+            gov_meta["resilience_strategy"] = "governance_suppressed"
+            logger.warning("Source governance suppressed all docs and recovery did not restore safe sources")
+
+        attach_governance_summary(final_docs, gov_meta)
+        self.last_governance_meta = gov_meta
+        return final_docs, gov_meta, gov_ms, recovery_ms
 
     def _get_relevant_documents(
         self,
@@ -378,12 +535,34 @@ class BankingRetriever(BaseRetriever):
         pricing_docs: list[Document] = []
         if "pricing" in query_profile.labels:
             t_pricing = time.perf_counter()
-            pricing_docs = pricing_search(query, top_k=self.rerank_top_k)
+            pricing_docs = resolve_pricing_query(query, top_k=self.rerank_top_k)
             pricing_ms = (time.perf_counter() - t_pricing) * 1000
             if pricing_docs:
+                pricing_docs, gov_meta, gov_ms, recovery_ms = self._apply_governance_with_recovery(
+                    query=query,
+                    docs=pricing_docs,
+                    original_candidates=pricing_docs,
+                    query_profile=query_profile,
+                )
                 logger.info(
                     f"⏱ PricingRetriever deterministic: {pricing_ms:.0f}ms → {len(pricing_docs)} výsledků; "
+                    f"governance={gov_ms:.0f}ms, recovery={recovery_ms:.0f}ms; "
+                    f"governance_suppressed={gov_meta.get('suppressed_count', 0)}; "
+                    f"recovery_pass_used={gov_meta.get('recovery_pass_used', False)}; "
                     "hybrid/reranker přeskočen"
+                )
+                telemetry.emit(
+                    "retrieval_completed",
+                    question=query,
+                    route="pricing",
+                    source_count=len(pricing_docs),
+                    suppressed_count=gov_meta.get("suppressed_count", 0),
+                    suppression_ratio=gov_meta.get("suppression_ratio", 0.0),
+                    recovery_triggered=gov_meta.get("recovery_pass_used", False),
+                    recovery_added_count=gov_meta.get("recovery_result_count", 0),
+                    diversity_score=gov_meta.get("diversity_score", 0.0),
+                    retrieval_collapse_detected=gov_meta.get("retrieval_collapse_detected", False),
+                    resilience_strategy=gov_meta.get("resilience_strategy"),
                 )
                 return pricing_docs
 
@@ -401,6 +580,11 @@ class BankingRetriever(BaseRetriever):
 
         if not candidates:
             logger.warning("Hybrid search nevrátil žádné výsledky")
+            self.last_governance_meta = {
+                "retrieval_collapse_detected": True,
+                "resilience_strategy": "supported_but_missing_data",
+                "final_source_count": 0,
+            }
             return []
 
         logger.info(f"⏱ Hybrid search (BM25+Qdrant+RRF): {hybrid_ms:.0f}ms → {len(candidates)} kandidátů")
@@ -606,11 +790,55 @@ class BankingRetriever(BaseRetriever):
                 vector_weight=self.vector_weight,
             )
 
+        # Step 4: Source governance + recovery + source diversity
+        final_docs, gov_meta, gov_ms, recovery_ms = self._apply_governance_with_recovery(
+            query=query,
+            docs=final_docs,
+            original_candidates=candidates,
+            query_profile=query_profile,
+        )
+
         total_retrieval_ms = (time.perf_counter() - t_total) * 1000
+        telemetry.emit(
+            "ranking_completed",
+            question=query,
+            route=sorted(query_profile.labels),
+            candidate_count=len(candidates),
+            rerank_count=len(final_docs),
+        )
+        telemetry.emit(
+            "retrieval_completed",
+            question=query,
+            route=sorted(query_profile.labels),
+            source_count=len(final_docs),
+            suppressed_count=gov_meta.get("suppressed_count", 0),
+            governance_removed_count=gov_meta.get("governance_removed_count", 0),
+            suppression_ratio=gov_meta.get("suppression_ratio", 0.0),
+            recovery_triggered=gov_meta.get("recovery_pass_used", False),
+            recovery_added_count=gov_meta.get("recovery_result_count", 0),
+            recovery_pass_latency_ms=gov_meta.get("recovery_pass_latency_ms", 0.0),
+            diversity_score=gov_meta.get("diversity_score", 0.0),
+            retrieval_collapse_detected=gov_meta.get("retrieval_collapse_detected", False),
+            resilience_strategy=gov_meta.get("resilience_strategy"),
+            final_source_count=len(final_docs),
+        )
+        if gov_meta.get("retrieval_collapse_detected"):
+            telemetry.emit(
+                "degradation_triggered",
+                question=query,
+                route=sorted(query_profile.labels),
+                strategy=gov_meta.get("resilience_strategy"),
+                source_count=len(final_docs),
+                suppressed_count=gov_meta.get("suppressed_count", 0),
+            )
         logger.info(
             f"⏱ Retrieval celkem: {total_retrieval_ms:.0f}ms "
-            f"(hybrid={hybrid_ms:.0f}ms, rerank={rerank_ms:.0f}ms) "
-            f"→ {len(final_docs)} výsledků"
+            f"(hybrid={hybrid_ms:.0f}ms, rerank={rerank_ms:.0f}ms, "
+            f"governance={gov_ms:.0f}ms, recovery={recovery_ms:.0f}ms) "
+            f"→ {len(final_docs)} výsledků "
+            f"(governance_suppressed={gov_meta.get('suppressed_count', 0)}, "
+            f"recovery_pass_used={gov_meta.get('recovery_pass_used', False)}, "
+            f"diversity_score={gov_meta.get('diversity_score', 0.0)})"
         )
         return final_docs
 

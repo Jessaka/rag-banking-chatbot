@@ -227,6 +227,67 @@ def confidence_bucket(result: dict[str, Any]) -> str:
     return "low"
 
 
+def _debug_first_value(result: dict[str, Any], key: str) -> Any:
+    for row in _debug_rows(result.get("retrieval_debug")):
+        if key in row and row.get(key) is not None:
+            return row.get(key)
+    return None
+
+
+def resilience_eval_metrics(result: dict[str, Any], item: dict[str, Any], metrics: dict[str, Any]) -> dict[str, Any]:
+    """Dataset-driven retrieval resilience metrics from debug metadata."""
+    recovery_used = bool(_debug_first_value(result, "recovery_pass_used"))
+    collapse_detected = bool(_debug_first_value(result, "retrieval_collapse_detected"))
+    suppressed_count = int(_debug_first_value(result, "governance_suppressed_count") or _debug_first_value(result, "governance_removed_count") or 0)
+    diversity_raw = _debug_first_value(result, "diversity_score") or _debug_first_value(result, "source_diversity_score")
+    try:
+        diversity_score = float(diversity_raw) if diversity_raw is not None else None
+    except Exception:
+        diversity_score = None
+    sources = result.get("sources", []) or []
+    expected_recovery = item.get("expected_recovery_pass")
+    expected_empty_safe = item.get("expected_empty_retrieval_safe")
+    return {
+        "recovery_success": (recovery_used and bool(sources)) if expected_recovery is True else None,
+        "retrieval_collapse": collapse_detected,
+        "governance_over_suppression": bool(suppressed_count > 0 and collapse_detected and not sources),
+        "diversity_score": diversity_score,
+        "empty_retrieval_safe": (
+            metrics.get("hallucination_fail") is False
+            and (not sources or result.get("answer_strategy", "").endswith("fallback"))
+        ) if expected_empty_safe is True else None,
+    }
+
+
+def pricing_resolution_metrics(result: dict[str, Any], item: dict[str, Any], metrics: dict[str, Any]) -> dict[str, Any]:
+    """Pricing resolver quality metrics from retrieval_debug metadata."""
+    if item.get("category") != "pricing" and item.get("subcategory") != "pricing_resolution":
+        return {}
+    rows = _debug_rows(result.get("retrieval_debug"))
+    row_found = any(row.get("pricing_row_found") is True for row in rows)
+    exact_match = any(row.get("pricing_row_exact_match") is True for row in rows)
+    canonical_used = any(row.get("pricing_canonical_used") is True for row in rows)
+    stale_suppressed = any(
+        bool(row.get("stale_source_suppressed"))
+        or int(row.get("governance_suppressed_count") or 0) > 0
+        or int(row.get("governance_removed_count") or 0) > 0
+        for row in rows
+    )
+    answer_norm = normalize_text(result.get("answer", ""))
+    false_negative = bool(
+        item.get("expected_explicit_pricing") is True
+        and not row_found
+        and any(cue in answer_norm for cue in ("nepodařilo", "nepodarilo", "unsupported", "nenašel", "nenasel"))
+    )
+    return {
+        "pricing_resolved": row_found and metrics.get("pricing_accuracy_pass") is not False,
+        "pricing_false_negative": false_negative,
+        "canonical_pricing_used": canonical_used,
+        "explicit_pricing_match": exact_match,
+        "stale_pricing_blocked": stale_suppressed or not any("2020" in normalize_text(str(row)) or "2018" in normalize_text(str(row)) for row in rows),
+    }
+
+
 def classify_failure(item: dict[str, Any], result: dict[str, Any], metrics: dict[str, Any]) -> str | None:
     if result.get("status_code") and int(result["status_code"]) >= 500:
         return "api_error"
@@ -301,6 +362,9 @@ def evaluate_item(item: dict[str, Any], api_url: str, timeout: float = 120.0) ->
     }
     metrics["retrieval_precision_at_3"] = retrieval_precision_at_k({**temp, **response}, item, k=3) if isinstance(response, dict) else None
     metrics["confidence_bucket"] = response.get("confidence_bucket") or confidence_bucket({**temp, **response}) if isinstance(response, dict) else "unknown"
+    if isinstance(response, dict):
+        metrics.update(resilience_eval_metrics({**temp, **response}, item, metrics))
+        metrics.update(pricing_resolution_metrics({**temp, **response}, item, metrics))
     failure_type = classify_failure(item, temp, metrics)
     passed = status_code is not None and status_code < 500 and failure_type is None and ok_contains and ok_not_contains
 
@@ -344,6 +408,12 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
     ambiguity_cases = [r for r in results if r.get("metrics", {}).get("ambiguity_correct") is not None]
     unsupported_cases = [r for r in results if r.get("metrics", {}).get("unsupported_correct") is not None]
     p3_values = [r["metrics"]["retrieval_precision_at_3"] for r in results if r.get("metrics", {}).get("retrieval_precision_at_3") is not None]
+    recovery_cases = [r for r in results if r.get("metrics", {}).get("recovery_success") is not None]
+    empty_safe_cases = [r for r in results if r.get("metrics", {}).get("empty_retrieval_safe") is not None]
+    diversity_values = [r["metrics"]["diversity_score"] for r in results if r.get("metrics", {}).get("diversity_score") is not None]
+    pricing_resolution_cases = [r for r in results if r.get("metrics", {}).get("pricing_resolved") is not None]
+    explicit_pricing_cases = [r for r in results if r.get("metrics", {}).get("explicit_pricing_match") is not None]
+    stale_block_cases = [r for r in results if r.get("metrics", {}).get("stale_pricing_blocked") is not None]
     return {
         "total": total,
         "passed": passed,
@@ -357,6 +427,16 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
         "avg_source_grounding_score": _avg([r.get("metrics", {}).get("source_grounding_score", 0.0) for r in results]),
         "ambiguity_handling_correctness": round(sum(1 for r in ambiguity_cases if r["metrics"]["ambiguity_correct"]) / len(ambiguity_cases), 4) if ambiguity_cases else None,
         "retrieval_precision_at_3": _avg(p3_values),
+        "recovery_success_rate": round(sum(1 for r in recovery_cases if r["metrics"].get("recovery_success")) / len(recovery_cases), 4) if recovery_cases else None,
+        "retrieval_collapse_rate": round(sum(1 for r in results if r.get("metrics", {}).get("retrieval_collapse")) / total, 4) if total else 0.0,
+        "governance_over_suppression_rate": round(sum(1 for r in results if r.get("metrics", {}).get("governance_over_suppression")) / total, 4) if total else 0.0,
+        "diversity_score_avg": _avg(diversity_values),
+        "empty_retrieval_safety_rate": round(sum(1 for r in empty_safe_cases if r["metrics"].get("empty_retrieval_safe")) / len(empty_safe_cases), 4) if empty_safe_cases else None,
+        "pricing_resolution_rate": round(sum(1 for r in pricing_resolution_cases if r["metrics"].get("pricing_resolved")) / len(pricing_resolution_cases), 4) if pricing_resolution_cases else None,
+        "pricing_false_negative_rate": round(sum(1 for r in pricing_resolution_cases if r["metrics"].get("pricing_false_negative")) / len(pricing_resolution_cases), 4) if pricing_resolution_cases else None,
+        "canonical_pricing_usage_rate": round(sum(1 for r in pricing_resolution_cases if r["metrics"].get("canonical_pricing_used")) / len(pricing_resolution_cases), 4) if pricing_resolution_cases else None,
+        "explicit_pricing_match_rate": round(sum(1 for r in explicit_pricing_cases if r["metrics"].get("explicit_pricing_match")) / len(explicit_pricing_cases), 4) if explicit_pricing_cases else None,
+        "stale_pricing_block_rate": round(sum(1 for r in stale_block_cases if r["metrics"].get("stale_pricing_blocked")) / len(stale_block_cases), 4) if stale_block_cases else None,
     }
 
 
@@ -414,6 +494,18 @@ def markdown_report(report: dict[str, Any]) -> str:
         f"- Avg source grounding score: {s['avg_source_grounding_score']}",
         f"- Ambiguity correctness: {s['ambiguity_handling_correctness'] if s['ambiguity_handling_correctness'] is not None else 'n/a'}",
         f"- Retrieval P@3: {s['retrieval_precision_at_3'] if s['retrieval_precision_at_3'] is not None else 'n/a'}", "",
+        "## Retrieval resilience",
+        f"- Recovery success rate: {s.get('recovery_success_rate') if s.get('recovery_success_rate') is not None else 'n/a'}",
+        f"- Retrieval collapse rate: {s.get('retrieval_collapse_rate')}",
+        f"- Governance over-suppression rate: {s.get('governance_over_suppression_rate')}",
+        f"- Diversity score avg: {s.get('diversity_score_avg') if s.get('diversity_score_avg') is not None else 'n/a'}",
+        f"- Empty retrieval safety rate: {s.get('empty_retrieval_safety_rate') if s.get('empty_retrieval_safety_rate') is not None else 'n/a'}", "",
+        "## Pricing resolution",
+        f"- Pricing resolution rate: {s.get('pricing_resolution_rate') if s.get('pricing_resolution_rate') is not None else 'n/a'}",
+        f"- Pricing false negative rate: {s.get('pricing_false_negative_rate') if s.get('pricing_false_negative_rate') is not None else 'n/a'}",
+        f"- Canonical pricing usage rate: {s.get('canonical_pricing_usage_rate') if s.get('canonical_pricing_usage_rate') is not None else 'n/a'}",
+        f"- Explicit pricing match rate: {s.get('explicit_pricing_match_rate') if s.get('explicit_pricing_match_rate') is not None else 'n/a'}",
+        f"- Stale pricing block rate: {s.get('stale_pricing_block_rate') if s.get('stale_pricing_block_rate') is not None else 'n/a'}", "",
         "## Category leaderboard", "| category | total | passed | pass_rate |", "|---|---:|---:|---:|",
     ]
     for row in report["leaderboards"]["by_category"]:

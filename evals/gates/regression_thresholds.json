@@ -23,7 +23,9 @@
     "limity": 0.70,
     "rb_klic": 0.75,
     "sepa_swift": 0.70,
-    "apple_google_pay": 0.70
+    "apple_google_pay": 0.70,
+    "cards": 0.70,
+    "pricing": 0.80
   },
   "failure_count_maximums": {
     "wrong_product_routing": 0,
@@ -33,7 +35,9 @@
     "missing_source": 10,
     "missing_retrieval": 15,
     "unsupported_answer": 2,
-    "api_error": 0
+    "api_error": 0,
+    "wrong_procedural_flow": 0,
+    "unsupported_instead_of_soft_guidance": 0
   },
   "priority_gates": {
     "pricing_correctness": ["pricing_accuracy", "wrong_product_routing", "stale_pricing"],

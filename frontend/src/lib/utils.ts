@@ -27,3 +27,22 @@ export function formatSourceTitle(fileName: string): string {
 		.replace(/\s+/g, ' ')
 		.trim();
 }
+
+/**
+ * Return a human-readable source title for UI display.
+ * Uses the backend-normalized human_title when available;
+ * falls back to the legacy formatSourceTitle heuristic.
+ */
+export function getSourceHumanTitle(source: { human_title?: string | null; file_name: string }): string {
+	if (source.human_title && source.human_title.length > 3) {
+		return source.human_title;
+	}
+	return formatSourceTitle(source.file_name);
+}
+
+/**
+ * Return a display-friendly URL (shortened, no protocol) for a source.
+ */
+export function getSourceDisplayUrl(source: { display_url?: string | null }): string | null {
+	return source.display_url ?? null;
+}

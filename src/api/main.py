@@ -19,6 +19,7 @@ přes asyncio.to_thread(), čímž neblokují event loop FastAPI.
 from __future__ import annotations
 
 import asyncio
+import collections
 import json
 import time
 import traceback
@@ -28,14 +29,18 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 import requests as http_requests
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 import config
+from src.generation.cache import ResponseCache, _cache_key, _is_cacheable
 from src.generation.chain import BankingRAGChain
+from src.generation.confidence_semantics import resolve_confidence_semantics
 from src.utils.logger import get_logger
+from src.utils.telemetry import telemetry
 
 logger = get_logger(__name__)
 
@@ -45,6 +50,67 @@ logger = get_logger(__name__)
 
 SESSION_TTL_SECONDS: int = 3600   # Sezení expiruje po 1 hodině nečinnosti
 MAX_SESSIONS: int = 50            # Limit pro LRU eviction
+
+# Priority 1: Global response cache with pluggable backend
+def _build_cache_backend() -> Any:
+    """Build the cache backend based on feature flags."""
+    if config.USE_REDIS_CACHE:
+        try:
+            from src.storage.redis_impl import RedisCacheBackend
+            logger.info("Building RedisCacheBackend (USE_REDIS_CACHE=1)")
+            return RedisCacheBackend()
+        except Exception as exc:
+            logger.warning(f"RedisCacheBackend init failed ({exc}) — falling back to in-memory")
+    from src.storage.memory import InMemoryCacheBackend
+    return InMemoryCacheBackend(max_entries=config.CACHE_MAX_ENTRIES)
+
+_response_cache: ResponseCache = ResponseCache(
+    backend=_build_cache_backend(),
+    max_entries=config.CACHE_MAX_ENTRIES,
+)
+
+
+def _enrich_result_with_semantics(result: dict) -> dict:
+    """Add confidence semantics fields to any result dict.
+
+    Safe to call on all results — no-ops if already enriched by chain.py.
+    This ensures every API response includes confidence_origin,
+    confidence_semantic_label, and degraded_answer even from early returns.
+    """
+    if "confidence_origin" in result:
+        return result
+    strategy = result.get("answer_strategy", "generic_llm")
+    bucket = result.get("confidence_bucket")
+    reason = result.get("confidence_reason", "")
+    cs = resolve_confidence_semantics(strategy, bucket=bucket, reason=reason)
+    result["confidence_origin"] = cs.origin
+    result["confidence_origin_label"] = cs.origin_label
+    result["confidence_semantic_label"] = cs.semantic_label
+    result["degraded_answer"] = cs.degraded
+    return result
+
+
+# Priority 1: Global session backend
+def _build_session_backend() -> Any:
+    """Build the session storage backend based on feature flags."""
+    if config.USE_REDIS_SESSIONS:
+        try:
+            from src.storage.redis_impl import RedisSessionBackend
+            logger.info("Building RedisSessionBackend (USE_REDIS_SESSIONS=1)")
+            return RedisSessionBackend()
+        except Exception as exc:
+            logger.warning(f"RedisSessionBackend init failed ({exc}) — falling back to in-memory")
+    from src.storage.memory import InMemorySessionBackend
+    return InMemorySessionBackend(ttl_seconds=3600, max_sessions=50)
+
+_session_backend: Any = _build_session_backend()
+
+# Export backends for debug metadata
+_api_backends: dict[str, str] = {
+    "cache_backend": type(_response_cache._backend).__name__,
+    "session_backend": type(_session_backend).__name__,
+    "redis_available": str(config.USE_REDIS_CACHE or config.USE_REDIS_SESSIONS),
+}
 
 # session_id → (chain, last_access_timestamp)
 _sessions: dict[str, tuple[BankingRAGChain, float]] = {}
@@ -79,6 +145,39 @@ class SourceDocument(BaseModel):
     rerank_score: float | None = Field(None, description="Relevance skóre cross-encoder rerankeru.")
     preview: str = Field(description="Prvních 300 znaků textu chunku.")
 
+    # Priority 2: Source UX metadata
+    human_title: str | None = Field(None, description="Human-readable source title for UI display.")
+    display_url: str | None = Field(None, description="Shortened display URL.")
+    source_year: int | None = Field(None, description="Extracted document year.")
+    current_or_archived: str | None = Field(None, description="Badge label: Aktuální | Archivní | FAQ | Ceník …")
+    source_category: str | None = Field(None, description="Classification: product_page | faq_support | pricing | legal | archived | unknown.")
+    source_label: str | None = Field(None, description="Short UX label: Produktová stránka | FAQ / Návod | Ceník …")
+    # Priority 3: Retrieval observability
+    why_this_source: str | None = Field(None, description="Human-readable explanation of why this source was selected.")
+    # Priority 5: Source UX refinement
+    source_context_label: str | None = Field(None, description="Contextual label (e.g. 'Položka: Poplatek za vedení').")
+    source_relevance_reason: str | None = Field(None, description="Why this source is relevant to the query.")
+
+    # Priority 2b: Source trust scoring
+    trust_score: float | None = Field(None, description="Overall trust score 0-1 combining authority, recency, stability.")
+    authority_weight: float | None = Field(None, description="Document authority component (0-1).")
+    recency_weight: float | None = Field(None, description="Document recency component (0-1).")
+    stability_weight: float | None = Field(None, description="Document stability component (0-1).")
+    authority_tier: str | None = Field(None, description="Authority tier classification (product_page, faq_support_page, current_pricing, etc.).")
+
+    # Priority 1b: Source freshness governance
+    source_freshness_bucket: str | None = Field(None, description="Freshness classification: current | recent | stale | archived.")
+    freshness_priority_score: float | None = Field(None, description="Freshness priority score 0-1 for ranking.")
+    stale_source_suppressed: bool | None = Field(None, description="Whether source was suppressed due to staleness.")
+    effective_date: str | None = Field(None, description="Extracted effective date of the document.")
+    valid_from: str | None = Field(None, description="Valid-from date if available.")
+    valid_to: str | None = Field(None, description="Valid-to date if available.")
+    freshness_reason: str | None = Field(None, description="Human-readable freshness explanation.")
+
+    # Priority 4: Retrieval explainability
+    retrieval_reason: str | None = Field(None, description="Why the source was retrieved.")
+    authority_reason: str | None = Field(None, description="Why the authority level was assigned.")
+
 
 class ChatResponse(BaseModel):
     answer: str = Field(description="Vygenerovaná odpověď v češtině.")
@@ -94,6 +193,23 @@ class ChatResponse(BaseModel):
     confidence_reason: str | None = Field(None, description="Stručné vysvětlení confidence pro UX/eval.")
     clarification_required: bool | None = Field(None, description="Zda je vhodné vyžádat upřesnění.")
     unsupported_reason: str | None = Field(None, description="Důvod bezpečného unsupported fallbacku.")
+
+    # Priority 1: Backend metadata
+    cache_backend: str | None = Field(None, description="Active cache backend (in_memory | redis).")
+    session_backend: str | None = Field(None, description="Active session backend (in_memory | redis).")
+    redis_available: bool | None = Field(None, description="Whether Redis is connected and available.")
+
+    # Priority 5: Latency observability
+    cache_check_ms: float | None = Field(None, description="Cache lookup latency in ms.")
+    retrieval_latency_ms: float | None = Field(None, description="Retrieval (hybrid search) latency in ms.")
+    llm_latency_ms: float | None = Field(None, description="LLM generation latency in ms.")
+    formatting_latency_ms: float | None = Field(None, description="Response formatting latency in ms.")
+
+    # Priority 2: Confidence semantics
+    confidence_origin: str | None = Field(None, description="Origin of confidence assessment (pricing_row, procedural, overview_fallback, etc.).")
+    confidence_origin_label: str | None = Field(None, description="Human-readable confidence origin label.")
+    confidence_semantic_label: str | None = Field(None, description="Frontend semantic label: Ověřeno ve zdrojích RB | Doporučená odpověď | Vyžaduje ověření.")
+    degraded_answer: bool | None = Field(None, description="Whether the answer is a fallback/degraded response.")
 
 
 class ComponentStatus(BaseModel):
@@ -138,14 +254,22 @@ class CollectionInfo(BaseModel):
 # ---------------------------------------------------------------------------
 
 def _cleanup_stale_sessions() -> None:
-    """Odstraní sezení neaktivní déle než SESSION_TTL_SECONDS."""
+    """Odstraní sezení neaktivní déle než SESSION_TTL_SECONDS.
+
+    Uses the pluggable session backend for TTL tracking.
+    Chain objects (non-serializable) are kept in `_sessions` dict.
+    """
+    # Session backend handles TTL for metadata tracking
+    removed = _session_backend.cleanup()
+
+    # Also clean up in-memory chain objects for expired sessions
     cutoff = time.monotonic() - SESSION_TTL_SECONDS
     stale = [sid for sid, (_, ts) in _sessions.items() if ts < cutoff]
     for sid in stale:
         _sessions.pop(sid, None)
         _session_locks.pop(sid, None)
-    if stale:
-        logger.info(f"Expirovalo {len(stale)} sezení (TTL={SESSION_TTL_SECONDS}s)")
+    if stale or removed:
+        logger.info(f"Session cleanup: {len(stale)} chain(s) + {removed} backend entry/entries expired (TTL={SESSION_TTL_SECONDS}s)")
 
 
 def _evict_oldest_session() -> None:
@@ -155,6 +279,7 @@ def _evict_oldest_session() -> None:
     oldest = min(_sessions, key=lambda k: _sessions[k][1])
     _sessions.pop(oldest, None)
     _session_locks.pop(oldest, None)
+    _session_backend.delete(oldest)
     logger.warning(f"LRU eviction sezení {oldest[:8]}… (limit {MAX_SESSIONS})")
 
 
@@ -183,11 +308,14 @@ def _get_or_create_session(
         chain = BankingRAGChain(conversational=True)
         _sessions[session_id] = (chain, time.monotonic())
         _session_locks[session_id] = asyncio.Lock()
+        # Register in session backend for cross-process tracking
+        _session_backend.set(session_id, {"created_at": time.time()}, ttl_seconds=SESSION_TTL_SECONDS)
         logger.info(f"Nové sezení: {session_id[:8]}… (aktivních: {len(_sessions)})")
     else:
         # Obnov timestamp přístupu
         chain, _ = _sessions[session_id]
         _sessions[session_id] = (chain, time.monotonic())
+        _session_backend.set(session_id, {"last_access": time.time()}, ttl_seconds=SESSION_TTL_SECONDS)
 
     return session_id, _sessions[session_id][0], _session_locks[session_id]
 
@@ -211,6 +339,35 @@ def _serialize_sources(raw_sources: list[Any]) -> list[SourceDocument]:
                 chunk_id=metadata.get("chunk_id"),
                 rerank_score=round(rerank_score, 4) if rerank_score is not None else None,
                 preview=page_content[:500],
+                # Priority 2: Source UX metadata
+                human_title=metadata.get("human_title"),
+                display_url=metadata.get("display_url"),
+                source_year=metadata.get("source_year"),
+                current_or_archived=metadata.get("current_or_archived"),
+                source_category=metadata.get("source_category"),
+                source_label=metadata.get("source_label"),
+                # Priority 3: Retrieval observability
+                why_this_source=metadata.get("why_this_source"),
+                # Priority 5: Source UX refinement
+                source_context_label=metadata.get("source_context_label"),
+                source_relevance_reason=metadata.get("source_relevance_reason"),
+                # Priority 2b: Source trust scoring
+                trust_score=metadata.get("trust_score"),
+                authority_weight=metadata.get("authority_weight"),
+                recency_weight=metadata.get("recency_weight"),
+                stability_weight=metadata.get("stability_weight"),
+                authority_tier=metadata.get("authority_tier"),
+                # Priority 1b: Source freshness governance
+                source_freshness_bucket=metadata.get("source_freshness_bucket"),
+                freshness_priority_score=metadata.get("freshness_priority_score"),
+                stale_source_suppressed=metadata.get("stale_source_suppressed"),
+                effective_date=metadata.get("effective_date"),
+                valid_from=metadata.get("valid_from"),
+                valid_to=metadata.get("valid_to"),
+                freshness_reason=metadata.get("freshness_reason"),
+                # Priority 4: Retrieval explainability
+                retrieval_reason=metadata.get("retrieval_reason"),
+                authority_reason=metadata.get("authority_reason"),
             )
         )
     return sources
@@ -609,10 +766,72 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],          # Pro produkci omezit na konkrétní originy
+    allow_origins=config.CORS_ALLOWED_ORIGINS,
+    allow_credentials=True,
     allow_methods=["GET", "POST"],
-    allow_headers=["*"],
+    allow_headers=["Content-Type", "Authorization"],
 )
+
+# Security headers middleware
+@app.middleware("http")
+async def _add_security_headers(request: Request, call_next: Any) -> Any:
+    """Add security headers to every response."""
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'"
+    return response
+
+# Simple per-IP rate limiting middleware
+_rate_limit_buckets: dict[str, list[float]] = {}
+
+@app.middleware("http")
+async def _rate_limiter(request: Request, call_next: Any) -> Any:
+    """Rate limit requests per IP using a sliding window counter."""
+    if not config.RATE_LIMIT_ENABLED:
+        return await call_next(request)
+
+    # Only rate-limit chat endpoints
+    if request.url.path not in ("/chat", "/chat/stream"):
+        return await call_next(request)
+
+    client_ip = request.client.host if request.client else "unknown"
+    now = time.monotonic()
+    window = 60.0  # 1 minute
+
+    bucket = _rate_limit_buckets.setdefault(client_ip, [])
+    # Prune old entries outside the window
+    while bucket and bucket[0] < now - window:
+        bucket.pop(0)
+
+    if len(bucket) >= config.RATE_LIMIT_PER_MINUTE:
+        logger.warning(f"Rate limit exceeded for {client_ip}: {len(bucket)}/{config.RATE_LIMIT_PER_MINUTE}")
+        return JSONResponse(
+            status_code=429,
+            content={"error": "rate_limit_exceeded", "detail": "Too many requests. Try again later."},
+        )
+
+    bucket.append(now)
+    return await call_next(request)
+
+# Request body size limit middleware
+@app.middleware("http")
+async def _request_body_size_limit(request: Request, call_next: Any) -> Any:
+    """Reject requests with body larger than MAX_REQUEST_BODY_BYTES."""
+    if request.method in ("POST", "PUT", "PATCH"):
+        content_length = request.headers.get("content-length")
+        if content_length:
+            try:
+                if int(content_length) > config.MAX_REQUEST_BODY_BYTES:
+                    return JSONResponse(
+                        status_code=413,
+                        content={"error": "payload_too_large", "detail": f"Request body exceeds {config.MAX_REQUEST_BODY_BYTES} bytes."},
+                    )
+            except (ValueError, TypeError):
+                pass
+    return await call_next(request)
 
 
 # ---------------------------------------------------------------------------
@@ -637,10 +856,89 @@ async def chat(request: ChatRequest) -> ChatResponse:
     try:
         session_id, chain, lock = _get_or_create_session(request.session_id)
     except Exception as exc:
+        telemetry.emit("error", request_id=request_id, error_type="session_init_failed", detail=str(exc))
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Nelze inicializovat RAG chain: {exc}",
         )
+
+    telemetry.emit(
+        "request_started",
+        request_id=request_id,
+        session_id=session_id,
+        question=request.question,
+    )
+
+    # Priority 1: Cache check – shared across all sessions
+    t_cache = time.perf_counter()
+    cache_key = _cache_key(request.question)
+    cached_result: dict | None = _response_cache.get(cache_key)
+    cache_check_ms = (time.perf_counter() - t_cache) * 1000
+
+    _backend_meta = {
+        "cache_backend": _api_backends.get("cache_backend", "unknown"),
+        "session_backend": _api_backends.get("session_backend", "unknown"),
+        "redis_available": config.USE_REDIS_CACHE or config.USE_REDIS_SESSIONS,
+    }
+
+    if cached_result is not None:
+        _response_cache.add_debug_metadata(cached_result, cache_hit=True, key=cache_key)
+        elapsed_ms = (time.perf_counter() - t_start) * 1000
+        logger.info(f"[{request_id}] [{session_id[:8]}] Cache HIT key={cache_key[:12]}…")
+        telemetry.emit("cache_hit", request_id=request_id, session_id=session_id,
+                       latency_ms=cache_check_ms, confidence_bucket=cached_result.get("confidence_bucket"))
+        cached_result = _enrich_result_with_semantics(cached_result)
+        return ChatResponse(
+            answer=cached_result["answer"],
+            sources=_serialize_sources(cached_result.get("sources", [])),
+            session_id=session_id,
+            processing_time_ms=round(elapsed_ms, 1),
+            request_id=request_id,
+            answer_strategy=cached_result.get("answer_strategy"),
+            retrieval_debug=cached_result.get("retrieval_debug") if config.DEBUG_API_ERRORS else None,
+            confidence_bucket=cached_result.get("confidence_bucket"),
+            confidence_reason=cached_result.get("confidence_reason"),
+            clarification_required=cached_result.get("clarification_required"),
+            unsupported_reason=cached_result.get("unsupported_reason"),
+            **_backend_meta,
+            confidence_origin=cached_result.get("confidence_origin"),
+            confidence_origin_label=cached_result.get("confidence_origin_label"),
+            confidence_semantic_label=cached_result.get("confidence_semantic_label"),
+            degraded_answer=cached_result.get("degraded_answer"),
+        )
+
+    # In-flight deduplication
+    telemetry.emit("cache_miss", request_id=request_id, session_id=session_id, latency_ms=cache_check_ms)
+    if not _response_cache.try_claim_inflight(cache_key):
+        t_wait = time.perf_counter()
+        logger.info(f"[{request_id}] [{session_id[:8]}] Cache DEDUP waiting for key={cache_key[:12]}…")
+        _response_cache.wait_inflight(cache_key)
+        cached_result = _response_cache.get(cache_key)
+        if cached_result is not None:
+            _response_cache.add_debug_metadata(cached_result, cache_hit=True, key=cache_key)
+            elapsed_ms = (time.perf_counter() - t_start) * 1000
+            logger.info(f"[{request_id}] [{session_id[:8]}] Cache DEDUP HIT key={cache_key[:12]}…")
+            cached_result = _enrich_result_with_semantics(cached_result)
+            return ChatResponse(
+                answer=cached_result["answer"],
+                sources=_serialize_sources(cached_result.get("sources", [])),
+                session_id=session_id,
+                processing_time_ms=round(elapsed_ms, 1),
+                request_id=request_id,
+                answer_strategy=cached_result.get("answer_strategy"),
+                retrieval_debug=cached_result.get("retrieval_debug") if config.DEBUG_API_ERRORS else None,
+                confidence_bucket=cached_result.get("confidence_bucket"),
+                confidence_reason=cached_result.get("confidence_reason"),
+                clarification_required=cached_result.get("clarification_required"),
+                unsupported_reason=cached_result.get("unsupported_reason"),
+                **_backend_meta,
+                confidence_origin=cached_result.get("confidence_origin"),
+                confidence_origin_label=cached_result.get("confidence_origin_label"),
+                confidence_semantic_label=cached_result.get("confidence_semantic_label"),
+                degraded_answer=cached_result.get("degraded_answer"),
+            )
+        # Fallback: if wait timed out or no result, compute normally
+        logger.warning(f"[{request_id}] [{session_id[:8]}] Cache DEDUP wait failed for key={cache_key[:12]}… — computing")
 
     # Serializace requestů pro jedno sezení – chrání chat_history před race condition
     async with lock:
@@ -648,8 +946,11 @@ async def chat(request: ChatRequest) -> ChatResponse:
             result: dict = await asyncio.to_thread(chain.ask, request.question)
             partial_result = result
         except Exception as exc:
+            _response_cache.signal_inflight_done(cache_key)
             elapsed_ms = (time.perf_counter() - t_start) * 1000
             logger.error(f"[{request_id}] [{session_id[:8]}] Chain error: {exc}", exc_info=True)
+            telemetry.emit("error", request_id=request_id, session_id=session_id,
+                           error_type="chain_error", detail=str(exc)[:200], latency_ms=elapsed_ms)
             return _internal_error_response(
                 request_id=request_id,
                 session_id=session_id,
@@ -660,6 +961,20 @@ async def chat(request: ChatRequest) -> ChatResponse:
             )
 
     elapsed_ms = (time.perf_counter() - t_start) * 1000
+
+    # Priority 4: Session context debug fields (populated by chain.ask)
+    session_debug = getattr(chain, "_session_debug", None) or {}
+    if session_debug.get("session_context_used"):
+        result["session_context_used"] = True
+        if session_debug.get("inherited_product"):
+            result["inherited_product"] = session_debug["inherited_product"]
+        if session_debug.get("inherited_intent"):
+            result["inherited_intent"] = session_debug["inherited_intent"]
+
+    # Priority 1: Cache store (only cacheable strategies)
+    if _is_cacheable(result):
+        _response_cache.set(cache_key, result)
+    _response_cache.signal_inflight_done(cache_key)
 
     try:
         sources = _serialize_sources(result.get("sources", []))
@@ -675,6 +990,33 @@ async def chat(request: ChatRequest) -> ChatResponse:
             partial_result=result,
         )
 
+    # Priority 5: Extract timing breakdown from chain result
+    timing_ms = result.get("timing_ms", {}) or {}
+    retrieval_lat = timing_ms.get("retrieval") or timing_ms.get("retrieval_latency_ms")
+    llm_lat = timing_ms.get("llm") or timing_ms.get("llm_latency_ms")
+    fmt_lat = timing_ms.get("formatting_latency_ms")
+
+    # Priority 1: Backend metadata
+    cache_backend_name = _api_backends.get("cache_backend", "unknown")
+    session_backend_name = _api_backends.get("session_backend", "unknown")
+    redis_avail = config.USE_REDIS_CACHE or config.USE_REDIS_SESSIONS
+
+    # Enrich result with confidence semantics for ALL response paths
+    result = _enrich_result_with_semantics(result)
+
+    telemetry.emit(
+        "response_completed",
+        request_id=request_id,
+        session_id=session_id,
+        route=result.get("answer_strategy"),
+        strategy=result.get("answer_strategy"),
+        latency_ms=round(elapsed_ms, 1),
+        confidence_bucket=result.get("confidence_bucket"),
+        source_count=len(sources) if sources else 0,
+        cache_hit=False,
+        degraded=result.get("degraded_answer") or False,
+    )
+
     return ChatResponse(
         answer=result["answer"],
         sources=sources,
@@ -687,6 +1029,179 @@ async def chat(request: ChatRequest) -> ChatResponse:
         confidence_reason=result.get("confidence_reason"),
         clarification_required=result.get("clarification_required"),
         unsupported_reason=result.get("unsupported_reason"),
+        cache_check_ms=cache_check_ms,
+        retrieval_latency_ms=round(retrieval_lat, 1) if retrieval_lat is not None else None,
+        llm_latency_ms=round(llm_lat, 1) if llm_lat is not None else None,
+        formatting_latency_ms=round(fmt_lat, 1) if fmt_lat is not None else None,
+        cache_backend=cache_backend_name,
+        session_backend=session_backend_name,
+        redis_available=redis_avail,
+        # P2: Confidence semantics
+        confidence_origin=result.get("confidence_origin"),
+        confidence_origin_label=result.get("confidence_origin_label"),
+        confidence_semantic_label=result.get("confidence_semantic_label"),
+        degraded_answer=result.get("degraded_answer"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Priority 2: SSE streaming endpoint
+# ---------------------------------------------------------------------------
+
+def _sse_format(event: str, data: Any) -> str:
+    """Format an SSE message."""
+    return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
+
+
+@app.post(
+    "/chat/stream",
+    summary="Chatbot streaming endpoint (SSE)",
+    description=(
+        "Server-Sent Events streaming endpoint. "
+        "Deterministic routes return instantly; LLM routes stream tokens.\n\n"
+        "Events:\n"
+        "  - `start`  — metadata (strategy, confidence, sources, session_id)\n"
+        "  - `token`  — increment text token (field: `text`)\n"
+        "  - `done`   — final metadata (timing, cache info, errors)\n"
+        "  - `error`  — error event (field: `error`, `detail`)"
+    ),
+)
+async def chat_stream(request: ChatRequest) -> StreamingResponse:
+    request_id = str(uuid.uuid4())
+
+    async def event_stream() -> Any:
+        import asyncio
+        import threading
+
+        # Session
+        try:
+            session_id, chain, lock = _get_or_create_session(request.session_id)
+        except Exception as exc:
+            yield _sse_format("error", {"error": "session_init_failed", "detail": str(exc)})
+            return
+
+        # Cache check (fast path — identical to /chat)
+        t_start = time.perf_counter()
+        cache_key = _cache_key(request.question)
+        cached = _response_cache.get(cache_key)
+        if cached is not None:
+            _response_cache.add_debug_metadata(cached, cache_hit=True, key=cache_key)
+            cached = _enrich_result_with_semantics(cached)
+            sources = _serialize_sources(cached.get("sources", []))
+            telemetry.emit("cache_hit", request_id=request_id, session_id=session_id,
+                           route=request.question[:80])
+            yield _sse_format("start", {
+                "session_id": session_id,
+                "request_id": request_id,
+                "answer_strategy": cached.get("answer_strategy"),
+                "answer_confidence": cached.get("answer_confidence"),
+                "sources": [s.model_dump() for s in sources],
+                "cache_hit": True,
+                "confidence_semantic_label": cached.get("confidence_semantic_label"),
+                "confidence_origin": cached.get("confidence_origin"),
+                "degraded_answer": cached.get("degraded_answer"),
+            })
+            yield _sse_format("token", {"text": cached["answer"]})
+            yield _sse_format("done", {
+                "processing_time_ms": round((time.perf_counter() - t_start) * 1000, 1),
+            })
+            return
+
+        telemetry.emit(
+            "stream_started",
+            request_id=request_id,
+            session_id=session_id,
+            question=request.question,
+        )
+
+        # True token streaming via ask_stream() bridge
+        # ask_stream() is a sync generator; we bridge it to async via Queue.
+        queue: asyncio.Queue[dict | None] = asyncio.Queue()
+
+        def _producer():
+            """Run ask_stream() in a thread and enqueue events."""
+            try:
+                for event in chain.ask_stream(request.question):
+                    queue.put_nowait(event)
+            except Exception as exc:
+                logger.exception(f"[{request_id}] ask_stream error")
+                queue.put_nowait({"type": "error", "error": "chain_error", "detail": str(exc)})
+            finally:
+                queue.put_nowait(None)  # sentinel — stream complete
+
+        async with lock:
+            thread = threading.Thread(target=_producer, daemon=True)
+            thread.start()
+
+            while True:
+                event = await queue.get()
+                if event is None:
+                    break
+
+                if event["type"] == "start":
+                    sources_raw = event.get("sources", [])
+                    sources = _serialize_sources(sources_raw)
+                    yield _sse_format("start", {
+                        "session_id": session_id,
+                        "request_id": request_id,
+                        "answer_strategy": event.get("answer_strategy"),
+                        "answer_confidence": event.get("answer_confidence"),
+                        "sources": [s.model_dump() for s in sources],
+                        "clarification_required": event.get("clarification_required"),
+                        "unsupported_reason": event.get("unsupported_reason"),
+                        "cache_hit": event.get("cache_hit", False),
+                        "confidence_semantic_label": event.get("confidence_semantic_label"),
+                        "confidence_origin": event.get("confidence_origin"),
+                        "degraded_answer": event.get("degraded_answer"),
+                    })
+
+                elif event["type"] == "token":
+                    yield _sse_format("token", {"text": event["text"]})
+
+                elif event["type"] == "done":
+                    # Cache the result if possible (reconstruct result from events)
+                    elapsed_ms = round((time.perf_counter() - t_start) * 1000, 1)
+                    yield _sse_format("done", {
+                        "processing_time_ms": elapsed_ms,
+                        "retrieval_latency_ms": event.get("retrieval_latency_ms"),
+                        "llm_latency_ms": event.get("llm_latency_ms"),
+                        "formatting_latency_ms": event.get("formatting_latency_ms"),
+                        "answer_strategy": event.get("answer_strategy"),
+                        "confidence_bucket": event.get("confidence_bucket"),
+                        "confidence_semantic_label": event.get("confidence_semantic_label"),
+                    })
+
+                elif event["type"] == "error":
+                    logger.error(f"[{request_id}] ask_stream error: {event.get('detail')}")
+                    telemetry.emit("error", request_id=request_id, session_id=session_id,
+                                   error_type=event.get("error", "stream_error"),
+                                   detail=str(event.get("detail", ""))[:200])
+                    yield _sse_format("error", {
+                        "error": event.get("error", "stream_error"),
+                        "detail": event.get("detail", ""),
+                    })
+
+            # --- Post-stream telemetry and caching ---
+            telemetry.emit(
+                "stream_completed",
+                request_id=request_id,
+                session_id=session_id,
+                latency_ms=round((time.perf_counter() - t_start) * 1000, 1),
+            )
+
+            # ask_stream() stores the final result dict in chain._last_stream_result
+            stream_result = getattr(chain, "_last_stream_result", None)
+            if stream_result and _is_cacheable(stream_result):
+                _response_cache.set(cache_key, stream_result)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 

@@ -1,0 +1,50 @@
+[
+  {
+    "id": "de-001",
+    "question": "Kolik stojí osobní eKonto nevíte někde?",
+    "expected_behavior": "no_dead_end",
+    "forbidden_patterns": ["nepodařilo se najít", "nenalezl jsem", "nenašel jsem", "nedokážu odpovědět"],
+    "expected_contains": ["eKonto", "produkt"],
+    "notes": "Even with ambiguous phrasing, no dead-end warning"
+  },
+  {
+    "id": "de-002",
+    "question": "Máte nějaké kreditní karty?",
+    "expected_behavior": "no_dead_end",
+    "forbidden_patterns": ["nepodařilo se najít", "nenalezl jsem"],
+    "expected_contains": ["kreditní"],
+    "notes": "Generic card question — overview, not dead-end"
+  },
+  {
+    "id": "de-003",
+    "question": "Jaké jsou poplatky za SEPA platbu?",
+    "expected_behavior": "actionable_response",
+    "forbidden_patterns": ["nepodařilo se najít", "nenalezl jsem", "kontaktujte zákaznickou linku"],
+    "expected_contains": ["SEPA", "platba"],
+    "notes": "SEPA pricing — should have actionable info, not dead-end"
+  },
+  {
+    "id": "de-004",
+    "question": "Jak si založit spořicí účet?",
+    "expected_behavior": "no_dead_end",
+    "forbidden_patterns": ["nepodařilo", "nenalezl"],
+    "expected_contains": ["spor"],
+    "notes": "Procedural — no dead-end"
+  },
+  {
+    "id": "de-005",
+    "question": "Můžu platit mobilem u vás?",
+    "expected_behavior": "no_dead_end",
+    "forbidden_patterns": ["nepodařilo", "nenalezl"],
+    "expected_contains": ["Apple", "Google", "mobilem"],
+    "notes": "Apple/Google Pay — should have overview answer"
+  },
+  {
+    "id": "de-006",
+    "question": "Co je potřeba k žádosti o hypotéku?",
+    "expected_behavior": "actionable_response",
+    "forbidden_patterns": ["nepodařilo se najít", "nenalezl jsem"],
+    "expected_contains": ["hypoté"],
+    "notes": "Mortgage requirements — actionable guidance expected"
+  }
+]

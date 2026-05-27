@@ -1,0 +1,97 @@
+[
+  {
+    "id": "rr-001",
+    "category": "retrieval_resilience",
+    "subcategory": "governance_removes_top_source",
+    "question": "Jaké jsou aktuální poplatky za vedení eKonta, ne archiv?",
+    "expected_behavior": "direct_answer",
+    "expected_recovery_pass": true,
+    "expected_contains": ["eKonto"],
+    "expected_not_contains": ["2018", "2020", "archiv"],
+    "requires_sources": true,
+    "min_grounding_score": 0.4,
+    "notes": "If governance suppresses stale top sources, recovery should restore current official/pricing context."
+  },
+  {
+    "id": "rr-002",
+    "category": "retrieval_resilience",
+    "subcategory": "stale_pricing_suppressed",
+    "question": "Kolik stojí vedení Aktivního účtu podle aktuálního ceníku?",
+    "expected_behavior": "direct_answer",
+    "expected_recovery_pass": false,
+    "expected_contains": ["Aktiv"],
+    "expected_not_contains": ["2018", "2020", "starý", "archiv"],
+    "requires_sources": true,
+    "tags": ["stale_pricing_zero"]
+  },
+  {
+    "id": "rr-003",
+    "category": "retrieval_resilience",
+    "subcategory": "archived_faq_removed",
+    "question": "Jak si aktivuju kartu v mobilu podle aktuální nápovědy?",
+    "expected_behavior": "direct_answer",
+    "expected_contains": ["karta"],
+    "expected_not_contains": ["archiv", "již nenabízené"],
+    "requires_sources": true,
+    "tags": ["archived_faq_removed"]
+  },
+  {
+    "id": "rr-004",
+    "category": "retrieval_resilience",
+    "subcategory": "migration_notice_removed",
+    "question": "Jaké mám možnosti běžného účtu teď po změnách?",
+    "expected_behavior": "direct_answer",
+    "expected_contains": ["účet"],
+    "expected_not_contains": ["migrace", "oznámení o změně"],
+    "requires_sources": true,
+    "tags": ["migration_notice_not_primary"]
+  },
+  {
+    "id": "rr-005",
+    "category": "retrieval_resilience",
+    "subcategory": "retrieval_fallback_succeeds",
+    "question": "Jak postupovat při reklamaci neoprávněné karetní transakce?",
+    "expected_behavior": "direct_answer",
+    "expected_contains": ["reklamac"],
+    "expected_not_contains": ["nepodpor"],
+    "requires_sources": true,
+    "tags": ["fallback_retrieval"]
+  },
+  {
+    "id": "rr-006",
+    "category": "retrieval_resilience",
+    "subcategory": "recovery_returns_current_source",
+    "question": "Najdi aktuální informace k poplatkům za běžný účet, ne historický sazebník.",
+    "expected_behavior": "direct_answer",
+    "expected_recovery_pass": true,
+    "expected_contains": ["účet"],
+    "expected_not_contains": ["historický", "archiv", "2020"],
+    "requires_sources": true,
+    "tags": ["recovery_current_only"]
+  },
+  {
+    "id": "rr-007",
+    "category": "retrieval_resilience",
+    "subcategory": "empty_retrieval_safe",
+    "question": "Jaké jsou aktuální interní limity neveřejného schvalovacího modelu RB?",
+    "expected_behavior": "safe_fallback",
+    "expected_empty_retrieval_safe": true,
+    "expected_contains": ["ověřit"],
+    "expected_not_contains": ["určitě", "garantuji", "interní limit je"],
+    "requires_sources": false,
+    "unsupported_topic": true,
+    "tags": ["empty_retrieval_safety"]
+  },
+  {
+    "id": "rr-008",
+    "category": "retrieval_resilience",
+    "subcategory": "diversity_policy_enforced",
+    "question": "Shrň rozdíl mezi eKontem, Aktivním účtem a základním účtem z aktuálních zdrojů.",
+    "expected_behavior": "direct_answer",
+    "expected_contains": ["eKonto", "Aktiv"],
+    "expected_not_contains": ["archiv", "2020"],
+    "requires_sources": true,
+    "min_grounding_score": 0.4,
+    "tags": ["source_diversity"]
+  }
+]

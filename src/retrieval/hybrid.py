@@ -21,7 +21,7 @@ from langchain_core.documents import Document
 
 import config
 from src.retrieval.bm25_retriever import bm25_search
-from src.retrieval.query_classifier import QueryProfile, classify_query, expand_query, freshness_priority, is_archived_doc, is_corporate_doc, is_personal_retail_doc, is_retail_doc, source_priority
+from src.retrieval.query_classifier import QueryProfile, classify_query, expand_query, freshness_priority, generate_why_this_source, is_archived_doc, is_corporate_doc, is_personal_retail_doc, is_retail_doc, normalize_source_metadata, score_document_authority, source_priority
 from src.retrieval.vector_retriever import vector_search
 from src.utils.logger import get_logger
 
@@ -133,6 +133,7 @@ def hybrid_search(
     for doc, base_score in (item for item in scores.values()):
         metadata_boost, reasons = source_priority(doc, query_profile)
         freshness_score, archived_penalty, _freshness_reasons = freshness_priority(doc, query_profile)
+        authority_boost, authority_tier, _authority_reasons = score_document_authority(doc)
         final_score = base_score + metadata_boost
         boosted.append((
             Document(
@@ -167,6 +168,34 @@ def hybrid_search(
                     "metadata_boost": round(metadata_boost, 6),
                     "freshness_score": round(freshness_score, 6),
                     "archived_penalty": round(archived_penalty, 6),
+                    "authority_score": round(authority_boost, 6),
+                    "authority_tier": authority_tier,
+                    "authority_boost_used": True,
+                    "stale_penalty_used": archived_penalty < 0 or any("archived" in str(r).lower() for r in reasons),
+                    # Priority 3: Retrieval observability scores
+                    "business_relevance_score": round(
+                        0.5 + (
+                            0.3 if any(label in query_profile.labels for label in (
+                                "retail_banking", "corporate_banking", "personal_retail_account"))
+                            else 0.0
+                        ),
+                        4
+                    ),
+                    "product_alignment_score": round(
+                        0.5 + (
+                            0.3 if any(label in query_profile.labels for label in (
+                                "credit_card", "pricing", "account_overview", "card_overview",
+                                "mortgage_overview", "investment_overview"))
+                            else 0.0
+                        ),
+                        4
+                    ),
+                    "intent_alignment_score": round(
+                        0.5 + min(0.4, max(-0.2, metadata_boost * 0.5)),
+                        4
+                    ),
+                    "final_ranking_score": round(final_score, 6),
+                    "why_this_source": generate_why_this_source(doc, query_profile),
                     "retrieval_reasons": reasons,
                     "query_labels": sorted(query_profile.labels),
                 },
@@ -231,6 +260,14 @@ def hybrid_search(
         results.append(enriched)
         if len(results) >= top_k:
             break
+
+    # Priority 2: Source normalization UX — attach human-readable metadata
+    for doc in results:
+        ux_meta = normalize_source_metadata(doc)
+        doc.metadata.update(ux_meta)
+        # Generate why_this_source if not already present
+        if not doc.metadata.get("why_this_source"):
+            doc.metadata["why_this_source"] = generate_why_this_source(doc, query_profile)
 
     logger.debug(
         f"Hybrid RRF: '{query[:40]}…' → {len(results)} výsledků "

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import time
 import re
+from collections.abc import Generator
 from pathlib import Path
 
 from langchain_core.documents import Document
@@ -28,6 +29,17 @@ from src.generation.prompts import (
     SIMPLE_PROMPT,
     format_context,
 )
+from src.generation.product_intelligence import (
+    generate_overview_fallback,
+    get_product,
+    find_product_by_canonical_label,
+    PRODUCT_REGISTRY,
+)
+from src.generation.confidence_semantics import (
+    ConfidenceSemantics,
+    resolve_confidence_semantics,
+)
+from src.generation.pricing_response_formatter import format_conditional_fee, format_tiered_pricing
 from src.retrieval.retriever import BankingRetriever
 from src.retrieval.query_classifier import classify_query
 from src.utils.logger import get_logger
@@ -71,6 +83,32 @@ UNSUPPORTED_RESPONSE = (
     "na pobočce nebo na zákaznické lince Raiffeisenbank."
 )
 
+RESILIENCE_RESPONSES = {
+    "supported_but_missing_data": (
+        "Dotaz spadá do oblasti služeb Raiffeisenbank, ale v dostupných aktuálních zdrojích "
+        "jsem nenašel dostatečně konkrétní podklad. Abych si nevymýšlel, doporučuji ověřit "
+        "detail v internetovém bankovnictví, na pobočce nebo na zákaznické lince RB."
+    ),
+    "unsupported_domain": (
+        "Tento dotaz nespadá do oblasti informací, které mohu bezpečně zodpovědět z dostupných "
+        "zdrojů Raiffeisenbank. Mohu pomoct s účty, kartami, platbami, hypotékami, investicemi "
+        "a běžnými postupy RB."
+    ),
+    "governance_suppressed": (
+        "Našel jsem pouze zdroje, které bezpečnostní pravidla vyhodnotila jako nevhodné pro odpověď "
+        "(například archivní nebo nahrazené dokumenty). Abych nepoužil zastaralý údaj, doporučuji "
+        "ověření přímo u Raiffeisenbank."
+    ),
+    "retrieval_timeout": (
+        "Vyhledávání ve zdrojích tentokrát vypršelo. Zkuste dotaz zopakovat nebo ho zúžit; u závazných "
+        "informací doporučuji ověření přímo v kanálech Raiffeisenbank."
+    ),
+    "low_confidence_retrieval": (
+        "Našel jsem jen slabě související zdroje a nechci z nich odvozovat nepřesnou odpověď. "
+        "Zkuste prosím dotaz upřesnit názvem produktu nebo typu služby."
+    ),
+}
+
 EKONTO_CLARIFICATION = (
     "Upřesněte prosím, zda myslíte osobní eKonto, nebo podnikatelské eKonto. "
     "Stačí odpovědět například „osobní“ nebo „podnikatelské“."
@@ -82,6 +120,30 @@ GUIDED_FLOW_PATTERNS = (
     (re.compile(r"(jak\s+zadat|údaje|udaje|iban|bic).*(sepa|swift|zahraničn|zahranicn)", re.I), "sepa_swift"),
     (re.compile(r"(rb\s+klíč|rb\s+klic).*(aktiv|nefung|odblok|přen|pren|telefon|mobil)", re.I), "rb_key"),
     (re.compile(r"(jak\s+požádat|jak\s+pozadat|chci|vyřídit|vyridit).*(hypot[eé]k)", re.I), "mortgage"),
+)
+
+# --- Priority 3: Procedural flow patterns ---
+# These run before retrieval (like guided flows) for deterministic how-to answers.
+PROCEDURAL_FLOW_PATTERNS = (
+    (re.compile(r"(jak\s+)?(aktiv[uo]j|aktivovat|zapnout|zapni|zač[íi]t\s+pou[žz][íi]v[aá]t).*(kart\w*|plateb)", re.I), "activation_flow"),
+    (re.compile(r"(jak\s+)?(zv[ýy][šs][íi][mtš]|zv[ýy][šs]it|nav[ýy][šs][íi][mtš]|nav[ýy][šs]it|sn[íi][žz][íi][mtš]|sn[íi][žz]it).*(limit|kart|v[ýy]b[eě]r)", re.I), "card_limit_flow"),
+    (re.compile(r"(jak\s+)?(p[řr]idat|nahr[aá]t|m[íi]t).*(kart).*(mobil|apple|google|watch|hodink)", re.I), "mobile_wallet_flow"),
+    (re.compile(r"(karta|kartou|kartu|pou[žz]it[íi]).*(zahrani[čc][íi]|cizina|usa|eu|sv[ěe]t)", re.I), "abroad_card_usage"),
+    (re.compile(r"(karta|kartou|kartu|funguje).*(v\s+)?zahrani[čc]", re.I), "abroad_card_usage"),
+    (re.compile(r"(m[aá]te|nab[íi]z[íi]te).*(visa|mastercard).*|(visa|mastercard).*(nebo|or|vs|versus)", re.I), "card_brand_overview"),
+    # Additional patterns for short/noisy queries
+    (re.compile(r"karta\s+v\s+mobilu", re.I), "mobile_wallet_flow"),
+    (re.compile(r"kart[au]\s+v\s+mobilu", re.I), "mobile_wallet_flow"),
+)
+
+# --- Priority 2: Soft guidance patterns ---
+# For common FAQ/procedural queries where retrieval is weak but the
+# domain is supported and the risk is low.
+SOFT_GUIDANCE_FAQ_PATTERNS = (
+    (re.compile(r"(jak\s+)?funguje\s+(plateb|kart|limit|v[ýy]b[eě]r|mobil)", re.I), "card_how_it_works"),
+    (re.compile(r"(co\s+)?je\s+(to\s+)?(kredit|debet|limit|disponibil|z[ůu]statek)", re.I), "card_what_is"),
+    (re.compile(r"(jak\s+)?(m[ůu][žz]u|mohu|lze|jde)\s+(pou[žz][íi]t|platit|v[ýy]brat)", re.I), "card_usage_can_i"),
+    (re.compile(r"(pot[řr]ebuju|potrebuju|chci|mus[íi]m).*(kart|platit|limit)", re.I), "card_need_help"),
 )
 
 
@@ -97,15 +159,36 @@ def _identity_debug(retrieval_query: str) -> list[dict]:
         "faq_priority_used": False,
         "metadata_boost_reason": [],
         "rewritten_query": retrieval_query,
+        "authority_boost_used": False,
+        "stale_penalty_used": False,
     }]
 
 
-def _ux_meta(bucket: str, reason: str, *, clarification_required: bool = False, unsupported_reason: str | None = None) -> dict:
+def _ux_meta(
+    bucket: str,
+    reason: str,
+    *,
+    clarification_required: bool = False,
+    unsupported_reason: str | None = None,
+    confidence_factors: dict | None = None,
+) -> dict:
+    """Build UX metadata including confidence factors (Priority 4).
+
+    confidence_factors can include:
+      - authority_boost_used: bool  — document authority scoring applied
+      - stale_penalty_used: bool    — stale/archived docs penalized
+      - soft_guidance_used: bool    — soft guidance mode active
+      - retrieval_weak: bool        — no or low-confidence sources
+      - fallback_used: bool         — any fallback was triggered
+      - pricing_grounding: bool     — exact pricing row matched
+      - source_count: int           — number of unique sources
+    """
     return {
         "confidence_bucket": bucket,
         "confidence_reason": reason,
         "clarification_required": clarification_required,
         "unsupported_reason": unsupported_reason,
+        "confidence_factors": confidence_factors or {},
     }
 
 
@@ -115,22 +198,134 @@ def _debug_with_ux(rows: list[dict], ux: dict) -> list[dict]:
     return [{**row, **ux} for row in rows]
 
 
+def _empty_retrieval_resilience(profile, forced_category: str | None = None) -> tuple[str, str, dict]:
+    """Return (category, answer, ux_meta) for explicit empty retrieval semantics."""
+    supported = "supported_domain" in profile.labels or any(
+        label in profile.labels
+        for label in (
+            "pricing", "cards", "accounts", "payments", "mortgages", "investments",
+            "support", "product_overview", "account_overview", "card_overview",
+        )
+    )
+    category = forced_category or ("supported_but_missing_data" if supported else "unsupported_domain")
+    answer = RESILIENCE_RESPONSES[category]
+    ux = _ux_meta(
+        "low",
+        f"empty retrieval resilience: {category}",
+        unsupported_reason=category,
+        confidence_factors={
+            "retrieval_weak": True,
+            "fallback_used": True,
+            "source_count": 0,
+            "resilience_category": category,
+            "escalation_strategy": "ask_support_or_branch" if supported else "redirect_to_supported_scope",
+        },
+    )
+    return category, answer, ux
+
+
 def _is_ekonto_ambiguous_pricing(question: str) -> bool:
     q = (question or "").lower()
     return "ekonto" in q and any(k in q for k in ("kolik", "stoj", "poplatek", "vedení", "vedeni")) and not any(
-        k in q for k in ("osobní", "osobni", "podnikat", "firem", "firma", "osvč", "osvc")
+        k in q for k in ("osobní", "osobni", "smart", "komplet", "podnikat", "firem", "firma", "osvč", "osvc")
     )
 
 
 def _resolve_pending_clarification(question: str, context: dict | None) -> tuple[str, str, str] | None:
-    if not context or context.get("type") != "ekonto_pricing":
+    """Resolve a follow-up answer to a pending clarification.
+
+    Handles multiple clarification types beyond eKonto segment:
+    - ekonto_pricing → osobní/podnikatelské/firemní/student/premium/smart/komplet
+    - generic_account → personal/business/corporate/student
+    """
+    if not context:
         return None
+    ctype = context.get("type")
     q = (question or "").lower().strip()
-    if any(k in q for k in ("osob", "soukrom", "retail")):
-        return "Kolik stojí vedení osobního eKonta?", "osobní eKonto", "pricing"
-    if any(k in q for k in ("podnik", "osvč", "osvc", "firma", "firem")):
-        return "Kolik stojí vedení podnikatelského eKonta?", "podnikatelské eKonto", "pricing"
+
+    if ctype == "ekonto_pricing":
+        target, product_label = _clarification_answer_interpreter(q, "ekonto")
+        if target:
+            query_text = _clarification_query(product_label, "ekonto")
+            return query_text, product_label, "pricing"
+        return None
+
+    if ctype == "generic_account":
+        target, product_label = _clarification_answer_interpreter(q, "account")
+        if target:
+            query_text = _clarification_query(product_label, "account")
+            return query_text, product_label, "pricing"
+        return None
+
     return None
+
+
+def _clarification_query(product_label: str, context_type: str) -> str:
+    """Build a grammatically correct rewritten query from product label and context."""
+    label = product_label.lower()
+    if context_type == "ekonto":
+        if "osobní" in label:
+            return "Kolik stojí vedení osobního eKonta?"
+        if "podnikatelské" in label:
+            return "Kolik stojí vedení podnikatelského eKonta?"
+        if "smart" in label:
+            return "Kolik stojí vedení eKonto SMART?"
+        if "komplet" in label:
+            return "Kolik stojí vedení eKonto KOMPLET?"
+        if "výhody" in label or "prémium" in label:
+            return "Kolik stojí vedení eKonto Výhody Prémium?"
+        if "student" in label:
+            return "Kolik stojí vedení eKonto STUDENT?"
+        return f"Kolik stojí vedení {product_label}?"
+    if context_type == "account":
+        if "osobní" in label:
+            return "Jaký je poplatek za vedení osobního účtu?"
+        if "podnikatelský" in label:
+            return "Jaký je poplatek za vedení podnikatelského účtu?"
+        if "studentský" in label:
+            return "Jaký je poplatek za vedení studentského účtu?"
+        return f"Jaký je poplatek za vedení {product_label}?"
+    return f"Kolik stojí {product_label}?"
+
+
+def _clarification_answer_interpreter(answer: str, context_type: str) -> tuple[str | None, str]:
+    """Interpret a user's clarification answer and return (target_canonical, product_label).
+
+    Context types:
+      - "ekonto": resolve eKonto variant
+      - "account": resolve generic account type
+
+    Returns (None, original_answer) if no match found.
+    """
+    a = answer.strip().lower()
+
+    # --- eKonto variants ---
+    if context_type == "ekonto":
+        if any(k in a for k in ("osob", "soukrom", "retail")):
+            return "ekonto_osobni", "osobní eKonto"
+        if any(k in a for k in ("podnik", "osvč", "osvc", "firma", "firem")):
+            return "ekonto_podnikatelske", "podnikatelské eKonto"
+        if "smart" in a or "chytry" in a:
+            return "ekonto_osobni", "eKonto SMART"
+        if "komplet" in a:
+            return "ekonto_osobni", "eKonto KOMPLET"
+        if "premium" in a or "vyhody" in a:
+            return "ekonto_osobni", "eKonto Výhody Prémium"
+        if "student" in a:
+            return "ekonto_osobni", "eKonto STUDENT"
+        return None, a
+
+    # --- Generic account types ---
+    if context_type == "account":
+        if any(k in a for k in ("osob", "soukrom", "retail")):
+            return "osobni_ucet", "osobní účet"
+        if any(k in a for k in ("podnik", "osvč", "osvc", "firma", "firem")):
+            return "podnikatelsky_ucet", "podnikatelský účet"
+        if "student" in a:
+            return "osobni_ucet", "studentský účet"
+        return None, a
+
+    return None, a
 
 
 def _guided_flow_intent(question: str) -> str | None:
@@ -145,6 +340,15 @@ def _unsupported_intent(question: str) -> str | None:
     if any(k in q for k in ("krypto", "bitcoin", "ethereum", "nft")):
         return "unsupported_crypto"
     return None
+
+
+def _comparison_intent(question: str) -> bool:
+    """Detect whether the question has a comparison intent."""
+    if not question:
+        return False
+    q = question.lower()
+    from src.generation.comparison_engine import COMPARISON_KEYWORDS
+    return any(kw in q for kw in COMPARISON_KEYWORDS) and len(q) > 15
 
 
 def _guided_flow_answer(intent: str) -> str:
@@ -185,6 +389,119 @@ def _guided_flow_answer(intent: str) -> str:
         ),
     }
     return flows[intent]
+
+
+# --- Priority 3: Procedural flow answer formatters ---
+
+PROCEDURAL_FLOW_ANSWERS: dict[str, str] = {
+    "activation_flow": (
+        "Aktivace karty obvykle probíhá takto:\n"
+        "1. Novou kartu aktivujte v internetovém nebo mobilním bankovnictví RB.\n"
+        "2. Postupujte podle pokynů v aplikaci — obvykle stačí potvrdit aktivaci.\n"
+        "3. Po aktivaci je karta ihned připravena k použití.\n"
+        "4. U bezkontaktních karet lze platit bez zadání PINu do částky 500 Kč.\n\n"
+        "Pokud máte s aktivací potíže, kontaktujte zákaznickou podporu RB."
+    ),
+    "card_limit_flow": (
+        "Změnu limitu karty můžete řešit takto:\n"
+        "1. V internetovém nebo mobilním bankovnictví zkontrolujte aktuální limit.\n"
+        "2. Pokud potřebujete limit navýšit, zažádejte o změnu v bankovnictví.\n"
+        "3. U bezhotovostních plateb a výběrů z bankomatu platí zpravidla oddělené limity.\n"
+        "4. Pro konkrétní limity a podmínky doporučuji zkontrolovat smluvní dokumentaci.\n\n"
+        "Konkrétní výše limitu závisí na typu karty a bonitě klienta."
+    ),
+    "mobile_wallet_flow": (
+        "Použití karty v mobilu je možné přes Apple Pay (iPhone) nebo Google Pay (Android):\n"
+        "1. Přidejte svou platební kartu do aplikace Peněženka (Wallet) v telefonu.\n"
+        "2. Postupujte podle pokynů — obvykle stačí naskenovat kartu nebo zadat údaje.\n"
+        "3. Aktivaci potvrďte kódem z SMS nebo v bankovní aplikaci.\n"
+        "4. Poté můžete platit mobilem na všech bezkontaktních terminálech.\n\n"
+        "Apple Pay a Google Pay jsou v ČR široce akceptovány."
+    ),
+    "abroad_card_usage": (
+        "Použití karty v zahraničí:\n"
+        "1. Kartu Raiffeisenbank lze použít ve většině zemí světa.\n"
+        "2. Platby v cizí měně jsou přepočteny kurzem banky s případným poplatkem.\n"
+        "3. Výběry z bankomatů v zahraničí mohou být zpoplatněny podle ceníku.\n"
+        "4. Pro platby v eurech v SEPA prostoru jsou poplatky obvykle nižší.\n\n"
+        "Doporučuji před cestou zkontrolovat aktuální poplatky v ceníku RB."
+    ),
+    "card_brand_overview": (
+        "Raiffeisenbank vydává platební karty ve spolupráci se společnostmi "
+        "Mastercard a Visa. Konkrétní značka závisí na typu karty:\n"
+        "- Debetní karty k běžnému účtu mohou být Mastercard nebo Visa.\n"
+        "- Kreditní karty jsou často Mastercard.\n"
+        "- Virtuální karty a mobilní platby využívají stejnou značku.\n\n"
+        "Obě značky jsou celosvětově akceptovány — Mastercard i Visa fungují "
+        "v ČR i v zahraničí."
+    ),
+}
+
+
+def _procedural_flow_intent(question: str) -> str | None:
+    for pattern, intent in PROCEDURAL_FLOW_PATTERNS:
+        if pattern.search(question or ""):
+            return intent
+    return None
+
+
+def _procedural_flow_answer(intent: str) -> str:
+    if intent in PROCEDURAL_FLOW_ANSWERS:
+        return PROCEDURAL_FLOW_ANSWERS[intent]
+    return UNSUPPORTED_RESPONSE
+
+
+# --- Priority 2: Soft guidance formatters ---
+
+SOFT_GUIDANCE_ANSWERS: dict[str, str] = {
+    "card_how_it_works": (
+        "Platební karta funguje tak, že umožňuje bezhotovostní platby "
+        "a výběry z bankomatu. Každá karta je navázána na váš účet "
+        "(debetní karta čerpá z disponibilního zůstatku, kreditní karta "
+        "čerpá z úvěrového limitu). Karta je chráněna PIN kódem, "
+        "u bezkontaktních plateb do 500 Kč PIN nepotřebujete.\n\n"
+        "Pro podrobnější informace o poplatcích a limitech doporučuji "
+        "zkontrolovat ceník RB nebo detail vašeho produktu."
+    ),
+    "card_what_is": (
+        "Základní pojmy u platebních karet:\n"
+        "- Debetní karta: karta napojená na běžný účet, platíte jen "
+        "z vlastních peněz na účtu.\n"
+        "- Kreditní karta: karta s úvěrovým limitem, peníze půjčuje "
+        "banka a vy je splácíte.\n"
+        "- Limit karty: maximální částka, kterou můžete kartou zaplatit "
+        "nebo vybrat v určitém období.\n"
+        "- Disponibilní zůstatek: volné prostředky na účtu k dispozici.\n\n"
+        "Konkrétní parametry se liší podle typu produktu."
+    ),
+    "card_usage_can_i": (
+        "Ano, kartu Raiffeisenbank můžete běžně používat k platbám "
+        "v obchodech, online, v zahraničí i k výběrům z bankomatu. "
+        "Limity se liší podle typu karty a nastavení v bankovnictví.\n\n"
+        "Pro konkrétní dotaz doporučuji zkontrolovat podmínky vašeho "
+        "produktu nebo kontaktovat podporu RB."
+    ),
+    "card_need_help": (
+        "Rád vám pomůžu. Pokud jde o platební kartu, můžete zjistit "
+        "informace o limitech, poplatcích, použití v zahraničí nebo "
+        "aktivaci v internetovém bankovnictví RB.\n\n"
+        "Upřesněte prosím, s čím konkrétně potřebujete poradit – "
+        "např. aktivace karty, limit, mobilní platby nebo blokace."
+    ),
+}
+
+
+def _soft_guidance_intent(question: str) -> str | None:
+    for pattern, intent in SOFT_GUIDANCE_FAQ_PATTERNS:
+        if pattern.search(question or ""):
+            return intent
+    return None
+
+
+def _soft_guidance_answer(intent: str) -> str | None:
+    if intent in SOFT_GUIDANCE_ANSWERS:
+        return SOFT_GUIDANCE_ANSWERS[intent]
+    return None
 
 
 def _ambiguity_intent(question: str) -> str | None:
@@ -258,6 +575,15 @@ def extract_structured_pricing_answer(doc: Document) -> dict | None:
         "fee_type": fee_type or "Poplatek",
         "fee_value": fee_value,
         "period": str(md.get("period") or "").strip(),
+        "conditional_pricing_detected": md.get("conditional_pricing_detected") is True,
+        "base_price": md.get("base_price"),
+        "conditional_price": md.get("conditional_price"),
+        "condition_type": md.get("condition_type"),
+        "condition_text": md.get("condition_text"),
+        "pricing_logic": md.get("pricing_logic"),
+        "tiers": md.get("tiers") or [],
+        "currency": md.get("currency") or md.get("normalized_currency") or "CZK",
+        "billing_period": md.get("normalized_billing_period"),
         "source_url": source_url,
         "source_label": file_name,
         "title": str(md.get("title") or "Ceník Raiffeisenbank").strip(),
@@ -293,6 +619,190 @@ def _format_structured_pricing_answer(data: dict) -> str:
         f"{fee_line}\n"
         f"Zdroj: {data['source_label']}{page}"
         + (f"\nURL: {data['source_url']}" if data.get("source_url") else "")
+    )
+
+
+# ---------------------------------------------------------------------------
+# Graceful degradation helpers (P1 — Pricing → Overview fallback)
+# ---------------------------------------------------------------------------
+
+
+def _has_real_pricing_docs(source_docs: list[Document], structured_docs: list[Document]) -> bool:
+    """Check if there are real (non-warning) pricing documents available."""
+    for doc in structured_docs:
+        if not doc.metadata.get("pricing_warning", False):
+            return True
+    for doc in source_docs:
+        if doc.metadata.get("document_type") == "pricing" and not doc.metadata.get("pricing_warning", False):
+            return True
+    return False
+
+
+def _detect_product_for_degradation(
+    source_docs: list[Document],
+    query_profile: object,
+    session_debug: dict,
+) -> str | None:
+    """Detect the most likely product ID for overview fallback.
+
+    Resolution order:
+      1. Session context (resolved_product from previous turn)
+      2. Query profile labels → product domain map
+      3. Source doc product_name (non-warning)
+      4. Canonical product label from pricing retrieval metadata
+      5. Debug info from session
+    """
+    # 1. Session context (most reliable)
+    resolved = session_debug.get("resolved_product") or session_debug.get("inherited_product")
+    if resolved and get_product(resolved):
+        return resolved
+
+    # 2. Query labels → product domain map
+    label_product_map = {
+        "osobni_ucty": "ekonto_osobni",
+        "kreditni_karty": "kreditni_karta",
+        "hypoteky": "hypoteky",
+        "investice": "investice",
+        "rb_klic": "rb_klic",
+        "sepa_swift": "sepa_swift",
+        "apple_google_pay": "apple_google_pay",
+        "cards": "debetni_karta",
+        "pujcky": "pujcky",
+        "sporeni": "sporeni",
+    }
+    labels = getattr(query_profile, "labels", set()) or set()
+    for label in labels:
+        pid = label_product_map.get(label)
+        if pid and get_product(pid):
+            return pid
+
+    # 3. Source doc product_name (skip warning docs)
+    for doc in source_docs:
+        pname = doc.metadata.get("product_name", "")
+        if pname and pname not in ("Upozornění", "Upřesnění", ""):
+            # Try direct product match
+            if pname in PRODUCT_REGISTRY:
+                return pname
+            # Try canonical label match
+            product = find_product_by_canonical_label(pname)
+            if product:
+                return product.product_id
+
+    # 4. Canonical from pricing debug metadata
+    for doc in source_docs:
+        debug = doc.metadata.get("retrieval_debug", {}) or {}
+        canonical = debug.get("canonical_product", "")
+        if canonical:
+            product = find_product_by_canonical_label(canonical)
+            if product:
+                return product.product_id
+
+    return None
+
+
+def _build_overview_fallback_response(
+    product_id: str,
+    question: str,
+    source_docs: list[Document],
+    retrieval_query: str,
+    retrieval_ms: float,
+    t_ask: float,
+) -> dict:
+    """Build a graceful degradation response with overview fallback instead of dead-end warning."""
+    overview = generate_overview_fallback(product_id, question)
+    cs = resolve_confidence_semantics(
+        "overview_fallback",
+        reason=f"Přesměrováno z ceníku na popis produktu {product_id}",
+    )
+
+    total_ms = (time.perf_counter() - t_ask) * 1000
+    logger.info(
+        f"Answer strategy: overview_fallback (graceful degradation from pricing; "
+        f"product={product_id})"
+    )
+
+    return {
+        "answer": overview,
+        "sources": source_docs,
+        "rewritten_query": retrieval_query,
+        "answer_strategy": "overview_fallback",
+        "answer_confidence": cs.bucket,
+        "confidence_origin": cs.origin,
+        "degraded_answer": cs.degraded,
+        "confidence_semantic_label": cs.semantic_label,
+        "confidence_origin_label": cs.origin_label,
+        "retrieval_debug": None,
+        **ux_meta_from_semantics(cs, clarification_required=False, unsupported_reason=None),
+        "timing_ms": {"retrieval": round(retrieval_ms), "total": round(total_ms), "llm": 0},
+    }
+
+
+def ux_meta_from_semantics(
+    cs: ConfidenceSemantics,
+    clarification_required: bool = False,
+    unsupported_reason: str | None = None,
+) -> dict:
+    """Build the _ux_meta style dict from ConfidenceSemantics."""
+    return {
+        "confidence_bucket": cs.bucket,
+        "confidence_reason": cs.reason,
+        "confidence_origin": cs.origin,
+        "confidence_origin_label": cs.origin_label,
+        "confidence_semantic_label": cs.semantic_label,
+        "degraded_answer": cs.degraded,
+        "clarification_required": clarification_required,
+        "unsupported_reason": unsupported_reason,
+        "confidence_factors": {
+            "confidence_origin": cs.origin,
+            "degraded_answer": cs.degraded,
+        },
+    }
+
+
+def _enrich_return_with_semantics(return_dict: dict) -> dict:
+    """Add confidence semantics fields to any return dict that lacks them.
+
+    Handles both _ux_meta style (confidence_bucket) and enriched style.
+    Safe to call on any return — no-ops if fields already present.
+    """
+    if "confidence_origin" in return_dict:
+        return return_dict  # Already enriched
+
+    strategy = return_dict.get("answer_strategy", "generic_llm")
+    bucket = return_dict.get("confidence_bucket")
+    reason = return_dict.get("confidence_reason", "")
+    cs = resolve_confidence_semantics(strategy, bucket=bucket, reason=reason)
+
+    return_dict["confidence_origin"] = cs.origin
+    return_dict["confidence_origin_label"] = cs.origin_label
+    return_dict["confidence_semantic_label"] = cs.semantic_label
+    return_dict["degraded_answer"] = cs.degraded
+    return return_dict
+
+
+def _enrich_dead_end_answer(answer_text: str, product_id: str | None = None) -> str:
+    """If an answer is a dead-end (unsupported/warning only), append an actionable
+    recommendation instead of leaving the user with a dead-end state."""
+    dead_end_markers = [
+        "nepodařilo se najít jednoznačný",
+        "nenalezl jsem",
+        "nenašel jsem",
+        "kontaktujte zákaznickou linku",
+        "nedokážu odpovědět",
+        "nemám dostatek informací",
+    ]
+    if not any(marker in answer_text.lower() for marker in dead_end_markers):
+        return answer_text
+
+    if product_id:
+        product = get_product(product_id)
+        if product:
+            return f"{answer_text}\n\n{product.cta_text}"
+
+    return (
+        f"{answer_text}\n\n"
+        f"Doporučujeme ověřit informaci v internetovém bankovnictví, "
+        f"na pobočce nebo na zákaznické lince Raiffeisenbank."
     )
 
 
@@ -637,6 +1147,25 @@ def format_structured_pricing_answer(docs: list[Document], max_products: int = 3
         parts.append(f"{product}:")
         seen_lines: set[str] = set()
         for row in rows[:3]:
+            conditional = format_conditional_fee(row)
+            if conditional:
+                for idx, conditional_line in enumerate(conditional.splitlines()):
+                    line = conditional_line if idx == 0 else conditional_line
+                    if line not in seen_lines:
+                        parts.append(line)
+                        seen_lines.add(line)
+                for tier_line in format_tiered_pricing(row):
+                    if tier_line not in seen_lines:
+                        parts.append(tier_line)
+                        seen_lines.add(tier_line)
+                continue
+            tier_lines = format_tiered_pricing(row)
+            if tier_lines:
+                for tier_line in tier_lines:
+                    if tier_line not in seen_lines:
+                        parts.append(tier_line)
+                        seen_lines.add(tier_line)
+                continue
             line = f"* {_clean_fee_label(row['fee_type'])}: {_format_value_with_period(row['fee_value'], row.get('period', ''))}"
             if line not in seen_lines:
                 parts.append(line)
@@ -737,6 +1266,38 @@ class AnthropicLLM:
         )
 
         return response.content[0].text
+
+    def stream(self, messages: list[BaseMessage]) -> Generator[str, None, None]:
+        """Streaming variant of invoke(). Yields text tokens as they arrive."""
+        system_text = ""
+        anthropic_messages: list[dict] = []
+
+        for msg in messages:
+            if isinstance(msg, SystemMessage):
+                system_text = msg.content
+            elif isinstance(msg, HumanMessage):
+                anthropic_messages.append({"role": "user", "content": msg.content})
+            elif isinstance(msg, AIMessage):
+                anthropic_messages.append({"role": "assistant", "content": msg.content})
+
+        system_param = (
+            [{"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}]
+            if system_text
+            else None
+        )
+
+        with self._client.messages.create(
+            model=self._model,
+            max_tokens=self._max_tokens,
+            temperature=self._temperature,
+            system=system_param,
+            messages=anthropic_messages,
+            stream=True,
+        ) as stream:
+            for event in stream:
+                if event.type == "content_block_delta":
+                    if event.delta.type == "text_delta":
+                        yield event.delta.text
 
 
 # ---------------------------------------------------------------------------
@@ -894,6 +1455,36 @@ class GeminiLLM:
 
         return response.text
 
+    def stream(self, messages: list[BaseMessage]) -> Generator[str, None, None]:
+        """Streaming variant of invoke(). Yields text tokens as they arrive."""
+        from google.genai import types
+
+        system_text = ""
+        contents: list[dict] = []
+
+        for msg in messages:
+            if isinstance(msg, SystemMessage):
+                system_text = msg.content
+            elif isinstance(msg, HumanMessage):
+                contents.append({"role": "user", "parts": [{"text": msg.content}]})
+            elif isinstance(msg, AIMessage):
+                contents.append({"role": "model", "parts": [{"text": msg.content}]})
+
+        generation_config = types.GenerateContentConfig(
+            system_instruction=system_text or None,
+            max_output_tokens=self._max_tokens,
+            temperature=self._temperature,
+        )
+
+        stream = self._client.models.generate_content_stream(
+            model=self._model,
+            contents=contents,
+            config=generation_config,
+        )
+        for chunk in stream:
+            if chunk.text:
+                yield chunk.text
+
 
 # ---------------------------------------------------------------------------
 # OpenAI LLM wrapper
@@ -1040,6 +1631,72 @@ class OpenAILLM:
             "OpenAILLM: všechny pokusy selhaly (primary + fallback)"
         )
 
+    def stream(self, messages: list[BaseMessage]) -> Generator[str, None, None]:
+        """Streaming variant of invoke(). Yields text tokens as they arrive.
+
+        Falls back to non-streaming invoke for retry cases (rate-limit, API errors)
+        to maintain reliability — the fallback response is yielded as one token.
+        """
+        from openai import APIStatusError, RateLimitError
+
+        openai_messages: list[dict] = []
+        for msg in messages:
+            if isinstance(msg, SystemMessage):
+                openai_messages.append({"role": "system", "content": msg.content})
+            elif isinstance(msg, HumanMessage):
+                openai_messages.append({"role": "user", "content": msg.content})
+            elif isinstance(msg, AIMessage):
+                openai_messages.append({"role": "assistant", "content": msg.content})
+
+        models_to_try = [self._model]
+        if self._fallback_model and self._fallback_model != self._model:
+            models_to_try.append(self._fallback_model)
+
+        last_error: Exception | None = None
+
+        for attempt, model in enumerate(models_to_try):
+            try:
+                stream = self._client.chat.completions.create(
+                    model=model,
+                    messages=openai_messages,
+                    max_tokens=self._max_tokens,
+                    temperature=self._temperature,
+                    stream=True,
+                )
+                for chunk in stream:
+                    delta = chunk.choices[0].delta.content or ""
+                    if delta:
+                        yield delta
+                if attempt > 0:
+                    logger.warning(
+                        f"OpenAI stream fallback úspěšný: {self._model} → {model}"
+                    )
+                return  # success
+
+            except (RateLimitError, APIStatusError) as e:
+                last_error = e
+                logger.warning(f"OpenAI stream error ({model}): {e}")
+                if model == self._model and self._fallback_model:
+                    logger.info(f"⤴ Stream fallback na {self._fallback_model}")
+                    continue
+                # Last resort: yield full invoke response as one token
+                logger.warning("Stream fallback vyčerpán — vracím full invoke")
+                yield self.invoke(messages)
+                return
+
+            except Exception as e:
+                last_error = e
+                logger.warning(f"OpenAI stream neočekávaná chyba ({model}): {e}")
+                if model == self._model and self._fallback_model:
+                    logger.info(f"⤴ Stream fallback na {self._fallback_model}")
+                    continue
+                yield self.invoke(messages)
+                return
+
+        # All models failed — yield full invoke as last resort
+        logger.error("OpenAI stream: všechny modely selhaly, fallback na invoke")
+        yield self.invoke(messages)
+
 
 # ---------------------------------------------------------------------------
 # Factory – výběr backendu dle konfigurace
@@ -1141,6 +1798,20 @@ class BankingRAGChain:
         self.clarification_context: dict | None = None
         self.resolved_product: str | None = None
         self.resolved_intent: str | None = None
+        # Priority 4: Semantic session context
+        self.session_context: dict[str, str | None] = {
+            "current_domain": None,
+            "current_product": None,
+            "current_intent": None,
+            "last_clarification": None,
+            "resolved_product": None,
+            "resolved_segment": None,
+        }
+        # Conversational entity memory (P1 — clarification resolution)
+        self.unresolved_product: str | None = None
+        self.unresolved_product_type: str | None = None
+        self.clarification_candidates: list[str] | None = None
+        self.last_canonical_product: str | None = None
 
         self._llm = _build_llm()
         self._retriever = BankingRetriever()
@@ -1190,6 +1861,8 @@ class BankingRAGChain:
               - rewritten_query (str): Přeformulovaný dotaz (pokud se liší)
         """
         t_ask = time.perf_counter()
+        # Priority 4: Initialize session debug (populated by post-processing)
+        self._session_debug: dict[str, Any] = {}
 
         # 0. System/orchestration intents are evaluated on the raw user turn so
         # conversational query rewriting cannot contaminate assistant identity or
@@ -1199,6 +1872,10 @@ class BankingRAGChain:
             retrieval_query, self.resolved_product, self.resolved_intent = raw_resolved
             self.pending_clarification = None
             self.clarification_context = None
+            # Store resolved product in entity memory for follow-up continuity
+            self.last_canonical_product = raw_resolved[1]
+            self.unresolved_product = None
+            self.clarification_candidates = None
         elif _identity_intent(question):
             total_ms = (time.perf_counter() - t_ask) * 1000
             ux = _ux_meta("high", "deterministic assistant identity route")
@@ -1226,6 +1903,24 @@ class BankingRAGChain:
                     "guided_flow": raw_guided_intent,
                 }], ux),
                 "answer_strategy": "guided_flow_direct",
+                "answer_confidence": "medium",
+                **ux,
+                "timing_ms": {"retrieval": 0, "total": round(total_ms), "llm": 0},
+            }
+        elif (raw_procedural_intent := _procedural_flow_intent(question)):
+            answer = _procedural_flow_answer(raw_procedural_intent)
+            total_ms = (time.perf_counter() - t_ask) * 1000
+            ux = _ux_meta("medium", f"deterministic procedural flow for {raw_procedural_intent}", confidence_factors={"authority_boost_used": True, "soft_guidance_used": True})
+            return {
+                "answer": answer,
+                "sources": [],
+                "rewritten_query": question,
+                "retrieval_debug": _debug_with_ux([{
+                    "retrieval_route": "procedural_flow",
+                    "retrieval_skipped": True,
+                    "procedural_flow": raw_procedural_intent,
+                }], ux),
+                "answer_strategy": "procedural_flow_direct",
                 "answer_confidence": "medium",
                 **ux,
                 "timing_ms": {"retrieval": 0, "total": round(total_ms), "llm": 0},
@@ -1288,6 +1983,9 @@ class BankingRAGChain:
         if _is_ekonto_ambiguous_pricing(retrieval_query):
             self.pending_clarification = "ekonto_pricing"
             self.clarification_context = {"type": "ekonto_pricing", "original_query": retrieval_query}
+            self.unresolved_product = "ekonto"
+            self.unresolved_product_type = "pricing"
+            self.clarification_candidates = ["osobní eKonto (osobní)", "podnikatelské eKonto (podnikatelské)", "eKonto SMART (smart)", "eKonto KOMPLET (komplet)"]
             total_ms = (time.perf_counter() - t_ask) * 1000
             ux = _ux_meta("medium", "ambiguous eKonto product requires product segment clarification", clarification_required=True)
             return {
@@ -1299,6 +1997,8 @@ class BankingRAGChain:
                     "retrieval_skipped": True,
                     "pending_clarification": self.pending_clarification,
                     "clarification_context": self.clarification_context,
+                    "unresolved_product": self.unresolved_product,
+                    "clarification_candidates": self.clarification_candidates,
                 }], ux),
                 "answer_strategy": "clarification_direct",
                 "answer_confidence": "medium",
@@ -1321,6 +2021,27 @@ class BankingRAGChain:
                     "guided_flow": guided_intent,
                 }], ux),
                 "answer_strategy": "guided_flow_direct",
+                "answer_confidence": "medium",
+                **ux,
+                "timing_ms": {"retrieval": 0, "total": round(total_ms), "llm": 0},
+            }
+
+        # Priority 3: Procedural flow routing (after guided flow, before unsupported).
+        procedural_intent = _procedural_flow_intent(retrieval_query)
+        if procedural_intent:
+            answer = _procedural_flow_answer(procedural_intent)
+            total_ms = (time.perf_counter() - t_ask) * 1000
+            ux = _ux_meta("medium", f"deterministic procedural flow for {procedural_intent}", confidence_factors={"authority_boost_used": True, "soft_guidance_used": True})
+            return {
+                "answer": answer,
+                "sources": [],
+                "rewritten_query": retrieval_query,
+                "retrieval_debug": _debug_with_ux([{
+                    "retrieval_route": "procedural_flow",
+                    "retrieval_skipped": True,
+                    "procedural_flow": procedural_intent,
+                }], ux),
+                "answer_strategy": "procedural_flow_direct",
                 "answer_confidence": "medium",
                 **ux,
                 "timing_ms": {"retrieval": 0, "total": round(total_ms), "llm": 0},
@@ -1369,9 +2090,70 @@ class BankingRAGChain:
                 "timing_ms": {"retrieval": 0, "total": round(total_ms), "llm": 0},
             }
 
+        # Priority 1e: Comparison routing (pre-retrieval, deterministic).
+        comparison_intent = _comparison_intent(retrieval_query)
+        if comparison_intent:
+            from src.generation.comparison_engine import (
+                detect_comparison_entities,
+                format_comparison_answer,
+            )
+            from src.generation.constants import RouteStrategy
+            entities = detect_comparison_entities(retrieval_query)
+            if entities:
+                answer = format_comparison_answer(entities)
+                if answer:
+                    total_ms = (time.perf_counter() - t_ask) * 1000
+                    ux = _ux_meta("medium", "deterministic comparison answer from product registry")
+                    logger.info(f"Answer strategy: {RouteStrategy.COMPARISON_DIRECT} ({' vs '.join(entities)})")
+                    return {
+                        "answer": answer,
+                        "sources": [],
+                        "rewritten_query": retrieval_query,
+                        "retrieval_debug": _debug_with_ux([{
+                            "retrieval_route": "comparison",
+                            "comparison_entities": entities,
+                            "retrieval_skipped": True,
+                        }], ux),
+                        "answer_strategy": RouteStrategy.COMPARISON_DIRECT,
+                        "answer_confidence": "medium",
+                        **ux,
+                        "timing_ms": {"retrieval": 0, "total": round(total_ms), "llm": 0},
+                    }
+
         # 2. Retrieval
         t_retrieval = time.perf_counter()
-        source_docs: list[Document] = self._retriever.invoke(retrieval_query)
+        try:
+            source_docs: list[Document] = self._retriever.invoke(retrieval_query)
+        except TimeoutError:
+            retrieval_ms = (time.perf_counter() - t_retrieval) * 1000
+            total_ms = (time.perf_counter() - t_ask) * 1000
+            ux = _ux_meta(
+                "low",
+                "empty retrieval resilience: retrieval_timeout",
+                unsupported_reason="retrieval_timeout",
+                confidence_factors={
+                    "retrieval_weak": True,
+                    "fallback_used": True,
+                    "source_count": 0,
+                    "resilience_category": "retrieval_timeout",
+                    "escalation_strategy": "retry_or_contact_support",
+                },
+            )
+            return {
+                "answer": RESILIENCE_RESPONSES["retrieval_timeout"],
+                "sources": [],
+                "rewritten_query": retrieval_query,
+                "retrieval_debug": _debug_with_ux([{
+                    "retrieval_route": "unsupported",
+                    "retrieval_skipped": False,
+                    "resilience_category": "retrieval_timeout",
+                    "resilience_strategy": "timeout_safe_fallback",
+                }], ux),
+                "answer_strategy": "retrieval_timeout_fallback",
+                "answer_confidence": "low",
+                **ux,
+                "timing_ms": {"retrieval": round(retrieval_ms), "total": round(total_ms), "llm": 0},
+            }
         retrieval_ms = (time.perf_counter() - t_retrieval) * 1000
 
         if not source_docs:
@@ -1401,21 +2183,103 @@ class BankingRAGChain:
                         **ux,
                         "timing_ms": {"retrieval": round(retrieval_ms), "total": round(total_ms), "llm": 0},
                     }
-            answer = UNSUPPORTED_RESPONSE
-            ux = _ux_meta("low", "retrieval returned no source documents", unsupported_reason="no_retrieval_sources")
+            # Priority 2: Soft guidance — for common FAQ/procedural queries with
+            # weak retrieval, still provide a safe answer instead of unsupported.
+            soft_intent = _soft_guidance_intent(retrieval_query)
+            if soft_intent:
+                soft_answer = _soft_guidance_answer(soft_intent)
+                if soft_answer:
+                    total_ms = (time.perf_counter() - t_ask) * 1000
+                    ux = _ux_meta("medium", f"soft guidance for {soft_intent} (retrieval empty)", confidence_factors={"authority_boost_used": True, "soft_guidance_used": True, "retrieval_weak": True, "fallback_used": True, "source_count": 0})
+                    logger.info(f"Answer strategy: soft_guidance_direct ({soft_intent}, retrieval empty)")
+                    return {
+                        "answer": soft_answer,
+                        "sources": [],
+                        "rewritten_query": retrieval_query,
+                        "answer_strategy": "soft_guidance_direct",
+                        "answer_confidence": "medium",
+                        "retrieval_debug": _debug_with_ux([{
+                            "retrieval_route": "soft_guidance",
+                            "retrieval_skipped": False,
+                            "soft_guidance_intent": soft_intent,
+                            "retrieval_soft_fail": True,
+                            "rewritten_query": retrieval_query,
+                        }], ux),
+                        **ux,
+                        "timing_ms": {"retrieval": round(retrieval_ms), "total": round(total_ms), "llm": 0},
+                    }
+            last_governance_meta = getattr(self._retriever, "last_governance_meta", {}) or {}
+            forced_category = None
+            if (
+                last_governance_meta.get("resilience_strategy") == "governance_suppressed"
+                or (
+                    last_governance_meta.get("retrieval_collapse_detected")
+                    and int(last_governance_meta.get("governance_removed_count") or 0) > 0
+                )
+            ):
+                forced_category = "governance_suppressed"
+            category, answer, ux = _empty_retrieval_resilience(classify_query(retrieval_query), forced_category=forced_category)
             return {
                 "answer": answer,
                 "sources": [],
                 "rewritten_query": retrieval_query,
-                "retrieval_debug": _debug_with_ux([{"retrieval_route": "unsupported", "retrieval_skipped": False}], ux),
-                "answer_strategy": "fallback_no_answer",
+                "retrieval_debug": _debug_with_ux([{
+                    "retrieval_route": "unsupported" if category == "unsupported_domain" else "supported_missing_data",
+                    "retrieval_skipped": False,
+                    "resilience_category": category,
+                    "resilience_strategy": category,
+                    "final_source_count": 0,
+                    "governance_removed_count": last_governance_meta.get("governance_removed_count"),
+                    "governance_suppressed_count": last_governance_meta.get("suppressed_count"),
+                    "retrieval_collapse_detected": last_governance_meta.get("retrieval_collapse_detected"),
+                }], ux),
+                "answer_strategy": f"{category}_fallback",
                 "answer_confidence": "low",
                 **ux,
             }
 
         top_doc = source_docs[0]
         structured_docs = _structured_pricing_docs(source_docs)
+
+        if top_doc.metadata.get("pricing_safe_fallback") is True:
+            total_ms = (time.perf_counter() - t_ask) * 1000
+            answer_text = str(top_doc.page_content or top_doc.metadata.get("fee_type") or "").strip()
+            ux = _ux_meta(
+                "low",
+                "safe pricing fallback: pricing docs exist but no explicit canonical row",
+                confidence_factors={
+                    "pricing_grounding": False,
+                    "pricing_row_found": False,
+                    "pricing_canonical_used": top_doc.metadata.get("pricing_canonical_used", False),
+                    "source_count": len(source_docs),
+                },
+            )
+            logger.info("Answer strategy: pricing_safe_fallback (LLM skipped)")
+            return {
+                "answer": answer_text,
+                "sources": source_docs,
+                "rewritten_query": retrieval_query,
+                "answer_strategy": "pricing_safe_fallback",
+                "answer_confidence": "low",
+                "retrieval_debug": _debug_with_ux(self._retrieval_debug(source_docs, "pricing_safe_fallback"), ux),
+                **ux,
+                "timing_ms": {"retrieval": round(retrieval_ms), "total": round(total_ms), "llm": 0},
+            }
+
+        # Priority 4: Session context — inherit from previous turn for short follow-ups
+        inherited_product, inherited_intent = self._check_session_inheritance(retrieval_query)
+        if inherited_product or inherited_intent:
+            logger.info(
+                f"Session context inherited: product={inherited_product}, intent={inherited_intent}"
+            )
+
         query_profile = classify_query(retrieval_query)
+        # Update session context with current query profile
+        self._update_session_context(query_profile)
+        session_debug = self._get_session_debug(inherited_product, inherited_intent)
+        # Store session debug on instance so main.py reads it after ask() returns
+        self._session_debug = session_debug
+
         if "card_overview" in query_profile.labels:
             overview_answer = _format_card_overview_answer(source_docs)
             if overview_answer:
@@ -1561,6 +2425,33 @@ class BankingRAGChain:
                     **ux,
                     "timing_ms": {"retrieval": round(retrieval_ms), "total": round(total_ms), "llm": 0},
                 }
+        # Priority 2: Soft guidance route — if the query matches a known
+        # FAQ/low-risk pattern, use a safe deterministic answer instead of
+        # relying on weak retrieval + LLM generation.
+        soft_intent = _soft_guidance_intent(retrieval_query)
+        if soft_intent and "pricing" not in query_profile.labels:
+            soft_answer = _soft_guidance_answer(soft_intent)
+            if soft_answer:
+                total_ms = (time.perf_counter() - t_ask) * 1000
+                ux = _ux_meta("medium", f"soft guidance for {soft_intent} (weak retrieval)", confidence_factors={"authority_boost_used": True, "soft_guidance_used": True, "retrieval_weak": True, "source_count": len(source_docs)})
+                logger.info(f"Answer strategy: soft_guidance_direct ({soft_intent}, weak retrieval)")
+                if self.conversational:
+                    self.chat_history.append(HumanMessage(content=question))
+                    self.chat_history.append(AIMessage(content=soft_answer))
+                    limit = config.CONVERSATION_HISTORY_LIMIT
+                    if len(self.chat_history) > limit * 2:
+                        self.chat_history = self.chat_history[-(limit * 2):]
+                return {
+                    "answer": soft_answer,
+                    "sources": source_docs,
+                    "rewritten_query": retrieval_query,
+                    "answer_strategy": "soft_guidance_direct",
+                    "answer_confidence": "medium",
+                    "retrieval_debug": _debug_with_ux(self._retrieval_debug(source_docs, "soft_guidance_direct"), ux),
+                    **ux,
+                    "timing_ms": {"retrieval": round(retrieval_ms), "total": round(total_ms), "llm": 0},
+                }
+
         answer_strategy = "generic_llm"
         answer_confidence = "medium"
         if top_doc in structured_docs:
@@ -1570,6 +2461,31 @@ class BankingRAGChain:
             answer_strategy = "pricing_table_llm"
         elif top_doc.metadata.get("document_type") == "pricing":
             answer_strategy = "pricing_section_llm"
+
+        # --- Graceful degradation P1: pricing → overview fallback ---
+        # If pricing retrieval only returned warning docs (no real data) AND
+        # we can identify a supported product → serve overview fallback instead
+        # of dead-end warning or hallucinated pricing.
+        if answer_strategy in ("pricing_section_llm", "pricing_table_llm", "generic_llm"):
+            if not _has_real_pricing_docs(source_docs, structured_docs):
+                product_id = _detect_product_for_degradation(source_docs, query_profile, session_debug)
+                if product_id:
+                    overview_resp = _build_overview_fallback_response(
+                        product_id, question, source_docs,
+                        retrieval_query, retrieval_ms, t_ask,
+                    )
+                    if overview_resp.get("answer"):
+                        if self.conversational:
+                            self.chat_history.append(HumanMessage(content=question))
+                            self.chat_history.append(AIMessage(content=overview_resp["answer"]))
+                            limit = config.CONVERSATION_HISTORY_LIMIT
+                            if len(self.chat_history) > limit * 2:
+                                self.chat_history = self.chat_history[-(limit * 2):]
+                        logger.info(
+                            f"Graceful degradation: pricing → overview_fallback "
+                            f"(product={product_id}, no real pricing data)"
+                        )
+                        return overview_resp
 
         if answer_strategy == "pricing_row_direct" and structured_docs:
             answer_text = format_structured_pricing_answer(structured_docs, max_products=3)
@@ -1615,26 +2531,44 @@ class BankingRAGChain:
             "gemini": config.GEMINI_MODEL,
             "openai": config.OPENAI_CHAT_MODEL,
         }.get(backend, config.LLM_MODEL)
-        t_llm = time.perf_counter()
-        answer = self._llm.invoke(messages)
-        llm_ms = (time.perf_counter() - t_llm) * 1000
-        answer_text = answer if isinstance(answer, str) else str(answer)
-        answer_text = _normalize_answer_text(answer_text, answer_strategy=answer_strategy)
-        if answer_strategy.startswith("pricing_") and any(marker in answer_text.lower() for marker in NO_ANSWER_MARKERS):
-            structured_fallback_docs = _structured_pricing_docs(source_docs)
-            if structured_fallback_docs:
-                answer_text = format_structured_pricing_answer(structured_fallback_docs, max_products=3)
-                answer_strategy = "pricing_row_direct"
-                answer_confidence = "high"
-                logger.warning("LLM vrátil fallback apology navzdory pricing_row; použita strukturovaná odpověď")
+        answer_text, llm_ms, answer_strategy, answer_confidence = self._invoke_llm(
+            messages, source_docs, answer_strategy, answer_confidence, question,
+            retrieval_ms, retrieval_query, query_profile, session_debug, t_ask,
+        )
 
         confidence_bucket_value = answer_confidence if answer_confidence in {"high", "medium", "low"} else "medium"
         confidence_reason = "structured pricing/source-backed answer" if answer_strategy.startswith("pricing_") else "source-backed generated answer"
         if any(marker in answer_text.lower() for marker in NO_ANSWER_MARKERS):
+            # P1/P4: Before falling back to unsupported, try graceful degradation
+            # for non-pricing flows where LLM couldn't answer.
+            product_id = _detect_product_for_degradation(source_docs, query_profile, session_debug)
+            degraded_used_product = product_id
+            if product_id and not answer_strategy.startswith("pricing_"):
+                overview_resp = _build_overview_fallback_response(
+                    product_id, question, source_docs,
+                    retrieval_query, retrieval_ms, t_ask,
+                )
+                if overview_resp.get("answer"):
+                    if self.conversational:
+                        self.chat_history.append(HumanMessage(content=question))
+                        self.chat_history.append(AIMessage(content=overview_resp["answer"]))
+                        limit = config.CONVERSATION_HISTORY_LIMIT
+                        if len(self.chat_history) > limit * 2:
+                            self.chat_history = self.chat_history[-(limit * 2):]
+                    logger.info(
+                        f"Graceful degradation post-LLM: {answer_strategy} → overview_fallback "
+                        f"(product={product_id})"
+                    )
+                    return overview_resp
+
             confidence_bucket_value = "low"
             confidence_reason = "model indicated insufficient support"
-            answer_text = UNSUPPORTED_RESPONSE
+            # P4: Replace dead-end unsupported with enriched CTA
+            answer_text = _enrich_dead_end_answer(UNSUPPORTED_RESPONSE, degraded_used_product)
         ux = _ux_meta(confidence_bucket_value, confidence_reason)
+
+        # P2: Resolve confidence semantics
+        cs = resolve_confidence_semantics(answer_strategy, bucket=confidence_bucket_value, reason=confidence_reason)
 
         total_ms = (time.perf_counter() - t_ask) * 1000
 
@@ -1660,12 +2594,289 @@ class BankingRAGChain:
             "rewritten_query": retrieval_query,
             "answer_strategy": answer_strategy,
             "answer_confidence": answer_confidence,
+            "confidence_origin": cs.origin,
+            "confidence_origin_label": cs.origin_label,
+            "confidence_semantic_label": cs.semantic_label,
+            "degraded_answer": cs.degraded,
             "retrieval_debug": _debug_with_ux(
                 self._structured_retrieval_debug(_structured_pricing_docs(source_docs), answer_strategy) if answer_strategy == "pricing_row_direct" else self._retrieval_debug(source_docs, answer_strategy),
                 ux,
             ),
             **ux,
         }
+
+    # ------------------------------------------------------------------
+    # True token streaming (Priority 1)
+    # ------------------------------------------------------------------
+
+    def _invoke_llm(
+        self,
+        messages: list[BaseMessage],
+        source_docs: list[Document],
+        answer_strategy: str,
+        answer_confidence: str,
+        question: str,
+        retrieval_ms: float,
+        retrieval_query: str,
+        query_profile: object,
+        session_debug: dict,
+        t_ask: float,
+    ) -> tuple[str, float, str, str]:
+        """Invoke the LLM synchronously and apply post-processing.
+
+        Returns (answer_text, llm_ms, answer_strategy, answer_confidence).
+        Also handles pricing fallback and no-answer markers.
+        """
+        t_llm = time.perf_counter()
+        answer = self._llm.invoke(messages)
+        llm_ms = (time.perf_counter() - t_llm) * 1000
+        answer_text = answer if isinstance(answer, str) else str(answer)
+        answer_text = _normalize_answer_text(answer_text, answer_strategy=answer_strategy)
+        if answer_strategy.startswith("pricing_") and any(marker in answer_text.lower() for marker in NO_ANSWER_MARKERS):
+            structured_fallback_docs = _structured_pricing_docs(source_docs)
+            if structured_fallback_docs:
+                answer_text = format_structured_pricing_answer(structured_fallback_docs, max_products=3)
+                answer_strategy = "pricing_row_direct"
+                answer_confidence = "high"
+                logger.warning("LLM vrátil fallback apology navzdory pricing_row; použita strukturovaná odpověď")
+        return answer_text, llm_ms, answer_strategy, answer_confidence
+
+    def ask_stream(self, question: str) -> Generator[dict, None, None]:
+        """Process a question with true token streaming from the LLM.
+
+        Yields dict events:
+          {"type": "start", "answer_strategy": ..., "sources": [...], "confidence_bucket": ..., ...}
+          {"type": "token", "text": "..."}  — one per LLM token / full deterministic answer
+          {"type": "done", "processing_time_ms": ..., "retrieval_latency_ms": ..., ...}
+          {"type": "error", "error": "...", "detail": "..."}
+
+        Deterministic routes yield the full answer as a single token.
+        LLM routes yield tokens incrementally as they arrive.
+        """
+        import json
+        import threading
+
+        # We use a thread-safe buffer to receive tokens from the streaming
+        # LLM wrapper while ask() runs in a background thread.
+        token_buffer: list[str] = []
+        start_event_data: dict = {}
+        result_container: list[dict | None] = [None]
+        error_container: list[Exception | None] = [None]
+        llm_started = threading.Event()
+
+        class _StreamingInvoker:
+            """Wraps self._llm to intercept invoke() and stream tokens."""
+
+            def __init__(self, real_llm, buffer, started_event):
+                self._real_llm = real_llm
+                self._buffer = buffer
+                self._started = started_event
+                self._has_stream = hasattr(real_llm, "stream") and callable(
+                    getattr(real_llm, "stream", None)
+                )
+
+            def invoke(self, msgs):
+                """Replacement for LLM.invoke(). Collects tokens into buffer."""
+                self._started.set()
+                if self._has_stream:
+                    full = ""
+                    for token in self._real_llm.stream(msgs):
+                        full += token
+                        self._buffer.append(token)
+                    return full
+                # Fallback for backends without stream() — yield full answer as one token
+                full = self._real_llm.invoke(msgs)
+                self._buffer.append(full)
+                return full
+
+        original_llm = self._llm
+        streaming_llm = _StreamingInvoker(original_llm, token_buffer, llm_started)
+        self._llm = streaming_llm  # type: ignore[assignment]
+
+        t_start = time.perf_counter()
+
+        def _run_ask():
+            try:
+                result = BankingRAGChain.ask(self, question)
+                result_container[0] = result
+            except Exception as exc:
+                error_container[0] = exc
+
+        thread = threading.Thread(target=_run_ask, daemon=True)
+        thread.start()
+
+        # Wait until either:
+        # 1. The LLM streaming starts (routing complete, LLM generating)
+        # 2. Or ask() finishes entirely (deterministic route)
+        # Timeout prevents hanging if something goes wrong.
+        llm_started.wait(timeout=60)
+        elapsed_until_llm = (time.perf_counter() - t_start) * 1000
+
+        if error_container[0]:
+            self._llm = original_llm
+            yield {"type": "error", "error": "chain_error", "detail": str(error_container[0])}
+            return
+
+        # If ask() already completed, it was a deterministic route
+        thread.join(timeout=0.1)
+        if result_container[0] is not None:
+            self._llm = original_llm
+            result = result_container[0]
+            # Save for downstream caching
+            self._last_stream_result = result  # type: ignore[attr-defined]
+            yield {
+                "type": "start",
+                "answer_strategy": result.get("answer_strategy"),
+                "sources": result.get("sources", []),
+                "confidence_bucket": result.get("confidence_bucket"),
+                "confidence_reason": result.get("confidence_reason"),
+                "confidence_semantic_label": result.get("confidence_semantic_label"),
+                "confidence_origin": result.get("confidence_origin"),
+                "degraded_answer": result.get("degraded_answer"),
+                "clarification_required": result.get("clarification_required"),
+                "unsupported_reason": result.get("unsupported_reason"),
+                "cache_hit": False,
+            }
+            yield {"type": "token", "text": result.get("answer", "")}
+            yield {"type": "done", "processing_time_ms": round(elapsed_until_llm, 1)}
+            return
+
+        # LLM route: wait for tokens to arrive
+        yield {
+            "type": "start",
+            "answer_strategy": "generic_llm",
+            "cache_hit": False,
+            "clarification_required": False,
+            "unsupported_reason": None,
+        }
+
+        # Stream tokens as they arrive
+        last_token_count = 0
+        while thread.is_alive() or len(token_buffer) > last_token_count:
+            if len(token_buffer) > last_token_count:
+                new_tokens = token_buffer[last_token_count:]
+                for token in new_tokens:
+                    yield {"type": "token", "text": token}
+                last_token_count = len(token_buffer)
+            else:
+                # Yield control to event loop briefly
+                threading.Event().wait(0.01)
+
+        # Flush any remaining tokens
+        if len(token_buffer) > last_token_count:
+            for token in token_buffer[last_token_count:]:
+                yield {"type": "token", "text": token}
+
+        # Restore original LLM
+        self._llm = original_llm
+
+        # Get the final result dict
+        if error_container[0]:
+            yield {"type": "error", "error": "chain_error", "detail": str(error_container[0])}
+            return
+
+        result = result_container[0]
+        if result is None:
+            self._llm = original_llm
+            yield {"type": "error", "error": "no_result", "detail": "ask() returned None"}
+            return
+
+        # Save for downstream caching (SSE endpoint reads this after generator completes)
+        self._last_stream_result = result  # type: ignore[attr-defined]
+
+        timing = result.get("timing_ms", {}) or {}
+        elapsed_total = (time.perf_counter() - t_start) * 1000
+        yield {
+            "type": "done",
+            "processing_time_ms": round(elapsed_total, 1),
+            "retrieval_latency_ms": timing.get("retrieval"),
+            "llm_latency_ms": timing.get("llm"),
+            "formatting_latency_ms": timing.get("formatting_latency_ms"),
+            "answer_strategy": result.get("answer_strategy"),
+            "confidence_bucket": result.get("confidence_bucket"),
+            "confidence_semantic_label": result.get("confidence_semantic_label"),
+            "confidence_origin": result.get("confidence_origin"),
+            "degraded_answer": result.get("degraded_answer"),
+        }
+
+    # ------------------------------------------------------------------
+    # Priority 4: Session context helpers
+    # ------------------------------------------------------------------
+
+    def _update_session_context(
+        self,
+        query_profile: QueryProfile | None = None,
+        *,
+        raw_question: str | None = None,
+    ) -> None:
+        """Update session_context from query profile or raw question.
+
+        Detects domain, intent, and product from the current query and
+        stores them for follow-up inheritance.
+
+        Safe to call even if session_context hasn't been initialized
+        (e.g. tests using __new__ without __init__).
+        """
+        if not hasattr(self, "session_context") or self.session_context is None:
+            return
+        if query_profile is not None:
+            labels = query_profile.labels
+
+            # Domain detection
+            if "retail_banking" in labels:
+                self.session_context["current_domain"] = "retail"
+            elif "corporate_banking" in labels:
+                self.session_context["current_domain"] = "corporate"
+            else:
+                self.session_context["current_domain"] = self.session_context.get("current_domain")
+
+            # Intent detection (first matched overview/intent label)
+            intent_order = [
+                "card_overview", "account_overview", "mortgage_overview",
+                "investment_overview", "rb_key_overview", "payment_overview",
+                "sepa_swift_overview", "product_overview", "pricing",
+                "credit_card_catalog", "credit_card", "faq",
+            ]
+            for intent in intent_order:
+                if intent in labels:
+                    self.session_context["current_intent"] = intent
+                    break
+
+        # Product from chain attributes
+        if self.resolved_product:
+            self.session_context["resolved_product"] = self.resolved_product
+        if self.resolved_intent:
+            self.session_context["current_intent"] = self.resolved_intent
+
+    def _get_session_debug(self, inherited_product: str | None, inherited_intent: str | None) -> dict:
+        """Build session context debug fields for the API response."""
+        debug: dict[str, Any] = {}
+        if inherited_product or inherited_intent:
+            debug["session_context_used"] = True
+        if inherited_product:
+            debug["inherited_product"] = inherited_product
+        if inherited_intent:
+            debug["inherited_intent"] = inherited_intent
+        return debug
+
+    def _check_session_inheritance(self, question: str) -> tuple[str | None, str | None]:
+        """Check if the current question should inherit context from previous turn.
+
+        Returns (inherited_product, inherited_intent) if inheritance is needed,
+        or (None, None) if the question is self-contained.
+        """
+        # Guard against uninitialized session_context
+        if not hasattr(self, "session_context") or not self.session_context:
+            return None, None
+        # If the question is very short (1-3 words) and we have previous context,
+        # it's likely a follow-up
+        word_count = len(question.strip().split())
+        if word_count <= 4 and self.chat_history:
+            inherited_product = self.session_context.get("resolved_product") or self.session_context.get("current_product")
+            inherited_intent = self.session_context.get("current_intent")
+            if inherited_product or inherited_intent:
+                return inherited_product, inherited_intent
+        return None, None
 
     def _retrieval_debug(self, source_docs: list[Document], answer_strategy: str) -> list[dict]:
         return [
@@ -1678,6 +2889,25 @@ class BankingRAGChain:
                 "product_name": doc.metadata.get("product_name"),
                 "fee_type": doc.metadata.get("fee_type"),
                 "fee_value": doc.metadata.get("fee_value"),
+                "pricing_canonical_source": doc.metadata.get("pricing_canonical_source"),
+                "extracted_pricing_row": doc.metadata.get("extracted_pricing_row"),
+                "normalized_price": doc.metadata.get("normalized_price"),
+                "normalized_currency": doc.metadata.get("normalized_currency"),
+                "normalized_billing_period": doc.metadata.get("normalized_billing_period"),
+                "pricing_semantic_label": doc.metadata.get("pricing_semantic_label"),
+                "conditional_pricing_detected": doc.metadata.get("conditional_pricing_detected"),
+                "condition_type": doc.metadata.get("condition_type"),
+                "condition_text": doc.metadata.get("condition_text"),
+                "base_price": doc.metadata.get("base_price"),
+                "conditional_price": doc.metadata.get("conditional_price"),
+                "pricing_logic": doc.metadata.get("pricing_logic"),
+                "pricing_confidence": doc.metadata.get("pricing_confidence"),
+                "pricing_source_type": doc.metadata.get("pricing_source_type"),
+                "pricing_row_found": doc.metadata.get("pricing_row_found"),
+                "pricing_row_exact_match": doc.metadata.get("pricing_row_exact_match"),
+                "pricing_canonical_used": doc.metadata.get("pricing_canonical_used"),
+                "pricing_canonical_override": doc.metadata.get("pricing_canonical_override"),
+                "pricing_resolver_used": doc.metadata.get("pricing_resolver_used"),
                 "chunk_quality": doc.metadata.get("chunk_quality"),
                 "hybrid_score": doc.metadata.get("hybrid_score"),
                 "hybrid_base_score": doc.metadata.get("hybrid_base_score"),
@@ -1709,6 +2939,45 @@ class BankingRAGChain:
                 "fallback_overview_retrieval_used": doc.metadata.get("fallback_overview_retrieval_used"),
                 "metadata_boost_reason": doc.metadata.get("metadata_boost_reason"),
                 "faq_priority_used": doc.metadata.get("faq_priority_used"),
+                # Priority 1: Authority scoring fields
+                "authority_score": doc.metadata.get("authority_score"),
+                "authority_tier": doc.metadata.get("authority_tier"),
+                # Source governance fields (P1–P3)
+                "suppression_applied": doc.metadata.get("suppression_applied"),
+                "suppression_reason": doc.metadata.get("suppression_reason"),
+                "canonical_priority": doc.metadata.get("canonical_priority"),
+                "canonical_source_type": doc.metadata.get("canonical_source_type"),
+                "canonical_override_used": doc.metadata.get("canonical_override_used"),
+                "lineage_superseded": doc.metadata.get("lineage_superseded"),
+                # Retrieval Recovery & Resilience fields
+                "governance_removed_count": doc.metadata.get("governance_removed_count"),
+                "governance_suppressed_count": doc.metadata.get("governance_suppressed_count"),
+                "suppression_ratio": doc.metadata.get("suppression_ratio"),
+                "recovery_pass_used": doc.metadata.get("recovery_pass_used"),
+                "recovery_applied": doc.metadata.get("recovery_applied"),
+                "recovery_reason": doc.metadata.get("recovery_reason"),
+                "recovery_query": doc.metadata.get("recovery_query"),
+                "recovery_result_count": doc.metadata.get("recovery_result_count"),
+                "recovery_pass_latency_ms": doc.metadata.get("recovery_pass_latency_ms"),
+                "retrieval_collapse_detected": doc.metadata.get("retrieval_collapse_detected"),
+                "resilience_strategy": doc.metadata.get("resilience_strategy"),
+                "resilience_category": doc.metadata.get("resilience_category"),
+                "resilience_category_derived": doc.metadata.get("resilience_category_derived"),
+                "resilience_category_source": doc.metadata.get("resilience_category_source"),
+                "final_source_count": doc.metadata.get("final_source_count"),
+                "diversity_document_key": doc.metadata.get("diversity_document_key"),
+                "diversity_family_key": doc.metadata.get("diversity_family_key"),
+                "source_diversity_score": doc.metadata.get("source_diversity_score"),
+                "diversity_score": doc.metadata.get("diversity_score"),
+                "diversity_override_used": doc.metadata.get("diversity_override_used"),
+                "max_chunks_per_document": doc.metadata.get("max_chunks_per_document"),
+                "max_chunks_per_family": doc.metadata.get("max_chunks_per_family"),
+                "empty_category_count": doc.metadata.get("empty_category_count"),
+                "derived_category_count": doc.metadata.get("derived_category_count"),
+                # Priority 4: Confidence factors
+                "authority_boost_used": doc.metadata.get("authority_boost_used"),
+                "stale_penalty_used": doc.metadata.get("stale_penalty_used"),
+                "retrieval_soft_fail": doc.metadata.get("retrieval_soft_fail"),
                 "answer_strategy": answer_strategy,
             }
             for doc in source_docs
@@ -1721,9 +2990,32 @@ class BankingRAGChain:
                 "product_name": doc.metadata.get("product_name"),
                 "fee_type": doc.metadata.get("fee_type"),
                 "fee_value": doc.metadata.get("fee_value"),
+                "pricing_canonical_source": doc.metadata.get("pricing_canonical_source"),
+                "extracted_pricing_row": doc.metadata.get("extracted_pricing_row"),
+                "normalized_price": doc.metadata.get("normalized_price"),
+                "normalized_currency": doc.metadata.get("normalized_currency"),
+                "normalized_billing_period": doc.metadata.get("normalized_billing_period"),
+                "pricing_semantic_label": doc.metadata.get("pricing_semantic_label"),
+                "conditional_pricing_detected": doc.metadata.get("conditional_pricing_detected"),
+                "condition_type": doc.metadata.get("condition_type"),
+                "condition_text": doc.metadata.get("condition_text"),
+                "base_price": doc.metadata.get("base_price"),
+                "conditional_price": doc.metadata.get("conditional_price"),
+                "pricing_logic": doc.metadata.get("pricing_logic"),
+                "pricing_confidence": doc.metadata.get("pricing_confidence"),
+                "pricing_source_type": doc.metadata.get("pricing_source_type"),
+                "pricing_row_found": doc.metadata.get("pricing_row_found"),
+                "pricing_row_exact_match": doc.metadata.get("pricing_row_exact_match"),
+                "pricing_canonical_used": doc.metadata.get("pricing_canonical_used"),
                 "confidence": doc.metadata.get("confidence"),
                 "source": doc.metadata.get("source_file") or doc.metadata.get("title"),
                 "page": doc.metadata.get("page"),
+                "recovery_pass_used": doc.metadata.get("recovery_pass_used"),
+                "recovery_reason": doc.metadata.get("recovery_reason"),
+                "governance_suppressed_count": doc.metadata.get("governance_suppressed_count"),
+                "diversity_score": doc.metadata.get("diversity_score"),
+                "retrieval_collapse_detected": doc.metadata.get("retrieval_collapse_detected"),
+                "resilience_strategy": doc.metadata.get("resilience_strategy"),
             }
             for doc in source_docs[:3]
         ]

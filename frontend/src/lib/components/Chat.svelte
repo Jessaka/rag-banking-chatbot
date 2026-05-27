@@ -11,9 +11,9 @@
 		error,
 		currentRequestId
 	} from '$lib/stores';
-	import { sendChatMessage } from '$lib/api';
+	import { sendChatMessage, streamChatMessage } from '$lib/api';
 	import { generateId } from '$lib/utils';
-	import type { Message } from '$lib/types';
+	import type { Message, SourceDocument, ConfidenceBucket } from '$lib/types';
 	import ChatMessage from './ChatMessage.svelte';
 	import ChatInput from './ChatInput.svelte';
 	import DebugPanel from './DebugPanel.svelte';
@@ -87,78 +87,77 @@
 		error.set(null);
 		abortController = new AbortController();
 
+		// Try streaming first; fall back to blocking API
+		let usedStreaming = false;
+
 		try {
 			emitChatEvent('chat_request_started', { session_id: sessionId });
-			console.debug('[Chat] fetching /chat', {
+			console.debug('[Chat] fetching /chat/stream', {
 				payload: { question: text, session_id: sessionId }
 			});
-			const response = await sendChatMessage(text, sessionId, abortController.signal);
-			console.debug('[Chat] raw API response', {
-				answer_length: response.answer?.length,
-				sources_count: response.sources?.length,
-				strategy: response.answer_strategy,
-				processing_time_ms: response.processing_time_ms
-			});
 
-			currentRequestId.set(response.request_id);
-			emitChatEvent('chat_response_received', {
-				session_id: response.session_id,
-				request_id: response.request_id,
-				answer_strategy: response.answer_strategy,
-				confidence_bucket: response.confidence_bucket,
-				processing_time_ms: response.processing_time_ms,
-				sources_count: response.sources?.length || 0,
-				unsupported: Boolean(response.unsupported_reason),
-				clarification_required: Boolean(response.clarification_required)
-			});
+			const stream = streamChatMessage(text, sessionId, abortController.signal);
+			let fullAnswer = '';
+			let startData: Record<string, unknown> | null = null;
+			let doneData: Record<string, unknown> | null = null;
+			let errorData: Record<string, unknown> | null = null;
 
-			// Update the assistant message with real response
-			conversations.update((convos) => {
-				const updated = convos.map((c) => {
-					if (c.id !== sessionId) return c;
-					return {
-						...c,
-						messages: c.messages.map((m) =>
-							m.id === assistantId
-								? {
-										...m,
-										content: response.answer,
-										sources: response.sources || [],
-										retrieval_debug: response.retrieval_debug || null,
-										answer_strategy: response.answer_strategy,
-										confidence_bucket: response.confidence_bucket || null,
-										confidence_reason: response.confidence_reason || null,
-										clarification_required: response.clarification_required || false,
-										unsupported_reason: response.unsupported_reason || null,
-										processing_time_ms: response.processing_time_ms,
-										request_id: response.request_id,
-										error: false
-									}
-								: m
-						)
-					};
-				});
-				const target = updated.find((c) => c.id === sessionId);
-				console.debug('[Chat] assistant message updated', {
-					assistantId,
-					foundConversation: !!target,
-					messageCount: target?.messages?.length,
-					lastMessageContent: target?.messages?.[target.messages.length - 1]?.content?.slice(0, 80)
-				});
-				return updated;
-			});
-		} catch (err: unknown) {
-			if (err instanceof Error && err.name === 'AbortError') {
-				console.debug('[Chat] request aborted');
-				return;
+			for await (const event of stream) {
+				if (event.event === 'start') {
+					startData = event.data;
+					// Update assistant message with metadata as it arrives
+					conversations.update((convos) =>
+						convos.map((c) => {
+							if (c.id !== sessionId) return c;
+							return {
+								...c,
+								messages: c.messages.map((m) =>
+									m.id === assistantId
+										? {
+												...m,
+												sources: (event.data.sources as SourceDocument[]) || [],
+												answer_strategy: (event.data.answer_strategy as string) || null,
+												confidence_bucket: (event.data.answer_confidence as ConfidenceBucket) || null,
+												clarification_required: (event.data.clarification_required as boolean) || false,
+												unsupported_reason: (event.data.unsupported_reason as string) || null,
+												error: false
+											}
+										: m
+								)
+							};
+						})
+					);
+				} else if (event.event === 'token') {
+					const token = event.data.text as string;
+					fullAnswer += token;
+					usedStreaming = true;
+					// Progressively update assistant message content
+					conversations.update((convos) =>
+						convos.map((c) => {
+							if (c.id !== sessionId) return c;
+							return {
+								...c,
+								messages: c.messages.map((m) =>
+									m.id === assistantId ? { ...m, content: fullAnswer } : m
+								)
+							};
+						})
+					);
+				} else if (event.event === 'done') {
+					doneData = event.data;
+				} else if (event.event === 'error') {
+					errorData = event.data;
+					console.error('[Chat] SSE error', event.data);
+				}
 			}
 
-			const errorMsg = err instanceof Error ? err.message : 'Neočekávaná chyba';
-			console.error('[Chat] request failed', { error: errorMsg, err });
-			emitChatEvent('chat_request_failed', { session_id: sessionId, error: errorMsg });
-			error.set(errorMsg);
+			if (errorData) {
+				throw new Error((errorData.detail as string) || (errorData.error as string) || 'SSE error');
+			}
 
-			// Mark assistant message as error
+			const streamRequestId = (startData?.request_id as string) || null;
+
+			// Finalize assistant message with timing info
 			conversations.update((convos) =>
 				convos.map((c) => {
 					if (c.id !== sessionId) return c;
@@ -166,12 +165,122 @@
 						...c,
 						messages: c.messages.map((m) =>
 							m.id === assistantId
-								? { ...m, content: `❌ ${errorMsg}`, error: true }
+								? {
+										...m,
+										content: fullAnswer,
+										processing_time_ms: (doneData?.processing_time_ms as number) || undefined,
+										retrieval_latency_ms: (doneData?.retrieval_latency_ms as number) || null,
+										llm_latency_ms: (doneData?.llm_latency_ms as number) || null,
+										formatting_latency_ms: (doneData?.formatting_latency_ms as number) || null,
+										request_id: streamRequestId,
+									}
 								: m
 						)
 					};
 				})
 			);
+
+			const sId = (startData?.session_id as string) || sessionId;
+			if (streamRequestId) currentRequestId.set(streamRequestId);
+			emitChatEvent('chat_response_received', {
+				session_id: sId,
+				request_id: streamRequestId,
+				answer_strategy: (startData?.answer_strategy as string) || null,
+				confidence_bucket: (startData?.answer_confidence as string) || null,
+				processing_time_ms: (doneData?.processing_time_ms as number) || 0,
+				sources_count: ((startData?.sources) as unknown[])?.length || 0,
+				unsupported: Boolean(startData?.unsupported_reason),
+				clarification_required: Boolean(startData?.clarification_required)
+			});
+		} catch (err: unknown) {
+			if (err instanceof Error && err.name === 'AbortError') {
+				console.debug('[Chat] request aborted');
+				return;
+			}
+
+			// If streaming failed (e.g., endpoint not available), fall back to blocking API
+			if (!usedStreaming) {
+				console.warn('[Chat] streaming failed, falling back to /chat', err);
+				try {
+					const response = await sendChatMessage(text, sessionId, abortController?.signal);
+					// Update the assistant message with the full response
+					conversations.update((convos) =>
+						convos.map((c) => {
+							if (c.id !== sessionId) return c;
+							return {
+								...c,
+								messages: c.messages.map((m) =>
+									m.id === assistantId
+										? {
+												...m,
+												content: response.answer,
+												sources: response.sources || [],
+												retrieval_debug: response.retrieval_debug || null,
+												answer_strategy: response.answer_strategy,
+												confidence_bucket: response.confidence_bucket || null,
+												confidence_reason: response.confidence_reason || null,
+												clarification_required: response.clarification_required || false,
+												unsupported_reason: response.unsupported_reason || null,
+												processing_time_ms: response.processing_time_ms,
+												request_id: response.request_id,
+												error: false
+											}
+										: m
+								)
+							};
+						})
+					);
+					currentRequestId.set(response.request_id);
+					emitChatEvent('chat_response_received', {
+						session_id: response.session_id,
+						request_id: response.request_id,
+						answer_strategy: response.answer_strategy,
+						confidence_bucket: response.confidence_bucket,
+						processing_time_ms: response.processing_time_ms,
+						sources_count: response.sources?.length || 0,
+						unsupported: Boolean(response.unsupported_reason),
+						clarification_required: Boolean(response.clarification_required)
+					});
+				} catch (fallbackErr: unknown) {
+					if (fallbackErr instanceof Error && fallbackErr.name === 'AbortError') {
+						console.debug('[Chat] request aborted during fallback');
+						return;
+					}
+					// Final error handling
+					const fallbackMsg = fallbackErr instanceof Error ? fallbackErr.message : 'Neočekávaná chyba';
+					console.error('[Chat] fallback also failed', { error: fallbackMsg, fallbackErr });
+					emitChatEvent('chat_request_failed', { session_id: sessionId, error: fallbackMsg });
+					error.set(fallbackMsg);
+					conversations.update((convos) =>
+						convos.map((c) => {
+							if (c.id !== sessionId) return c;
+							return {
+								...c,
+								messages: c.messages.map((m) =>
+									m.id === assistantId
+										? { ...m, content: `❌ ${fallbackMsg}`, error: true }
+										: m
+								)
+							};
+						})
+					);
+				}
+			} else {
+				// Streaming was partially in progress — keep what we have
+				console.warn('[Chat] streaming ended with error after partial content', err);
+				// Partial content is already in the message, just mark it
+				conversations.update((convos) =>
+					convos.map((c) => {
+						if (c.id !== sessionId) return c;
+						return {
+							...c,
+							messages: c.messages.map((m) =>
+								m.id === assistantId ? { ...m, error: false } : m
+							)
+						};
+					})
+				);
+			}
 		} finally {
 			isLoading.set(false);
 			abortController = null;
@@ -262,8 +371,14 @@
 							strategy={lastMsg.answer_strategy}
 							confidence={lastMsg.confidence_bucket}
 							latency={lastMsg.processing_time_ms}
+							retrieval_latency={lastMsg.retrieval_latency_ms}
+							llm_latency={lastMsg.llm_latency_ms}
+							formatting_latency={lastMsg.formatting_latency_ms}
 							debug={lastMsg.retrieval_debug}
-							sources={(lastMsg.sources || []).map(s => ({ file_name: s.file_name, page: s.page, rerank_score: s.rerank_score }))}
+							sources={(lastMsg.sources || []).map(s => ({ file_name: s.file_name, page: s.page, rerank_score: s.rerank_score, human_title: s.human_title }))}
+							confidenceSemanticLabel={lastMsg.confidence_semantic_label}
+							confidenceOriginLabel={lastMsg.confidence_origin_label}
+							degraded={lastMsg.degraded_answer}
 						/>
 					</div>
 				{/if}

@@ -84,6 +84,58 @@ SEPA_SWIFT_OVERVIEW_TERMS = (
 )
 
 
+# --- Priority 3: Procedural flow route term tuples ---
+ACTIVATION_FLOW_TERMS = (
+    "aktivuj", "aktivovat", "aktivace", "zapnout", "zapni",
+    "jak aktivovat", "jak aktivuju", "jak zapnout",
+    "jak začít používat", "jak zacit pouzivat",
+)
+CARD_LIMIT_FLOW_TERMS = (
+    "zvýšit limit", "zvysit limit", "zvýším limit", "zvysim limit",
+    "zvýší limit", "zvysi limit", "zvýšit", "zvysit", "zvýš", "zvys",
+    "navýšit limit", "navysit limit", "navýš", "navys",
+    "jaký mám limit", "jaky mam limit", "zvýšení limitu", "zvyseni limitu",
+    "navýšení limitu", "navyseni limitu", "limit karty",
+    "snížit limit", "snizit limit", "sníž", "sniz",
+)
+MOBILE_WALLET_FLOW_TERMS = (
+    "karta v mobilu", "kartu v mobilu", "mobilní karta", "mobilni karta",
+    "přidat kartu do", "pridat kartu do", "nahrát kartu", "nahrat kartu",
+    "mít kartu v mobilu", "mit kartu v mobilu",
+    "apple pay karta", "google pay karta", "hodinky karta", "watch karta",
+)
+ABROAD_CARD_USAGE_TERMS = (
+    "karta v zahraničí", "karta v zahranici", "karta v usa", "karta v eu",
+    "kartou v zahraničí", "kartou v zahranici", "platba kartou v zahraničí",
+    "platba kartou v zahranici", "zahraničí karta", "zahranici karta",
+    "funguje karta v", "použití karty v zahraničí", "pouziti karty v zahranici",
+    "zahraniční výběr", "zahranicni vyber",
+)
+CARD_BRAND_OVERVIEW_TERMS = (
+    "máte visa", "mate visa", "máte mastercard", "mate mastercard",
+    "visa nebo mastercard", "mastercard nebo visa",
+    "jakou značku karty", "jakou znacku karty",
+    "jakou kartu visa", "jakou kartu mastercard",
+    "můžu mít visu", "muzu mít visu", "je visa", "jsou visa",
+    "typ karty visa", "mastercard typ",
+)
+
+# --- Priority 2: Soft guidance detection patterns ---
+SOFT_GUIDANCE_FAQ_TERMS = (
+    "jak funguje", "jak se", "co je", "co to je",
+    "kde najdu", "kde zjistím", "kde zjistim",
+    "můžu", "muzu", "lze", "jde",
+    "je možné", "je mozne",
+    "potřebuju", "potrebuju", "chci",
+    "poradíte", "poradite", "doporučíte", "doporucite",
+    "máte", "mate",
+    # Procedural
+    "jak zvýš", "jak zvys", "jak sníž", "jak sniz",
+    "jak změn", "jak zmen", "jak nastav",
+    "jak zablokuj", "jak aktivuj", "jak zapn",
+)
+
+
 @dataclass(frozen=True)
 class QueryProfile:
     labels: set[str] = field(default_factory=set)
@@ -186,6 +238,45 @@ def classify_query(query: str) -> QueryProfile:
         # queries like "Co nabízíte?" in a banking context.
         labels.add("product_overview")
         labels.add("supported_domain")
+    # --- Priority 3: Procedural flow routes ---
+    if any(k in q for k in ACTIVATION_FLOW_TERMS):
+        labels.add("activation_flow")
+        labels.add("cards")
+        labels.add("support")
+        labels.add("faq")
+    if any(k in q for k in CARD_LIMIT_FLOW_TERMS):
+        labels.add("card_limit_flow")
+        labels.add("cards")
+        labels.add("support")
+        labels.add("faq")
+    if any(k in q for k in MOBILE_WALLET_FLOW_TERMS):
+        labels.add("mobile_wallet_flow")
+        labels.add("wallets")
+        labels.add("cards")
+        labels.add("support")
+        labels.add("faq")
+    if any(k in q for k in ABROAD_CARD_USAGE_TERMS):
+        labels.add("abroad_card_usage")
+        labels.add("cards")
+        labels.add("support")
+        labels.add("faq")
+    if any(k in q for k in CARD_BRAND_OVERVIEW_TERMS):
+        labels.add("card_brand_overview")
+        labels.add("cards")
+        labels.add("faq")
+
+    # --- Priority 2: Soft guidance candidate detection ---
+    # Soft guidance is tagged when the query is a FAQ/procedural/question
+    # but NOT pricing, NOT unsupported, and NOT an overview intent.
+    has_soft_guidance_candidate = (
+        any(k in q for k in SOFT_GUIDANCE_FAQ_TERMS)
+        and "pricing" not in labels
+        and not any(k in q for k in ("krypto", "bitcoin", "ethereum", "nft"))
+        and "product_overview" not in labels
+    )
+    if has_soft_guidance_candidate:
+        labels.add("soft_guidance_candidate")
+
     if any(k in q for k in ("hypot", "úvěr na bydlení", "uver na bydleni")):
         labels.add("mortgages")
     if any(k in q for k in ("invest", "fond", "dip", "akcie", "dluhopis")):
@@ -244,6 +335,32 @@ def classify_query(query: str) -> QueryProfile:
     if "wallets" in labels:
         preferred_urls.extend(["apple-pay", "google-pay", "karty", "mobilni-platby"])
         preferred_categories.extend(["cards", "payments", "digital"])
+    # --- Priority 3: Procedural flow route preferences ---
+    if "activation_flow" in labels:
+        preferred_categories.extend(["cards", "support", "faq"])
+        preferred_urls.extend(["karty", "aktivace", "platebni-karty"])
+        preferred_chunk_types.extend(["faq", "html", "section_text"])
+        rerank_min_score = -10.0
+    if "card_limit_flow" in labels:
+        preferred_categories.extend(["cards", "support", "faq"])
+        preferred_urls.extend(["karty", "limity", "platebni-karty"])
+        preferred_chunk_types.extend(["faq", "html", "section_text"])
+        rerank_min_score = -10.0
+    if "mobile_wallet_flow" in labels:
+        preferred_categories.extend(["cards", "payments", "digital", "support"])
+        preferred_urls.extend(["karty", "apple-pay", "google-pay", "mobilni-platby", "virtualni-karta"])
+        preferred_chunk_types.extend(["faq", "html", "section_text"])
+        rerank_min_score = -10.0
+    if "abroad_card_usage" in labels:
+        preferred_categories.extend(["cards", "payments", "support", "foreign_payments"])
+        preferred_urls.extend(["karty", "zahranicni-platby", "cestovani", "platebni-karty"])
+        preferred_chunk_types.extend(["faq", "html", "section_text"])
+        rerank_min_score = -10.0
+    if "card_brand_overview" in labels:
+        preferred_categories.extend(["cards", "faq"])
+        preferred_urls.extend(["karty", "platebni-karty", "debetni-karty", "kreditni-karty"])
+        preferred_chunk_types.extend(["faq", "html", "section_text"])
+        rerank_min_score = -10.0
     if "sepa_swift" in labels:
         preferred_urls.extend(["sepa", "swift", "zahranicni-platby", "zahraniční-platby", "platby"])
         preferred_categories.extend(["payments", "foreign_payments"])
@@ -403,6 +520,21 @@ def expand_query(query: str, profile: QueryProfile | None = None) -> str:
         terms.extend(["investice", "fondy", "DIP", "rizika", "prodej investice", "cenné papíry"])
     if "faq" in profile.labels:
         terms.extend(["návod", "postup", "často kladené dotazy", "FAQ", "jak postupovat"])
+    if "activation_flow" in profile.labels:
+        terms.extend(["aktivace karty", "aktivovat kartu", "zapnout kartu",
+                       "první použití karty", "začít používat kartu"])
+    if "card_limit_flow" in profile.labels:
+        terms.extend(["limit karty", "zvýšení limitu", "navýšení limitu",
+                       "maximální limit", "denní limit"])
+    if "mobile_wallet_flow" in profile.labels:
+        terms.extend(["Apple Pay", "Google Pay", "mobilní platby",
+                       "přidat kartu do Apple Pay", "přidat kartu do Google Pay"])
+    if "abroad_card_usage" in profile.labels:
+        terms.extend(["zahraniční platba kartou", "zahraniční výběr z bankomatu",
+                       "cestování s kartou", "karta v zahraničí"])
+    if "card_brand_overview" in profile.labels:
+        terms.extend(["Visa", "Mastercard", "platební značka", "typ karty",
+                       "debetní karta Mastercard", "debetní karta Visa"])
     # Preserve original phrasing first, append unique expansions for BM25 exact-match recall.
     unique = [term for term in dict.fromkeys(terms) if term.lower() not in q]
     return " ".join([query, *unique]).strip()
@@ -531,6 +663,12 @@ def source_priority(doc: Document, profile: QueryProfile) -> tuple[float, list[s
     if "investing" in profile.labels and any(k in hay for k in ("invest", "fond", "dip", "cenné papíry", "cenne papiry")):
         score += 0.120; reasons.append("investing metadata/content boost")
 
+    # Priority 1: Authority scoring — additive boost/penalty based on
+    # document type, URL, title, and content signals.
+    authority_boost, authority_tier, authority_reasons = score_document_authority(doc)
+    score += authority_boost
+    reasons.append(f"authority={authority_tier} boost={authority_boost:+.4f}")
+
     if not reasons:
         reasons.append("base hybrid relevance")
     return score, reasons
@@ -622,3 +760,846 @@ def is_retail_doc(doc: Document) -> bool:
 
 def is_personal_retail_doc(doc: Document) -> bool:
     return is_retail_doc(doc) and not is_corporate_doc(doc)
+
+
+# ---------------------------------------------------------------------------
+# Document Authority Scoring (Priority 1)
+# ---------------------------------------------------------------------------
+
+# Authority tiers — higher = more authoritative for banking FAQ/product retrieval
+DOCUMENT_AUTHORITY_TIERS: dict[str, float] = {
+    "product_page":       1.0,   # RB product detail / category page
+    "faq_support_page":   0.9,   # FAQ / support / help / knowledge page
+    "current_pricing":    0.8,   # Current pricing PDF or page
+    "current_pdf":        0.7,   # Current non-pricing PDF (annual report, terms)
+    "generic_page":       0.5,   # Generic web page / article
+    "historical_pdf":     0.4,   # Historical / out-of-date document
+    "migration_notice":   0.2,   # Migration / change notice
+    "archived_legal":     0.1,   # Archived / legal-only document
+    "unknown":            0.5,   # Default
+}
+
+# URL pattern -> authority tier
+_AUTHORITY_URL_TIERS: list[tuple[str, str]] = [
+    # Product pages (highest)
+    (r"rb\.cz/(osobni|firmy|podnikatele)/[a-zA-Z0-9_-]+(/[a-zA-Z0-9_-]+)?$", "product_page"),
+    (r"rb\.cz/(karty|hypoteky|investice|ucty|sporeni|pozicky)", "product_page"),
+    # FAQ / support
+    (r"(faq|casto|pomoc|podpora|kontakt|napoveda)", "faq_support_page"),
+    (r"/faq/", "faq_support_page"),
+    (r"/podpora/", "faq_support_page"),
+    (r"/napoveda/", "faq_support_page"),
+    # Pricing
+    (r"(cenik|sazebnik|sazebník|cenník|cennik)", "current_pricing"),
+    (r"/ceny/", "current_pricing"),
+    # Migration
+    (r"(migrac|change.*notice|zmena|změna|prechod|přechod)", "migration_notice"),
+    # Archived
+    (r"(archiv|discontinued|history|historic)", "archived_legal"),
+]
+
+_AUTHORITY_TITLE_TIERS: list[tuple[str, str]] = [
+    (r"(současn|soucasn|nový|novy|platný|platny|aktuáln)", "current_pricing"),
+    (r"(ceník|cenik|sazebník|sazebnik|cenník|cennik)", "current_pricing"),
+    (r"(faq|často|casto|nejčastější|nejcastejsi)", "faq_support_page"),
+    (r"(migračn|migracn|změn|zmen|přechod|prechod)", "migration_notice"),
+    (r"(archiv|historick|discontinued|star)", "archived_legal"),
+]
+
+_MIGRATION_KEYWORDS = ("migračn", "migracn", "změna", "zmena", "přechod", "prechod",
+                       "change notice", "migration", "nový ceník", "novy cenik")
+_ARCHIVED_KEYWORDS = ("archiv", "discontinued", "již nenabíz", "jiz nenabiz",
+                      "staré produkty", "stare produkty", "historický", "historicky")
+_CURRENT_KEYWORDS = ("aktuáln", "současn", "soucasn", "nový ceník", "novy cenik",
+                     "2024", "2025", "2026")
+
+
+def _classify_document_authority(doc: Document) -> tuple[str, float, list[str]]:
+    """Classify a document into an authority tier and return (tier, score, reasons).
+
+    Uses metadata (document_type, category, chunk_type) first, then falls back
+    to heuristic URL, title, and filename pattern matching.
+    """
+    md = doc.metadata
+    url = str(md.get("source_url") or md.get("url") or md.get("source") or "").lower()
+    title = str(md.get("title") or "").lower()
+    filename = str(md.get("file_name") or "").lower()
+    doc_type = str(md.get("document_type") or "").lower()
+    category = str(md.get("category") or "").lower()
+    chunk_type = str(md.get("chunk_type") or "").lower()
+    hay = " ".join([url, title, filename])
+    reasons: list[str] = []
+
+    # 1. Metadata-based signals
+    if doc_type == "pricing":
+        # Check if current or historical
+        if any(k in hay for k in _MIGRATION_KEYWORDS):
+            reasons.append("authority=migration_notice (pricing + migration)")
+            return "migration_notice", DOCUMENT_AUTHORITY_TIERS["migration_notice"], reasons
+        if any(k in hay for k in _ARCHIVED_KEYWORDS):
+            reasons.append("authority=historical_pdf (pricing + archived)")
+            return "historical_pdf", DOCUMENT_AUTHORITY_TIERS["historical_pdf"], reasons
+        is_current = any(k in hay for k in _CURRENT_KEYWORDS)
+        if is_current or category in ("retail", "accounts", "retail_banking"):
+            reasons.append("authority=current_pricing (pricing + current/retail)")
+            return "current_pricing", DOCUMENT_AUTHORITY_TIERS["current_pricing"], reasons
+        # Default pricing PDF
+        reasons.append("authority=current_pricing (default pricing)")
+        return "current_pricing", DOCUMENT_AUTHORITY_TIERS["current_pricing"], reasons
+
+    if doc_type == "faq" or chunk_type == "faq":
+        reasons.append("authority=faq_support_page (document_type/category faq)")
+        return "faq_support_page", DOCUMENT_AUTHORITY_TIERS["faq_support_page"], reasons
+
+    # 2. URL pattern matching
+    for pattern, tier in _AUTHORITY_URL_TIERS:
+        if re.search(pattern, url):
+            reasons.append(f"authority={tier} (url pattern)")
+            return tier, DOCUMENT_AUTHORITY_TIERS[tier], reasons
+
+    # 3. Title/filename pattern matching
+    for pattern, tier in _AUTHORITY_TITLE_TIERS:
+        if re.search(pattern, title):
+            reasons.append(f"authority={tier} (title match)")
+            return tier, DOCUMENT_AUTHORITY_TIERS[tier], reasons
+        if re.search(pattern, filename):
+            reasons.append(f"authority={tier} (filename match)")
+            return tier, DOCUMENT_AUTHORITY_TIERS[tier], reasons
+
+    # 4. Content/keyword-based classification
+    if any(k in hay for k in _MIGRATION_KEYWORDS):
+        reasons.append("authority=migration_notice (keyword)")
+        return "migration_notice", DOCUMENT_AUTHORITY_TIERS["migration_notice"], reasons
+    if any(k in hay for k in _ARCHIVED_KEYWORDS):
+        reasons.append("authority=archived_legal (keyword)")
+        return "archived_legal", DOCUMENT_AUTHORITY_TIERS["archived_legal"], reasons
+    if any(k in hay for k in _CURRENT_KEYWORDS):
+        reasons.append(f"authority=current_pdf (current keyword)")
+        return "current_pdf", DOCUMENT_AUTHORITY_TIERS["current_pdf"], reasons
+
+    # 5. Category-based inference
+    if category in ("support", "faq", "help"):
+        reasons.append("authority=faq_support_page (category)")
+        return "faq_support_page", DOCUMENT_AUTHORITY_TIERS["faq_support_page"], reasons
+    if category in ("retail", "accounts", "cards", "payments", "mortgages", "investments"):
+        reasons.append("authority=product_page (category)")
+        return "product_page", DOCUMENT_AUTHORITY_TIERS["product_page"], reasons
+
+    # 6. Default — generic page / current PDF
+    reasons.append("authority=unknown (default)")
+    return "unknown", DOCUMENT_AUTHORITY_TIERS["unknown"], reasons
+
+
+def score_document_authority(doc: Document) -> tuple[float, str, list[str]]:
+    """Return (authority_boost, authority_tier, reasons) for a document.
+
+    The boost is meant to be additive in source_priority(). It maps the
+    authority tier to a gain in [−0.30, +0.30] range.
+    """
+    tier, base, reasons = _classify_document_authority(doc)
+
+    # Scale from [0.1..1.0] to [-0.30..+0.30] centered at 0.50 → 0.0
+    boost = (base - 0.5) * 0.6
+    boost = round(max(-0.30, min(0.30, boost)), 4)
+
+    return boost, tier, reasons
+
+
+# ---------------------------------------------------------------------------
+# Priority 2 — Source Normalization UX
+# ---------------------------------------------------------------------------
+
+_SOURCE_CATEGORY_KEYWORDS: dict[str, list[str]] = {
+    # More specific categories checked first to avoid false matches
+    "pricing": [
+        "sazebnik", "cenik", "poplatky", "ceník", "sazebník",
+        "pricing", "fee-schedule",
+    ],
+    "legal": [
+        "podminky", "vseobecne", "obchodni", "smluvni",
+        "informacni-povinnost", "legal", "terms",
+    ],
+    "archived": [
+        "archiv", "archive", "archived", "migrace", "migration",
+        "historical", "historie",
+    ],
+    "migration": [
+        "migrace", "migration", "prechod", "prevod",
+    ],
+    "faq_support": [
+        "faq", "casto-kladene-dotazy", "navod", "manual",
+        "podpora", "support", "jak-na-to",
+    ],
+    "product_page": [
+        "produkt", "product", "kreditni-karty", "debetni-karty",
+        "osobni-ucet", "bezny-ucet", "hypoteka", "investice",
+    ],
+}
+
+_SOURCE_LABEL_MAP: dict[str, str] = {
+    "product_page": "Produktová stránka",
+    "faq_support": "FAQ / Návod",
+    "pricing": "Ceník",
+    "legal": "Obchodní podmínky",
+    "archived": "Archivní",
+    "migration": "Migrační dokument",
+}
+
+
+def _extract_year(text: str) -> int | None:
+    """Extract a 4-digit year (1950–2099) from text."""
+    if not text:
+        return None
+    matches = re.findall(r"\b(19[5-9]\d|20[0-4]\d|2050)\b", text)
+    if matches:
+        return int(matches[0])
+    return None
+
+
+def _guess_source_category(doc: Document) -> str:
+    """Classify source into a UX category based on metadata heuristics.
+
+    Returns one of: product_page, faq_support, pricing, legal, archived, unknown.
+    """
+    md = doc.metadata
+    url = str(md.get("source_url") or md.get("url") or "").lower()
+    title = str(md.get("title") or "").lower()
+    filename = str(md.get("file_name") or "").lower()
+    category = str(md.get("category") or "").lower()
+    chunk_type = str(md.get("chunk_type") or "").lower()
+    document_type = str(md.get("document_type") or "").lower()
+
+    # Do NOT include document_type in hay — it's an internal routing field, not a
+    # content signal. Including it would cause false matches (e.g. "product_page"
+    # matching the "product" keyword).
+    hay = f"{url} {title} {filename} {category} {chunk_type}"
+
+    # Check archived first (overrides other categories)
+    if is_archived_doc(doc):
+        return "archived"
+
+    for cat, keywords in _SOURCE_CATEGORY_KEYWORDS.items():
+        for kw in keywords:
+            if kw in hay:
+                return cat
+
+    # Fallback heuristics
+    if chunk_type == "pricing_row" or document_type == "pricing":
+        return "pricing"
+    if chunk_type == "faq":
+        return "faq_support"
+    if category in ("retail", "corporate", "business") and document_type:
+        return "product_page"
+
+    return "unknown"
+
+
+def _build_human_title(doc: Document) -> str:
+    """Build a human-readable title from metadata.
+
+    Priority:
+      1. Existing title (if not a hash/technical artifact)
+      2. URL path segments (cleaned)
+      3. Filename (cleaned)
+      4. Category + chunk_type fallback
+    """
+    md = doc.metadata
+    title = str(md.get("title") or "").strip()
+    url = str(md.get("source_url") or md.get("url") or "").strip()
+    filename = str(md.get("file_name") or "").strip()
+    category = str(md.get("category") or "").strip()
+    chunk_type = str(md.get("chunk_type") or "").strip()
+
+    # Is the title a hash/technical artifact?
+    def _is_hash(s: str) -> bool:
+        """Heuristic: long hex strings are technical artifacts."""
+        if len(s) < 10:
+            return False
+        hex_chars = sum(1 for ch in s if ch in "0123456789abcdef")
+        return hex_chars / max(len(s), 1) > 0.75
+
+    def _clean_filename(fn: str) -> str:
+        """Convert kebab/snake case filename to human readable."""
+        name = fn.rsplit(".", 1)[0] if "." in fn else fn  # strip extension
+        # Remove hash segments (e.g. _a043bb3907)
+        name = re.sub(r"_[a-f0-9]{8,}", "", name)
+        name = re.sub(r"[_-]", " ", name)
+        name = re.sub(r"\s+", " ", name).strip()
+        return name[:80]
+
+    def _clean_url_path(u: str) -> str:
+        """Extract meaningful path segments from RB URL."""
+        from urllib.parse import urlparse
+        try:
+            parsed = urlparse(u)
+            path = parsed.path.strip("/")
+            segments = [s for s in path.split("/") if s and s not in (
+                "cs", "en", "www.rb.cz", "rb.cz", "attachments",
+                "documents", "files", "download",
+            )]
+            if not segments:
+                return ""
+            # Convert kebab-case segments
+            readable = " — ".join(
+                re.sub(r"[-_]", " ", s).strip().title()
+                for s in segments[-3:]
+            )
+            return readable[:80]
+        except Exception:
+            return ""
+
+    # Priority 1: Use existing title if it's not a hash
+    if title and not _is_hash(title) and len(title) > 5:
+        return _clean_filename(title)
+
+    # Priority 2: Build from URL path
+    url_title = _clean_url_path(url)
+    if url_title:
+        return url_title
+
+    # Priority 3: Clean filename
+    if filename and not _is_hash(filename):
+        cleaned = _clean_filename(filename)
+        if cleaned and len(cleaned) > 3:
+            return cleaned
+
+    # Priority 4: Category-based fallback
+    category_map = {
+        "retail": "Produktová stránka — Retail",
+        "corporate": "Produktová stránka — Corporate",
+        "business": "Produktová stránka — Business",
+        "investing": "Investiční dokument",
+        "insurance": "Pojištění",
+    }
+    if category in category_map:
+        return category_map[category]
+
+    if chunk_type:
+        return f"Dokument — {chunk_type.replace('_', ' ').title()}"
+
+    return "Dokument — RB"
+
+
+def _build_display_url(url: str) -> str:
+    """Shorten a URL for display (strip protocol, params, truncate)."""
+    if not url:
+        return ""
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        path = parsed.path.strip("/")
+        # Show domain + meaningful path
+        domain = parsed.netloc or parsed.hostname or "rb.cz"
+        segments = path.split("/")
+        # Keep last 2-3 meaningful segments
+        meaningful = [s for s in segments if s and s not in (
+            "cs", "en", "attachments", "documents", "files", "download",
+        )]
+        tail = "/".join(meaningful[-2:]) if meaningful else ""
+        display = f"{domain}/{tail}" if tail else domain
+        return display[:60]
+    except Exception:
+        return url[:60]
+
+
+def _find_source_year(doc: Document) -> int | None:
+    """Extract the most reliable year from document metadata."""
+    md = doc.metadata
+
+    # Direct date fields
+    for field in ("date", "doc_date", "source_date", "year", "document_date"):
+        val = md.get(field)
+        if val:
+            year = _extract_year(str(val))
+            if year:
+                return year
+
+    # URL
+    url = str(md.get("source_url") or md.get("url") or "")
+    year = _extract_year(url)
+    if year:
+        return year
+
+    # Title
+    title = str(md.get("title") or "")
+    year = _extract_year(title)
+    if year:
+        return year
+
+    # Filename
+    filename = str(md.get("file_name") or "")
+    year = _extract_year(filename)
+    if year:
+        return year
+
+    return None
+
+
+def generate_why_this_source(doc: Document, query_profile: QueryProfile | None = None) -> str:
+    """Produce a human-readable explanation of why this source was selected.
+
+    Args:
+        doc: The source document.
+        query_profile: Optional query profile for context-aware explanations.
+
+    Returns:
+        A Czech-language sentence explaining why this source was retrieved.
+    """
+    md = doc.metadata
+    url = str(md.get("source_url") or md.get("url") or "")
+    title = str(md.get("title") or str(md.get("file_name") or ""))
+    chunk_type = str(md.get("chunk_type") or "")
+    category = str(md.get("category") or "")
+    authority_tier = str(md.get("authority_tier") or "")
+    is_archived = md.get("is_archived") or md.get("is_discontinued")
+
+    parts: list[str] = []
+
+    # Authority
+    if authority_tier:
+        tier_labels = {
+            "product_page": "produktová stránka RB",
+            "faq_support_page": "FAQ / podpora RB",
+            "current_pricing": "aktuální ceník RB",
+            "generic_page": "běžná stránka RB",
+            "historical_pdf": "historický dokument",
+            "migration_notice": "migrační oznámení",
+            "archived_legal": "archivní právní dokument",
+        }
+        tier_name = tier_labels.get(authority_tier, authority_tier.replace("_", " "))
+        parts.append(f"zdroj typu {tier_name}")
+
+    # Content match
+    if chunk_type:
+        chunk_labels = {
+            "pricing_row": "obsahuje konkrétní cenový údaj",
+            "faq": "odpovídá na častý dotaz",
+            "product_overview": "popisuje produkt",
+            "table": "obsahuje strukturovaná data",
+        }
+        label = chunk_labels.get(chunk_type, f"typ {chunk_type}")
+        parts.append(label)
+
+    # Category and intent
+    if query_profile:
+        intent_labels = {
+            "pricing": "poplatek / cena",
+            "account_overview": "informace o účtu",
+            "card_overview": "informace o kartě",
+            "credit_card": "kreditní karta",
+            "rb_key_overview": "RB Klíč / autorizace",
+            "payment_overview": "platby / převody",
+            "sepa_swift_overview": "zahraniční platby",
+            "mortgage_overview": "hypotéka",
+            "investment_overview": "investice",
+        }
+        matched_intents = [v for k, v in intent_labels.items() if k in query_profile.labels]
+        if matched_intents:
+            parts.append(f"odpovídá tématu {' / '.join(matched_intents[:3])}")
+
+    if category:
+        parts.append(f"kategorie {category}")
+
+    # Freshness
+    if is_archived:
+        parts.append("archivní dokument — informace nemusí být aktuální")
+    else:
+        parts.append("aktuální dokument")
+
+    if not parts:
+        return "Zdroj byl vybrán na základě relevance k dotazu."
+
+    return "Zdroj byl vybrán, protože " + ", ".join(parts) + "."
+
+
+# ---------------------------------------------------------------------------
+# Priority 4 — Retrieval Explainability
+# ---------------------------------------------------------------------------
+
+def _build_retrieval_reason(doc: Document, category: str) -> str | None:
+    """Explain why this source was retrieved (not just ranked high)."""
+    md = doc.metadata
+    retrieval_reasons = md.get("retrieval_reasons") or []
+    if retrieval_reasons:
+        for reason in retrieval_reasons:
+            if "no_unambiguous_current_pricing" in str(reason):
+                return "Varovný dokument — neexistuje jednoznačný aktuální ceník"
+            if "canonical" in str(reason).lower():
+                return "Kanonický zdroj pro daný produkt"
+            if "pricing_warning" in str(reason).lower():
+                return "Upozornění na chybějící ceník"
+        return retrieval_reasons[0] if isinstance(retrieval_reasons[0], str) else None
+
+    if category == "pricing":
+        return "Ceníkový dokument relevantní k dotazu"
+    if category == "product_page":
+        return "Produktová stránka odpovídající dotazu"
+    if category == "faq_support":
+        return "FAQ / podpora relevantní k dotazu"
+    return "Vyhledáno na základě relevance"
+
+
+def _build_authority_reason(doc: Document) -> str | None:
+    """Explain why this source's authority level was assigned."""
+    _, authority_tier, reasons = _classify_document_authority(doc)
+    if reasons:
+        # Clean up internal prefix for display
+        clean = []
+        for r in reasons:
+            r = r.replace("authority=", "")
+            clean.append(r)
+        return "; ".join(clean[:2])
+    return None
+
+
+def normalize_source_metadata(doc: Document) -> dict[str, Any]:
+    """Produce human-readable UX metadata for a source document.
+
+    Returns a dict with keys:
+      - human_title (str): cleaned, readable title
+      - display_url (str): shortened URL for display
+      - source_year (int | None): extracted year
+      - current_or_archived (str): badge label ('Aktuální' | 'Archivní' | 'FAQ' | 'Ceník' atd.)
+      - source_category (str): classification (product_page, faq_support, pricing, …)
+      - source_label (str): short UX label
+      - why_this_source (str): human-readable explanation
+      - trust_score (float): overall trust score 0-1
+      - authority_weight (float): document authority component
+      - recency_weight (float): document recency component
+      - stability_weight (float): document stability component
+      - authority_tier (str): authority tier name
+    """
+    md = doc.metadata
+    url = str(md.get("source_url") or md.get("url") or "")
+
+    human_title = _build_human_title(doc)
+    display_url = _build_display_url(url)
+    source_year = _find_source_year(doc)
+    source_category = _guess_source_category(doc)
+
+    # Badge logic
+    if source_category == "archived":
+        current_or_archived = "Archivní"
+    elif source_category == "faq_support":
+        current_or_archived = "FAQ"
+    elif source_category == "pricing":
+        current_or_archived = "Ceník"
+    elif source_category == "product_page":
+        current_or_archived = "Aktuální"
+    elif source_category == "legal":
+        current_or_archived = "Podmínky"
+    else:
+        current_or_archived = "Dokument"
+
+    source_label = _SOURCE_LABEL_MAP.get(source_category, "Dokument")
+
+    # Priority 5: Source UX refinement — context label and relevance reason
+    source_context_label = _build_source_context_label(doc, source_category)
+    source_relevance_reason = _build_source_relevance_reason(doc, source_category)
+
+    # Priority 2b: Trust scoring
+    trust = compute_source_trust(doc)
+
+    # Priority 1b: Freshness governance
+    freshness = compute_source_freshness(doc)
+
+    return {
+        "human_title": human_title[:100],
+        "display_url": display_url[:80],
+        "source_year": source_year,
+        "current_or_archived": current_or_archived,
+        "source_category": source_category,
+        "source_label": source_label,
+        "source_context_label": source_context_label,
+        "source_relevance_reason": source_relevance_reason,
+        # Trust scoring (P2)
+        "trust_score": trust["trust_score"],
+        "authority_weight": trust["authority_weight"],
+        "recency_weight": trust["recency_weight"],
+        "stability_weight": trust["stability_weight"],
+        "authority_tier": trust["authority_tier"],
+        # Freshness governance (P1)
+        "source_freshness_bucket": freshness["source_freshness_bucket"],
+        "freshness_priority_score": freshness["freshness_priority_score"],
+        "stale_source_suppressed": freshness["stale_source_suppressed"],
+        "effective_date": freshness["effective_date"],
+        "valid_from": freshness["valid_from"],
+        "valid_to": freshness["valid_to"],
+        "freshness_reason": freshness["freshness_reason"],
+        # Retrieval explainability (P4)
+        "retrieval_reason": _build_retrieval_reason(doc, source_category),
+        "authority_reason": _build_authority_reason(doc),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Priority 2b — Source Trust Scoring
+# ---------------------------------------------------------------------------
+
+_TRUST_RECENCY_CURRENT_YEAR = 2026
+
+# How many years back is still considered "current" for stability
+_TRUST_STABILITY_YEARS_THRESHOLD = 2
+
+
+def compute_source_trust(doc: Document) -> dict[str, Any]:
+    """Compute trust scoring components for a source document.
+
+    Returns a dict with:
+      - trust_score (float): overall 0-1 trust score
+      - authority_weight (float): authority tier → 0.0-1.0
+      - recency_weight (float): how recent the document is → 0.0-1.0
+      - stability_weight (float): how stable/established → 0.0-1.0
+      - authority_tier (str): the authority tier name
+    """
+    md = doc.metadata
+    _, authority_tier, _ = _classify_document_authority(doc)
+    base_authority = DOCUMENT_AUTHORITY_TIERS.get(authority_tier, 0.5)
+
+    # Extract metadata strings early for all sub-computations
+    url = str(md.get("source_url") or md.get("url") or "").lower()
+    title = str(md.get("title") or "").lower()
+    filename = str(md.get("file_name") or "").lower()
+    chunk_type = str(md.get("chunk_type") or "").lower()
+    doc_type = str(md.get("document_type") or "").lower()
+    category = str(md.get("category") or "").lower()
+    hay = " ".join([url, title, filename])
+
+    # 1. Authority weight (0.0-1.0, normalized from existing tiers)
+    authority_weight = base_authority
+
+    # 2. Recency weight (0.0-1.0)
+    source_year = _find_source_year(doc)
+    if source_year is not None:
+        age = _TRUST_RECENCY_CURRENT_YEAR - source_year
+        if age <= 0:
+            recency_weight = 1.0  # Current year or future
+        elif age <= 1:
+            recency_weight = 0.95  # Last year
+        elif age <= 2:
+            recency_weight = 0.85  # 2 years old
+        elif age <= 3:
+            recency_weight = 0.70  # 3 years old
+        elif age <= 5:
+            recency_weight = 0.50  # 3-5 years
+        else:
+            recency_weight = 0.20  # Very old
+    else:
+        # No year — infer from metadata
+        if any(k in hay for k in _ARCHIVED_KEYWORDS):
+            recency_weight = 0.15
+        elif any(k in hay for k in _CURRENT_KEYWORDS):
+            recency_weight = 0.80
+        elif any(k in hay for k in _MIGRATION_KEYWORDS):
+            recency_weight = 0.30
+        else:
+            recency_weight = 0.60  # Neutral — assume reasonably current
+
+    # 3. Stability weight (0.0-1.0)
+    if doc_type == "faq" or chunk_type == "faq" or category in ("support", "faq", "help"):
+        stability_weight = 1.0
+    elif doc_type == "pricing" or "cenik" in filename or "sazebnik" in filename:
+        stability_weight = 0.90
+    elif category in ("retail", "accounts", "cards", "payments", "mortgages", "investments"):
+        stability_weight = 0.85
+    elif "product_page" in authority_tier:
+        stability_weight = 0.90
+    elif "migration" in authority_tier:
+        stability_weight = 0.15
+    elif "archived" in authority_tier or "historical" in authority_tier:
+        stability_weight = 0.10
+    elif "faq_support" in authority_tier:
+        stability_weight = 1.0
+    else:
+        stability_weight = 0.70
+
+    # 4. Combined trust score (weighted average)
+    trust_score = round(
+        0.50 * authority_weight +
+        0.25 * recency_weight +
+        0.25 * stability_weight,
+        4,
+    )
+
+    return {
+        "trust_score": trust_score,
+        "authority_weight": round(authority_weight, 4),
+        "recency_weight": round(recency_weight, 4),
+        "stability_weight": round(stability_weight, 4),
+        "authority_tier": authority_tier,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Priority 1b — Source Freshness Governance
+# ---------------------------------------------------------------------------
+
+_FRESHNESS_CURRENT_YEAR = 2026
+
+
+def compute_source_freshness(doc: Document) -> dict[str, Any]:
+    """Compute source freshness bucket and priority score.
+
+    Returns a dict with:
+      - source_freshness_bucket (str): "current" | "recent" | "stale" | "archived"
+      - freshness_priority_score (float): 0.0–1.0 priority for ranking
+      - stale_source_suppressed (bool): whether source should be suppressed
+      - effective_date (str | None): extracted effective date
+      - valid_from (str | None): extraction of valid-from date if available
+      - valid_to (str | None): extraction of valid-to date if available
+      - freshness_reason (str): human-readable reason
+    """
+    md = doc.metadata
+    source_year = _find_source_year(doc) or md.get("document_year")
+    try:
+        year_int = int(source_year) if source_year else None
+    except (ValueError, TypeError):
+        year_int = None
+
+    url = str(md.get("source_url") or md.get("url") or "").lower()
+    title = str(md.get("title") or "").lower()
+    filename = str(md.get("file_name") or "").lower()
+    hay = " ".join([url, title, filename])
+
+    is_archived = bool(md.get("is_archived") or md.get("is_discontinued"))
+    if not is_archived:
+        is_archived = any(
+            term in hay for term in _ARCHIVED_KEYWORDS
+        ) or any(
+            term in hay for term in ("již nenabízené", "jiz nenabizene", "discontinued", "staré produkty", "stare produkty")
+        )
+
+    is_migration = any(term in hay for term in _MIGRATION_KEYWORDS)
+
+    # Determine bucket
+    if is_archived or is_migration:
+        bucket = "archived"
+    elif year_int is not None:
+        age = _FRESHNESS_CURRENT_YEAR - year_int
+        if age <= 0:
+            bucket = "current"
+        elif age <= 2:
+            bucket = "recent"
+        elif age <= 5:
+            bucket = "stale"
+        else:
+            bucket = "archived"
+    else:
+        # No year — guess from metadata
+        if any(k in hay for k in _CURRENT_KEYWORDS):
+            bucket = "recent"
+        elif is_archived:
+            bucket = "archived"
+        else:
+            bucket = "current"  # Neutral default
+
+    # Freshness priority score (0.0–1.0, for ranking use)
+    if bucket == "current":
+        priority_score = 1.0
+    elif bucket == "recent":
+        priority_score = 0.7
+    elif bucket == "stale":
+        priority_score = 0.3
+    else:  # archived
+        priority_score = 0.1
+
+    # Stale/stale suppression
+    stale_source_suppressed = bucket in ("stale", "archived")
+
+    # Human-readable reason
+    freshness_reasons: list[str] = []
+    if bucket == "current":
+        freshness_reasons.append("aktuální zdroj")
+    elif bucket == "recent":
+        freshness_reasons.append("relativně recentní zdroj")
+    elif bucket == "stale":
+        freshness_reasons.append("zastaralý zdroj")
+    else:
+        freshness_reasons.append("archivní / migrační zdroj")
+
+    if stale_source_suppressed:
+        freshness_reasons.append("potlačen při konfliktu s aktuálním zdrojem")
+
+    # Extract effective/valid dates from metadata
+    effective_date = str(md.get("effective_date") or md.get("date") or "")
+    valid_from = str(md.get("valid_from") or md.get("valid_from_date") or "")
+    valid_to = str(md.get("valid_to") or md.get("valid_to_date") or "")
+
+    return {
+        "source_freshness_bucket": bucket,
+        "freshness_priority_score": priority_score,
+        "stale_source_suppressed": stale_source_suppressed,
+        "effective_date": effective_date or None,
+        "valid_from": valid_from or None,
+        "valid_to": valid_to or None,
+        "freshness_reason": " — ".join(freshness_reasons) if freshness_reasons else None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Priority 2a — Source Normalization UX (continued)
+# ---------------------------------------------------------------------------
+
+def _build_source_context_label(doc: Document, category: str) -> str | None:
+    """Build a short contextual label for the source (e.g. 'Sekce: Poplatky').
+
+    Extracts useful context from chunk metadata without relying on FAQ lookup.
+    """
+    md = doc.metadata
+    fee_type = str(md.get("fee_type") or "").strip()
+    product_name = str(md.get("product_name") or "").strip()
+    chunk_type = str(md.get("chunk_type") or "").strip()
+    document_type = str(md.get("document_type") or "").strip()
+    title = str(md.get("title") or "").strip()
+
+    # Pricing context
+    if category == "pricing" and fee_type and fee_type not in ("", "Upozornění"):
+        return f"Položka: {fee_type[:60]}"
+
+    # Product context
+    if product_name and product_name not in ("Upozornění", "Upřesnění"):
+        return f"Produkt: {product_name[:60]}"
+
+    # Section from title
+    if title and len(title) > 5 and not any(
+        marker in title.lower() for marker in ("hash", "sha", "md5")
+    ):
+        return f"Sekce: {title[:60].replace('_', ' ').title()}"
+
+    # Document type context
+    if document_type and document_type != "unknown":
+        return f"Typ: {document_type.replace('_', ' ').title()}"
+
+    return None
+
+
+def _build_source_relevance_reason(doc: Document, category: str) -> str | None:
+    """Build a short human-readable explanation of why this source was selected.
+
+    Based on source category and retrieval metadata (not LLM-generated).
+    """
+    md = doc.metadata
+    retrieval_reasons = md.get("retrieval_reasons") or []
+
+    # Check for specific retrieval reasons
+    for reason in retrieval_reasons:
+        if "no_unambiguous_current_pricing" in str(reason):
+            return None  # Don't show relevance for warning docs
+        if "canonical" in str(reason).lower():
+            return "Hlavní zdroj pro daný produkt"
+        if "overview" in str(reason).lower():
+            return "Přehledová informace o produktu"
+
+    # Category-based reasons
+    if category == "pricing":
+        return "Ceníková položka relevantní k dotazu"
+    if category == "product_page":
+        return "Oficiální stránka produktu"
+    if category == "faq_support":
+        return "FAQ odpovídající tématu dotazu"
+    if category == "legal":
+        return "Obchodní podmínky vztahující se k dotazu"
+    if category == "archived":
+        return "Archivní dokument — informace nemusí být aktuální"
+
+    return None

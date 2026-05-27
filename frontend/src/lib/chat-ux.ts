@@ -21,6 +21,8 @@ export function userConfidenceReason(reason?: string | null): string {
 	if (value.includes('unsupported')) return 'Téma je mimo spolehlivý rozsah tohoto asistenta.';
 	if (value.includes('guided flow')) return 'Jde o doporučený postup pro danou situaci.';
 	if (value.includes('identity')) return 'Toto je systémová odpověď asistenta.';
+	if (value.includes('přesměrováno') || value.includes('overview_fallback')) return 'Konkrétní ceník není k dispozici — odpověď vychází z popisu produktu.';
+	if (value.includes('degrad')) return 'Odpověď je náhradním řešením — doporučujeme ověřit v oficiálních zdrojích.';
 	return 'Doporučujeme odpověď ověřit podle oficiálních podkladů RB.';
 }
 
@@ -29,6 +31,7 @@ export function isGuidedFlow(message: Message): boolean {
 }
 
 export function isUnsupported(message: Message): boolean {
+	if (message.answer_strategy === 'overview_fallback') return false;
 	return Boolean(message.unsupported_reason) || message.answer_strategy === 'unsupported_direct' || message.answer_strategy === 'fallback_no_answer';
 }
 

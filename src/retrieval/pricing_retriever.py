@@ -35,6 +35,7 @@ CANONICAL_PRODUCT_LABELS = {
     "apple_google_pay": "Apple Pay / Google Pay",
     "ekonto_osobni": "osobní eKonto",
     "ekonto_podnikatelske": "podnikatelské eKonto",
+    "basic_payment_account": "Základní platební účet",
 }
 
 
@@ -79,12 +80,14 @@ _QUERY_PRODUCT_SYNONYMS: dict[str, tuple[str, ...]] = {
     "ekonto_podnikatelske": (
         "podnikatelske ekonto", "podnikatelsky ekonto", "ekonto podnikatelske",
         "business ekonto", "ekonto pro podnikatele", "ekonto osvc",
+        "podnikatelskeho ekonta",
     ),
     "podnikatelsky_ucet": (
         "podnikatelsky ucet", "podnikatelske konto", "podnikatelske ekonto",
         "business ucet", "ucet pro podnikatele", "podnikatele", "osvc",
+        "podnikatelskeho uctu",
     ),
-    "firemni_ucet": ("firemni ucet", "ucet pro firmu", "firemni konto", "firmy", "firma", "pravnicke osoby"),
+    "firemni_ucet": ("firemni ucet", "ucet pro firmu", "firemni konto", "firmy", "firma", "pravnicke osoby", "firemniho uctu"),
     "kreditni_karta": ("kreditni karta", "kreditni karty", "kreditka", "credit card"),
     "debetni_karta": ("debetni karta", "debetni karty", "debitni karta", "debitni karty", "debetka", "debit card"),
     "hypoteky": ("hypoteka", "hypotecni", "hypoteky"),
@@ -94,6 +97,7 @@ _QUERY_PRODUCT_SYNONYMS: dict[str, tuple[str, ...]] = {
     "sepa_swift": ("sepa", "swift", "zahranicni platba", "zahranicni platby", "eur platba"),
     "apple_google_pay": ("apple pay", "google pay", "mobilni platby", "placeni mobilem"),
     "osobni_ucet": ("bezny ucet", "bezneho uctu", "bezneho ucetu", "osobni ucet", "soukromy ucet", "ucet pro osobni pouziti"),
+    "basic_payment_account": ("zakladni platebni ucet", "zakladniho platebniho uctu", "social ucet", "chraneny ucet"),
 }
 
 _ROW_PRODUCT_SYNONYMS: dict[str, tuple[str, ...]] = {
@@ -107,7 +111,8 @@ _ROW_PRODUCT_SYNONYMS: dict[str, tuple[str, ...]] = {
     "pujcky": ("pujck", "uver", "spotrebitelsk"),
     "sporeni": ("sporic", "sporeni", "terminovan"),
     "investice": ("investic", "fond", "dluhopis", "akci"),
-    "osobni_ucet": ("osobni", "soukrome", "soukromé", "zakladni platebni ucet", "bezny ucet"),
+    "osobni_ucet": ("osobni", "soukrome", "soukromé", "bezny ucet"),
+    "basic_payment_account": ("zakladni platebni ucet", "social account", "chraneny ucet", "chráněný účet", "vulnerable"),
 }
 
 _GENERIC_EKONTO_ALIASES: tuple[str, ...] = ("ekonto", "e konto", "e-konto", "ekonta")
@@ -151,6 +156,54 @@ def detect_query_product(query: str) -> tuple[str | None, float, str]:
         if "ucet pro firmu" in q:
             return "firemni_ucet", 0.95, "synonym=ucet_pro_firmu->firmy"
     return best
+
+
+_MAINSTREAM_PRODUCT_PATTERNS = (
+    r"\bekonto\b",
+    r"\bekonto smart\b",
+    r"\baktivní účet\b",
+    r"\baktivni ucet\b",
+    r"\bchytry ucet\b",
+    r"\bchytry ucet\b",
+)
+
+
+def _is_mainstream_row(row: dict) -> bool:
+    """True if row represents a currently-marketed mainstream retail product."""
+    if row.get("mainstream_product") is True:
+        return True
+    text = _norm(_row_text(row))
+    return any(re.search(p, text, flags=re.IGNORECASE) for p in _MAINSTREAM_PRODUCT_PATTERNS)
+
+
+def _is_basic_payment_account_row(row: dict) -> bool:
+    """True if row represents a basic payment account (Základní platební účet)."""
+    text = _norm(_row_text(row))
+    return any(
+        _contains_phrase(text, alias)
+        for alias in _ROW_PRODUCT_SYNONYMS.get("basic_payment_account", ())
+    )
+
+
+def _is_niche_product_row(row: dict) -> bool:
+    """True if row is a niche/social/deprecated/legacy product, NOT mainstream retail."""
+    if row.get("is_archived") is True or row.get("is_discontinued") is True:
+        return True
+    if _is_basic_payment_account_row(row):
+        return True
+    return False
+
+
+def _is_basic_payment_account_query(query: str) -> bool:
+    """True if query explicitly targets a basic payment account."""
+    q = _norm(query)
+    for alias in _QUERY_PRODUCT_SYNONYMS.get("basic_payment_account", ()):
+        if alias in q:
+            return True
+    # Also check for vulnerable/social banking semantics
+    if any(token in q for token in ("socialni", "chraneny", "vulnerable", "social")):
+        return True
+    return False
 
 
 def canonical_product_for_row(row: dict) -> set[str]:
@@ -221,6 +274,8 @@ def _warning_doc(query: str, profile: QueryProfile, debug: dict[str, object], *,
         "query_labels": sorted(profile.labels),
         "retrieval_reasons": ["no_unambiguous_current_pricing_for_canonical_product"],
         "retrieval_debug": debug,
+        # Graceful degradation signal: no real pricing data available
+        "pricing_warning": True,
     }
     logger.info(f"PricingRetriever: query='{query[:60]}' → ambiguity/no-current-pricing warning")
     return Document(page_content=content, metadata=meta)

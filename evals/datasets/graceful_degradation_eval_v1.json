@@ -1,0 +1,66 @@
+[
+  {
+    "id": "gd-001",
+    "question": "Kolik stojí osobní eKonto?",
+    "expected_behavior": "overview_fallback",
+    "forbidden_behaviors": ["unsupported", "dead-end", "pricing_hallucination"],
+    "expected_confidence": "medium",
+    "expected_strategy": "overview_fallback",
+    "check_contains": ["Osobní eKonto", "ceník", "variant"],
+    "check_not_contains": ["nepodařilo", "nenalezl", "kontaktujte"],
+    "notes": "Graceful degradation from pricing → safe overview"
+  },
+  {
+    "id": "gd-002",
+    "question": "Jaký je poplatek za vedení podnikatelského eKonta?",
+    "expected_behavior": "overview_fallback",
+    "forbidden_behaviors": ["unsupported", "dead-end", "pricing_hallucination"],
+    "expected_confidence": "medium",
+    "expected_strategy": "overview_fallback",
+    "check_contains": ["Podnikatelské eKonto", "účet"],
+    "check_not_contains": ["nepodařilo", "nenalezl"],
+    "notes": "Same but for business account"
+  },
+  {
+    "id": "gd-003",
+    "question": "Máte kreditní kartu s cestovním pojištěním?",
+    "expected_behavior": "overview_fallback_or_card_overview",
+    "forbidden_behaviors": ["unsupported", "pricing_hallucination"],
+    "expected_confidence_in": ["medium", "high"],
+    "expected_strategy_in": ["overview_fallback", "card_overview_direct", "credit_card_catalog_direct"],
+    "check_contains": ["kreditní", "karta"],
+    "check_not_contains": ["nepodařilo"],
+    "notes": "Card overview — should not fall to unsupported"
+  },
+  {
+    "id": "gd-004",
+    "question": "Jak zvýším limit na kartě?",
+    "expected_behavior": "procedural_or_guided",
+    "forbidden_behaviors": ["unsupported"],
+    "expected_strategy_in": ["guided_flow_direct", "procedural_flow_direct"],
+    "check_not_contains": ["nepodařilo", "nenalezl", "kontaktujte"],
+    "notes": "Should route to procedural/guided, not unsupported"
+  },
+  {
+    "id": "gd-005",
+    "question": "Jaká je úroková sazba hypotéky?",
+    "expected_behavior": "overview_fallback_or_unsupported",
+    "forbidden_behaviors": ["pricing_hallucination"],
+    "expected_confidence_in": ["medium"],
+    "expected_strategy_in": ["overview_fallback", "mortgage_overview_direct"],
+    "check_contains": ["hypoté"],
+    "check_not_contains": ["nepodařilo"],
+    "notes": "Mortgage overview — should not hallucinate rate"
+  },
+  {
+    "id": "gd-006",
+    "question": "Máte debetní kartu s bezkontaktním placením?",
+    "expected_behavior": "overview",
+    "forbidden_behaviors": ["unsupported", "pricing_hallucination"],
+    "expected_confidence_in": ["medium"],
+    "expected_strategy_in": ["overview_fallback", "card_overview_direct"],
+    "check_contains": ["karta", "bezkontakt"],
+    "check_not_contains": ["nepodařilo"],
+    "notes": "Card feature query — overview safe"
+  }
+]

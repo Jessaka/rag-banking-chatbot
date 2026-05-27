@@ -157,6 +157,54 @@ LLM_MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "1024"))
 CONVERSATION_HISTORY_LIMIT: int = 6  # Počet posledních zpráv v historii
 
 # ---------------------------------------------------------------------------
+# Response cache (Priority 1) — route-specific TTLs
+# ---------------------------------------------------------------------------
+CACHE_MAX_ENTRIES: int = int(os.getenv("CACHE_MAX_ENTRIES", "500"))
+
+# ---------------------------------------------------------------------------
+# Redis / distributed storage (Priority 1)
+# ---------------------------------------------------------------------------
+# Feature flags — set to "1" to enable Redis-backed storage.
+# When Redis is unavailable, falls back gracefully to in-memory.
+USE_REDIS_CACHE: bool = os.getenv("USE_REDIS_CACHE", "").lower() in ("1", "true", "yes")
+USE_REDIS_SESSIONS: bool = os.getenv("USE_REDIS_SESSIONS", "").lower() in ("1", "true", "yes")
+
+# Redis connection
+REDIS_HOST: str = os.getenv("REDIS_HOST", "localhost")
+REDIS_PORT: int = int(os.getenv("REDIS_PORT", "6379"))
+REDIS_PASSWORD: str | None = os.getenv("REDIS_PASSWORD", None)
+REDIS_DB: int = int(os.getenv("REDIS_DB", "0"))
+REDIS_TIMEOUT: int = int(os.getenv("REDIS_TIMEOUT", "3"))  # socket connect timeout
+
+# Per-route TTL (seconds)
+
+CACHE_TTL_IDENTITY: int = int(os.getenv("CACHE_TTL_IDENTITY", "86400"))       # 24h
+CACHE_TTL_OVERVIEW: int = int(os.getenv("CACHE_TTL_OVERVIEW", "21600"))       # 6h
+CACHE_TTL_SOFT_GUIDANCE: int = int(os.getenv("CACHE_TTL_SOFT_GUIDANCE", "3600"))   # 1h
+CACHE_TTL_PROCEDURAL: int = int(os.getenv("CACHE_TTL_PROCEDURAL", "3600"))    # 1h
+CACHE_TTL_PRICING: int = int(os.getenv("CACHE_TTL_PRICING", "900"))           # 15 min
+
+# ---------------------------------------------------------------------------
+# Telemetry (JSONL event log)
+# ---------------------------------------------------------------------------
+TELEMETRY_ENABLED: bool = _env_bool("TELEMETRY_ENABLED", "false")
+TELEMETRY_LOG_PATH: str = os.getenv("TELEMETRY_LOG_PATH", "logs/telemetry.jsonl")
+TELEMETRY_QUERY_LOGGING: str = os.getenv("TELEMETRY_QUERY_LOGGING", "hashed").strip().lower()
+# TELEMETRY_QUERY_LOGGING: "full" | "hashed" | "none"
+
+# ---------------------------------------------------------------------------
+# Security / hardening
+# ---------------------------------------------------------------------------
+CORS_ALLOWED_ORIGINS: list[str] = [
+    origin.strip()
+    for origin in os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:4173,http://127.0.0.1:5173").split(",")
+    if origin.strip()
+]
+RATE_LIMIT_ENABLED: bool = _env_bool("RATE_LIMIT_ENABLED", "false")
+RATE_LIMIT_PER_MINUTE: int = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
+MAX_REQUEST_BODY_BYTES: int = int(os.getenv("MAX_REQUEST_BODY_BYTES", "10000"))  # 10 KB
+
+# ---------------------------------------------------------------------------
 # Zdroje PDF dokumentů Raiffeisenbank
 # ---------------------------------------------------------------------------
 # Výchozí seznam URL pro stažení (lze přepsat souborem data/sources.txt)
