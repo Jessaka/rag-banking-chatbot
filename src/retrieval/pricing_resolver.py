@@ -9,6 +9,7 @@ objects compatible with the current generation chain.
 from __future__ import annotations
 
 import re
+import threading
 from dataclasses import dataclass
 from typing import Any
 
@@ -752,3 +753,39 @@ def _billing_period(raw: str, period_norm: str) -> str:
     if any(token in combined for token in ("rocne", "year", "annual")):
         return "yearly"
     return "monthly"
+
+
+# ---------------------------------------------------------------------------
+# Query-level cache pro resolve_pricing_query
+# ---------------------------------------------------------------------------
+
+_RESOLVE_CACHE: dict[str, list[Document]] = {}
+_RESOLVE_CACHE_LOCK = threading.Lock()
+_RESOLVE_CACHE_MAX = 256
+
+
+def _cached_resolve_pricing_query(query: str, top_k: int = 5, min_score: float = 0.5) -> list[Document]:
+    """resolve_pricing_query s query-level cache (klíč: normalizovaný dotaz)."""
+    key = f"{_norm(query)}|{top_k}|{min_score}"
+    with _RESOLVE_CACHE_LOCK:
+        if key in _RESOLVE_CACHE:
+            return _RESOLVE_CACHE[key]
+    result = resolve_pricing_query(query, top_k=top_k, min_score=min_score)
+    with _RESOLVE_CACHE_LOCK:
+        if len(_RESOLVE_CACHE) >= _RESOLVE_CACHE_MAX:
+            # Vymaž nejstarší záznam (FIFO approximace)
+            _RESOLVE_CACHE.pop(next(iter(_RESOLVE_CACHE)))
+        _RESOLVE_CACHE[key] = result
+    return result
+
+
+class CanonicalPricingResolver:
+    """Thin wrapper kolem resolve_pricing_query s query-level LRU cache."""
+
+    def resolve(self, query: str, top_k: int = 5, min_score: float = 0.5) -> list[Document]:
+        return _cached_resolve_pricing_query(query, top_k=top_k, min_score=min_score)
+
+    @staticmethod
+    def cache_clear() -> None:
+        with _RESOLVE_CACHE_LOCK:
+            _RESOLVE_CACHE.clear()

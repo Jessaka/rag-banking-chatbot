@@ -21,7 +21,7 @@ from pydantic import Field
 
 import config
 from src.retrieval.hybrid import hybrid_search
-from src.retrieval.pricing_resolver import resolve_pricing_query
+from src.retrieval.pricing_resolver import _cached_resolve_pricing_query as resolve_pricing_query
 from src.retrieval.query_classifier import classify_query, is_archived_doc
 from src.retrieval.reranker import rerank
 from src.retrieval.url_product_filter import is_product_url
