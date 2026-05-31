@@ -42,8 +42,6 @@ logger = get_logger(__name__)
 NO_ANSWER_MARKERS = (
     "nenalezl jsem",
     "nenašel jsem",
-    "kontaktujte zákaznickou linku",
-    "kontaktujte podporu",
 )
 
 AMBIGUITY_PATTERNS = (
@@ -108,7 +106,7 @@ EKONTO_CLARIFICATION = (
 )
 
 GUIDED_FLOW_PATTERNS = (
-    (re.compile(r"(ztratil|ztratila|ztrata|ztráta|ukrad|odcizen).*(kart\w*)|blokac(e|i|e)\s+kart\w*", re.I), "card_blocking"),
+    (re.compile(r"(ztratil|ztratila|ztrata|ztráta|ukrad|odcizen).*(kart\w*)|blokac[ei]\w*\s+kart\w*|zablok\w+.*kart\w*|kart\w+.*zablok\w*", re.I), "card_blocking"),
     (re.compile(r"(co\s+m[aá]m\s+d[eě]lat|neoprávněn|neopravnen|podezřel).*(platb|transakc|karta)", re.I), "complaint"),
     (re.compile(r"(jak\s+zadat|údaje|udaje|iban|bic).*(sepa|swift|zahraničn|zahranicn)", re.I), "sepa_swift"),
     (re.compile(r"(rb\s+klíč|rb\s+klic).*(aktiv|nefung|odblok|přen|pren|telefon|mobil)", re.I), "rb_key"),
