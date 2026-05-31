@@ -59,6 +59,8 @@ def hybrid_search(
         Seřazený seznam Document objektů s metadatem `hybrid_score`.
     """
     query_profile = query_profile or classify_query(query)
+    if query_profile.hybrid_top_k > 0:
+        top_k = query_profile.hybrid_top_k
     expanded_query = expand_query(query, query_profile)
     retrieval_route = (
         "pricing" if "pricing" in query_profile.labels else

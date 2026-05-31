@@ -147,6 +147,7 @@ class QueryProfile:
     bm25_weight: float = 0.4
     vector_weight: float = 0.6
     rerank_min_score: float = 0.0
+    hybrid_top_k: int = 0
 
 
 def classify_query(query: str) -> QueryProfile:
@@ -308,6 +309,7 @@ def classify_query(query: str) -> QueryProfile:
     bm25_weight = 0.4
     vector_weight = 0.6
     rerank_min_score = 0.0
+    hybrid_top_k = 0
 
     if "pricing" in labels:
         bm25_weight = 0.65
@@ -453,6 +455,9 @@ def classify_query(query: str) -> QueryProfile:
             "mortgage_product",
             "product_catalog",
         )
+        if "mortgages" in labels:
+            rerank_min_score = -3.0
+            hybrid_top_k = 20
     # ---------------------------------------------------------------------
     # Vytvoření a vrácení QueryProfile (původní chování)
     # ---------------------------------------------------------------------
@@ -466,6 +471,7 @@ def classify_query(query: str) -> QueryProfile:
         bm25_weight=bm25_weight,
         vector_weight=vector_weight,
         rerank_min_score=rerank_min_score,
+        hybrid_top_k=hybrid_top_k,
     )
 
 
