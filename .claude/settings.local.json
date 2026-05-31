@@ -42,7 +42,26 @@
       "Bash(ldconfig -p)",
       "Bash(kill -HUP 366626)",
       "Bash(kill 366626)",
-      "Bash(nohup /usr/bin/python3 -m uvicorn src.api.main:app --host 127.0.0.1 --port 8000)"
+      "Bash(nohup /usr/bin/python3 -m uvicorn src.api.main:app --host 127.0.0.1 --port 8000)",
+      "Bash(pkill -f \"uvicorn src.api\")",
+      "Bash(grep -c \"\\\\.pdf$\")",
+      "Bash(grep -c \"\\\\.txt$\")",
+      "Bash(grep -v \"^$\\\\|import_timing\\\\|INFO\\\\|WARNING\")",
+      "Bash(grep -v \"^$\\\\|import_timing\\\\|INFO\\\\|WARNING\\\\|qdrant_client\")",
+      "Bash(grep -v \"^$\")",
+      "Bash(lsb_release -a)",
+      "Bash(pip3 show *)",
+      "Bash(pip3 install *)",
+      "Bash(snap list *)",
+      "Bash(apt-cache search *)",
+      "Bash(PLAYWRIGHT_BROWSERS_PATH=/tmp/pw-browsers python3 -m playwright install chromium --with-deps)",
+      "Bash(pip3 index *)",
+      "Bash(snap install *)",
+      "Bash(npx --yes puppeteer --version)",
+      "Bash(sudo apt-get install -y chromium-browser)",
+      "Bash(sudo apt-get install -y chromium)",
+      "Bash(PUPPETEER_SKIP_DOWNLOAD=true npm install puppeteer)",
+      "Bash(npx @puppeteer/browsers install chrome@stable)"
     ]
   }
 }
