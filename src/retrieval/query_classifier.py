@@ -650,10 +650,10 @@ def source_priority(doc: Document, profile: QueryProfile) -> tuple[float, list[s
             score += 0.240; reasons.append("account overview metadata/content boost")
         if "uniqa" in hay or "pojišťovna" in hay or "hypot" in hay:
             score -= 0.180; reasons.append("cross-domain penalty for account overview")
-    if "mortgage_overview" in profile.labels:
+    if "mortgage_overview" in profile.labels or "mortgages" in profile.labels:
         mortgage_terms = ("hypotéka", "hypoteka", "hypoteční", "hypotecni", "úvěr na bydlení", "uver na bydleni", "refinancování", "refinancovani")
         if any(k in hay for k in mortgage_terms):
-            score += 0.240; reasons.append("mortgage overview metadata/content boost")
+            score += 0.240; reasons.append("mortgage metadata/content boost")
         if "uniqa" in hay or "pojišťovna" in hay:
             score -= 0.180; reasons.append("cross-domain insurance penalty for mortgage overview")
     if "investment_overview" in profile.labels:
