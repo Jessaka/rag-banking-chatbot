@@ -945,6 +945,19 @@ async def lifespan(app: FastAPI):
     logger.info("Dokumentace: http://localhost:8000/docs")
     _startup_log("app", "completed")
 
+    # Warm-up: projde celou pipeline (BM25 + embedding + reranker) aby se
+    # vše načetlo do paměti před prvním uživatelským dotazem.
+    async def _warmup() -> None:
+        try:
+            t_wu = time.perf_counter()
+            chain = BankingRAGChain(conversational=False)
+            await asyncio.to_thread(chain.ask, "eKonto SMART poplatek")
+            logger.info(f"Warm-up complete ({(time.perf_counter() - t_wu) * 1000:.0f}ms)")
+        except Exception as exc:
+            logger.warning(f"Warm-up selhal (server pokračuje): {exc!s:.100}")
+
+    asyncio.ensure_future(_warmup())
+
     yield  # Server běží
 
     # Shutdown
