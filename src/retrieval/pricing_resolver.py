@@ -15,6 +15,7 @@ from typing import Any
 # Rychlý pre-filter před drahou canonical_product_for_row() regex analýzou.
 # Klíčová slova se kontrolují na product_name.lower() — O(1) substring check.
 # Musí být permisivní (false positive ok, false negative ne).
+# Termy jsou bez diakritiky (po _norm()) aby matchovaly i "Základní" → "zakladni"
 _CANONICAL_QUICK_TERMS: dict[str, tuple[str, ...]] = {
     "ekonto_osobni":         ("ekonto", "e konto", "e-konto", "chytry ucet", "aktivni ucet", "exkluzivni"),
     "ekonto_podnikatelske":  ("ekonto", "podnikatel", "business", "osvc"),
@@ -27,7 +28,7 @@ _CANONICAL_QUICK_TERMS: dict[str, tuple[str, ...]] = {
     "pujcky":                ("pujck", "uver", "spotreb"),
     "sporeni":               ("sporic", "sporeni", "terminovan", "vklad"),
     "investice":             ("investic", "fond", "dluhopis"),
-    "basic_payment_account": ("zakladni platebni", "chraneny", "social"),
+    "basic_payment_account": ("zakladni platebni", "chraneny ucet", "social", "zakladni platebni ucet"),
 }
 
 from langchain_core.documents import Document
@@ -472,7 +473,7 @@ def _candidate_rows(
         # Fast string pre-filter: O(1) substring check na product_name před drahou
         # canonical_product_for_row() analýzou (regex + phrase matching).
         if quick_terms:
-            pname = str(raw_row.get("product_name") or "").lower()
+            pname = _norm(str(raw_row.get("product_name") or ""))  # normalizace diakritiky
             if not any(t in pname for t in quick_terms):
                 continue
             # Exclusion: pro osobní ekonto vyřaď řádky s business signály

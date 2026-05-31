@@ -74,6 +74,10 @@ def load_pricing_rows(path: str | Path | None = None) -> list[dict]:
     return list(_load_pricing_rows_from_path(path_str))
 
 
+# Expose cache_clear so tests can invalidate between test cases
+load_pricing_rows.cache_clear = _load_pricing_rows_from_path.cache_clear  # type: ignore[attr-defined]
+
+
 def _row_text(row: dict) -> str:
     return " ".join(str(row.get(k) or "") for k in (
         "product_name", "fee_type", "fee_value", "currency", "period", "conditions", "title", "source_file", "category", "pricing_type"
