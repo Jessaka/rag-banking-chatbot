@@ -1,19 +1,21 @@
 """
-Reranking pomocí BGE-Reranker-v2-m3 (cross-encoder).
+Reranking pomocí NVIDIA NIM API (primární) nebo CrossEncoder CPU (fallback).
 
-Cross-encoder vyhodnotí každý pár (dotaz, chunk) společně,
-čímž dosáhne podstatně přesnější relevance než bi-encoder.
-Cena: lineární s počtem kandidátů → proto reranking probíhá
-až po hybridním pre-filtru, ne nad celou kolekcí.
+Primární: NVIDIA NIM llama-nemotron-rerank-vl-1b-v2
+  - Cloud inference, žádný lokální GPU potřeba
+  - ~200-400ms na batch 10 kandidátů
 
-Model: BAAI/bge-reranker-v2-m3
-  - Vícejazyčný, včetně češtiny
-  - Optimalizován pro RAG reranking
+Fallback: BAAI/bge-reranker-v2-m3 CrossEncoder (CPU)
+  - Aktivuje se pokud NVIDIA_API_KEY není nastaven nebo API selže
 """
 
 from __future__ import annotations
 
+import json
+import os
 import time
+import urllib.error
+import urllib.request
 from functools import lru_cache
 
 from langchain_core.documents import Document
@@ -24,37 +26,76 @@ from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Maximální počet kandidátů poslaných do rerankeru.
-# Snižuje latenci na CPU bez výrazné ztráty kvality (top-N je dostačující).
+_NVIDIA_API_KEY: str = os.getenv("NVIDIA_API_KEY", "")
+_NVIDIA_RERANK_URL = "https://ai.api.nvidia.com/v1/retrieval/nvidia/llama-nemotron-rerank-vl-1b-v2/reranking"
+_NVIDIA_MODEL = "nvidia/llama-nemotron-rerank-vl-1b-v2"
+
 _RERANK_CANDIDATES_CAP = 10
 
 
+# ---------------------------------------------------------------------------
+# NVIDIA NIM reranker
+# ---------------------------------------------------------------------------
+
+def _nvidia_rerank_scores(query: str, doc_contents: tuple[str, ...]) -> list[float] | None:
+    """Zavolá NVIDIA NIM reranking API. Vrátí None pokud API selže."""
+    if not _NVIDIA_API_KEY:
+        return None
+    payload = json.dumps({
+        "model": _NVIDIA_MODEL,
+        "query": {"text": query},
+        "passages": [{"text": t} for t in doc_contents],
+    }).encode()
+    req = urllib.request.Request(
+        _NVIDIA_RERANK_URL,
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {_NVIDIA_API_KEY}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.load(resp)
+        # Odpověď: {"rankings": [{"index": 0, "logit": 3.14}, ...]}
+        rankings = data.get("rankings", [])
+        scores_by_idx = {r["index"]: r["logit"] for r in rankings}
+        return [scores_by_idx.get(i, -99.0) for i in range(len(doc_contents))]
+    except Exception as exc:
+        logger.warning(f"NVIDIA NIM reranker selhal: {exc!s:.120} — přepínám na CrossEncoder")
+        return None
+
+
+# ---------------------------------------------------------------------------
+# CrossEncoder CPU fallback
+# ---------------------------------------------------------------------------
+
 @lru_cache(maxsize=1)
 def _load_reranker():
-    """Načte cross-encoder model (singleton)."""
+    """Načte CrossEncoder model (singleton, fallback)."""
     logger.info("Importuji sentence_transformers.CrossEncoder")
     t_import = time.perf_counter()
     from sentence_transformers import CrossEncoder
     logger.info(f"import_timing.sentence_transformers.CrossEncoder ms={(time.perf_counter() - t_import) * 1000:.1f}")
-
     logger.info(f"Načítám reranker: {config.RERANKER_MODEL}")
     t_model = time.perf_counter()
-    model = CrossEncoder(
-        config.RERANKER_MODEL,
-        device=config.RERANKER_DEVICE,
-        max_length=256,  # 512→256: ~2× rychlejší inference na CPU, minimální ztráta kvality
-    )
+    model = CrossEncoder(config.RERANKER_MODEL, device=config.RERANKER_DEVICE, max_length=256)
     logger.info(f"Reranker připraven model_load_ms={(time.perf_counter() - t_model) * 1000:.1f}")
     return model
 
 
 @lru_cache(maxsize=512)
-def _cached_predict(query: str, doc_contents: tuple[str, ...]) -> tuple[float, ...]:
-    """Predikuje skóre pro (query, docs) s LRU cache pro opakované dotazy."""
+def _cached_crossencoder_predict(query: str, doc_contents: tuple[str, ...]) -> tuple[float, ...]:
     model = _load_reranker()
     pairs = [(query, content) for content in doc_contents]
     return tuple(model.predict(pairs, batch_size=32).tolist())
 
+
+# ---------------------------------------------------------------------------
+# Unified rerank
+# ---------------------------------------------------------------------------
 
 def rerank(
     query: str,
@@ -64,52 +105,43 @@ def rerank(
     query_profile: QueryProfile | None = None,
 ) -> list[Document]:
     """
-    Přeřadí dokumenty podle cross-encoder relevance pro daný dotaz.
+    Přeřadí dokumenty podle relevance (NVIDIA NIM, fallback CrossEncoder).
 
     Args:
         query:     Uživatelský dotaz.
         documents: Kandidáti z hybridního vyhledávání.
         top_k:     Počet finálních výsledků.
-        min_score: Minimální sigmoid skóre pro zachování dokumentu.
-                   BGE reranker: relevantní ≈ 0.5–1.0, irelevantní ≈ 0.0.
-                   Výchozí hodnota (RERANK_MIN_SCORE=0.01) odfiltruje dokumenty
-                   jejichž rerank_score se zaokrouhlí na 0.0000 — ty jsou pro
-                   daný dotaz prakticky irelevantní.
+        min_score: Minimální skóre pro zachování dokumentu.
 
     Returns:
-        Dokumenty s rerank_score ≥ min_score, seřazené sestupně (max top_k).
-        Pokud žádný dokument neprojde prahem, vrátí nejlepší dokument bez ohledu
-        na skóre (záruka neprázdného výsledku pro chain.py).
+        Dokumenty seřazené sestupně (max top_k), splňující min_score.
     """
     if not documents:
         return []
     query_profile = query_profile or classify_query(query)
     min_score = max(min_score, query_profile.rerank_min_score)
 
-    # Cap kandidátů: omezíme počet párů pro rychlejší CPU inference
     candidates = documents[:_RERANK_CANDIDATES_CAP]
-
     doc_contents = tuple(doc.page_content for doc in candidates)
 
     t0 = time.perf_counter()
-    scores: list[float] = list(_cached_predict(query, doc_contents))
+    backend = "nvidia_nim"
+    scores = _nvidia_rerank_scores(query, doc_contents)
+    if scores is None:
+        backend = "crossencoder_cpu"
+        scores = list(_cached_crossencoder_predict(query, doc_contents))
     rerank_ms = (time.perf_counter() - t0) * 1000
 
-    ranked = sorted(
-        zip(candidates, scores),
-        key=lambda x: x[1],
-        reverse=True,
-    )
+    ranked = sorted(zip(candidates, scores), key=lambda x: x[1], reverse=True)
 
     results = []
     for doc, score in ranked[:top_k]:
         if score < min_score:
             break
-        enriched = Document(
+        results.append(Document(
             page_content=doc.page_content,
-            metadata={**doc.metadata, "rerank_score": round(score, 4)},
-        )
-        results.append(enriched)
+            metadata={**doc.metadata, "rerank_score": round(score, 4), "rerank_backend": backend},
+        ))
 
     if not results and ranked:
         logger.warning(
@@ -118,9 +150,9 @@ def rerank(
         )
 
     logger.info(
-        f"⏱ BGE reranking: {rerank_ms:.0f}ms "
+        f"⏱ Reranking [{backend}]: {rerank_ms:.0f}ms "
         f"({len(candidates)} párů → {len(results)} výsledků, "
         f"threshold: {min_score:.4f}, top score: {ranked[0][1]:.4f})"
-        if ranked else "⏱ BGE reranking: 0 výsledků"
+        if ranked else f"⏱ Reranking [{backend}]: 0 výsledků"
     )
     return results
