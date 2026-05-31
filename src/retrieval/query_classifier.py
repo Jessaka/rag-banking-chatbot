@@ -187,9 +187,10 @@ def classify_query(query: str) -> QueryProfile:
         labels.add("card_overview")
         labels.add("product_overview")
         labels.add("supported_domain")
-    if has_catalog_intent and "cards" in labels and "debet" not in q and (has_credit_card_term or "card_overview" not in labels):
+    if has_catalog_intent and "cards" in labels and "debet" not in q and (has_credit_card_term or has_card_overview_term or "card_overview" not in labels):
         labels.add("credit_card_catalog")
         labels.add("credit_card")
+        labels.discard("card_overview")    # credit_card_catalog má vyšší prioritu v chain.py
 
     # --- General supported product overview detection ---
     has_account_overview = has_catalog_intent and any(k in q for k in ACCOUNT_OVERVIEW_TERMS)
@@ -231,6 +232,12 @@ def classify_query(query: str) -> QueryProfile:
         labels.add("supported_domain")
         labels.add("sepa_swift")
         labels.add("payments")
+
+    # credit_card_catalog má v chain.py nižší prioritu než card_overview a payment_overview
+    # → odstraníme konflikty aby catalog strategie mohla vyhrát
+    if "credit_card_catalog" in labels:
+        labels.discard("card_overview")
+        labels.discard("payment_overview")
 
     # General catalog-without-unsupported-intent → safe product overview.
     if has_catalog_intent and "product_overview" not in labels and not any(k in q for k in ("krypto", "bitcoin", "ethereum", "nft")):

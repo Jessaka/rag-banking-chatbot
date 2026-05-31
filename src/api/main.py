@@ -951,8 +951,8 @@ async def lifespan(app: FastAPI):
         try:
             t_wu = time.perf_counter()
             chain = BankingRAGChain(conversational=False)
-            await asyncio.to_thread(chain.ask, "eKonto SMART poplatek")
-            logger.info(f"Warm-up complete ({(time.perf_counter() - t_wu) * 1000:.0f}ms)")
+            await asyncio.to_thread(chain.ask, "eKonto")
+            logger.info(f"Warm-up complete, ready ({(time.perf_counter() - t_wu) * 1000:.0f}ms)")
         except Exception as exc:
             logger.warning(f"Warm-up selhal (server pokračuje): {exc!s:.100}")
 
