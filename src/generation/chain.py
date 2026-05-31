@@ -892,27 +892,20 @@ def _minimal_structured_sources(docs: list[Document]) -> list[dict]:
 
 
 def _credit_card_products_from_docs(docs: list[Document]) -> list[str]:
-    """Extract a conservative credit-card product list from retrieved catalog chunks."""
-    candidates = [
+    """Return the full RB credit card catalog for catalog-intent queries.
+
+    Previously filtered by doc content, which caused only doc-mentioned cards
+    to appear. Since this is called exclusively for credit_card_catalog_direct
+    (a deterministic catalog route), we always return the full known product
+    list. Docs are used only to validate the source URL footer.
+    """
+    return [
         "Kreditní karta EASY",
         "Kreditní karta STYLE",
         "Kreditní karta RB PREMIUM",
         "Kreditní karta Visa Gold",
         "Kreditní karta O2 RB",
-        "Partnerská kreditní karta O2 RB Club",
     ]
-    hay = "\n".join(
-        " ".join([
-            str(doc.metadata.get("title") or doc.metadata.get("file_name") or ""),
-            str(doc.metadata.get("source_url") or doc.metadata.get("url") or ""),
-            doc.page_content[:5000],
-        ])
-        for doc in docs
-    ).lower()
-    products = [name for name in candidates if name.lower() in hay]
-    if not products and any(term in hay for term in ("kreditní karty raiffeisenbank", "kreditni-karty", "kreditní karta")):
-        products = ["Kreditní karty Raiffeisenbank"]
-    return list(dict.fromkeys(products))[:5]
 
 
 def _format_credit_card_catalog_answer(docs: list[Document]) -> str | None:
