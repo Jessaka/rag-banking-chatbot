@@ -568,10 +568,16 @@ class BankingRetriever(BaseRetriever):
                 return pricing_docs
 
         # Krok 1: Hybridní pre-filtr (BM25 + Qdrant + RRF)
+        # Widen the RRF pool for category queries without pricing so that
+        # product_page docs aren't crowded out by high-scoring pricing PDFs.
+        CATEGORY_LABELS_WIDE = {"mortgages", "cards", "accounts", "payments", "investments"}
+        hybrid_top_k = self.hybrid_top_k
+        if CATEGORY_LABELS_WIDE & query_profile.labels and "pricing" not in query_profile.labels:
+            hybrid_top_k = max(hybrid_top_k, 20)
         t_hybrid = time.perf_counter()
         candidates = hybrid_search(
             query=query,
-            top_k=self.hybrid_top_k,
+            top_k=hybrid_top_k,
             bm25_weight=self.bm25_weight,
             vector_weight=self.vector_weight,
             metadata_filters=self.metadata_filters,
@@ -608,11 +614,26 @@ class BankingRetriever(BaseRetriever):
         candidate_types = Counter(doc.metadata.get("chunk_type", "unknown") for doc in candidates)
         pricing_rows = [doc for doc in candidates if doc.metadata.get("chunk_type") == "pricing_row"]
         logger.info(
-            "Retrieval candidate debug: "
-            f"top_chunk_types={candidate_types.most_common(8)}, "
-            f"pricing_row_count={len(pricing_rows)}, "
-            f"pricing_row_hybrid_scores={[doc.metadata.get('hybrid_score') for doc in pricing_rows[:8]]}"
+            "Hybrid candidate types: "
+            + "/".join(f"{t}:{c}" for t, c in candidate_types.most_common(8))
+            + f" | pricing_row_found={len(pricing_rows)}"
         )
+
+        # When query is category-specific but NOT pricing, exclude pricing docs
+        # from candidates so the reranker doesn't crowd them out.
+        CATEGORY_LABELS = {"mortgages", "cards", "accounts", "payments", "investments"}
+        if CATEGORY_LABELS & query_profile.labels and "pricing" not in query_profile.labels:
+            non_pricing = [
+                doc for doc in candidates
+                if doc.metadata.get("document_type") != "pricing"
+                and doc.metadata.get("chunk_type") not in {"pricing", "pricing_row", "table", "pdf_table"}
+            ]
+            if non_pricing:
+                logger.info(
+                    f"Category filter: excluded {len(candidates) - len(non_pricing)} pricing candidates "
+                    f"(labels={query_profile.labels & CATEGORY_LABELS})"
+                )
+                candidates = non_pricing
 
         # Krok 2: Reranking cross-encoderem
         t_rerank = time.perf_counter()

@@ -2432,7 +2432,7 @@ class BankingRAGChain:
                     **ux,
                     "timing_ms": {"retrieval": round(retrieval_ms), "total": round(total_ms), "llm": 0},
                 }
-        if "product_overview" in query_profile.labels and "supported_domain" in query_profile.labels and len(source_docs) < 2:
+        if "product_overview" in query_profile.labels and "supported_domain" in query_profile.labels and len(source_docs) == 0:
             # Generic template only when retrieval is nearly empty — with real docs
             # let LLM synthesize from context instead of serving a generic product list.
             overview_answer = _format_product_overview_answer(source_docs)
@@ -2498,9 +2498,9 @@ class BankingRAGChain:
         if top_doc in structured_docs:
             answer_strategy = "pricing_row_direct"
             answer_confidence = "high"
-        elif top_doc.metadata.get("chunk_type") in {"table", "pdf_table"} and top_doc.metadata.get("document_type") == "pricing":
+        elif "pricing" in query_profile.labels and top_doc.metadata.get("chunk_type") in {"table", "pdf_table"} and top_doc.metadata.get("document_type") == "pricing":
             answer_strategy = "pricing_table_llm"
-        elif top_doc.metadata.get("document_type") == "pricing":
+        elif "pricing" in query_profile.labels and top_doc.metadata.get("document_type") == "pricing":
             answer_strategy = "pricing_section_llm"
 
         # --- Graceful degradation P1: pricing → overview fallback ---
