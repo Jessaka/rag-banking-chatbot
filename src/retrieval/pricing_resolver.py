@@ -12,6 +12,24 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+# Rychlý pre-filter před drahou canonical_product_for_row() regex analýzou.
+# Klíčová slova se kontrolují na product_name.lower() — O(1) substring check.
+# Musí být permisivní (false positive ok, false negative ne).
+_CANONICAL_QUICK_TERMS: dict[str, tuple[str, ...]] = {
+    "ekonto_osobni":         ("ekonto", "e konto", "e-konto", "chytry ucet", "aktivni ucet", "exkluzivni"),
+    "ekonto_podnikatelske":  ("ekonto", "podnikatel", "business", "osvc"),
+    "osobni_ucet":           ("osobni", "bezny", "ekonto", "studentsk", "detsk"),
+    "podnikatelsky_ucet":    ("podnikatel", "business", "osvc", "ekonto"),
+    "firemni_ucet":          ("firemni", "firma", "firmy", "corporate"),
+    "kreditni_karta":        ("kredit", "credit"),
+    "debetni_karta":         ("debet", "debit"),
+    "hypoteky":              ("hypot",),
+    "pujcky":                ("pujck", "uver", "spotreb"),
+    "sporeni":               ("sporic", "sporeni", "terminovan", "vklad"),
+    "investice":             ("investic", "fond", "dluhopis"),
+    "basic_payment_account": ("zakladni platebni", "chraneny", "social"),
+}
+
 from langchain_core.documents import Document
 
 from src.ingestion.quality_filters import is_valid_pricing_row
@@ -449,7 +467,19 @@ def _candidate_rows(
     min_score: float,
 ) -> list[tuple[dict, float, list[str]]]:
     rows: list[tuple[dict, float, list[str]]] = []
+    quick_terms = _CANONICAL_QUICK_TERMS.get(canonical_product) if canonical_product else None
     for raw_row in load_pricing_rows():
+        # Fast string pre-filter: O(1) substring check na product_name před drahou
+        # canonical_product_for_row() analýzou (regex + phrase matching).
+        if quick_terms:
+            pname = str(raw_row.get("product_name") or "").lower()
+            if not any(t in pname for t in quick_terms):
+                continue
+            # Exclusion: pro osobní ekonto vyřaď řádky s business signály
+            if canonical_product == "ekonto_osobni" and any(
+                biz in pname for biz in ("podnikatel", "firemni", "business", "osvc", "pravnick", "korporat")
+            ):
+                continue
         row = _normalize_pricing_metadata(raw_row)
         valid, _invalid_reason = is_valid_pricing_row(row)
         if not valid:
@@ -464,6 +494,9 @@ def _candidate_rows(
         score, reasons = pricing_priority_score(row, query, profile, canonical_product)
         if score >= min_score:
             rows.append((row, score, reasons))
+        # Early exit: dostatek vysoce relevantních výsledků
+        if len(rows) >= 20 and any(s >= 0.95 for _, s, _ in rows):
+            break
     deduped = _dedupe_pricing_rows(rows)
     if is_primary_account_fee_query(query):
         primary_rows = [item for item in deduped if _is_primary_pricing_answer_row(item[0])]

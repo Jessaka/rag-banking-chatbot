@@ -50,11 +50,13 @@ def _tokens(text: str) -> set[str]:
 
 
 @lru_cache(maxsize=1)
-def load_pricing_rows(path: str | Path | None = None) -> list[dict]:
-    path = Path(path or config.PRICING_ROWS_PATH)
+@lru_cache(maxsize=4)
+def _load_pricing_rows_from_path(path_str: str) -> tuple[dict, ...]:
+    """Načte a cachuje pricing rows ze souboru. Tuple je hashable pro lru_cache."""
+    path = Path(path_str)
     if not path.exists():
         logger.warning(f"Structured pricing rows nenalezeny: {path}")
-        return []
+        return ()
     rows: list[dict] = []
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
@@ -64,7 +66,12 @@ def load_pricing_rows(path: str | Path | None = None) -> list[dict]:
         except Exception:
             continue
     logger.info(f"Structured pricing rows loaded: {len(rows)} z {path}")
-    return rows
+    return tuple(rows)
+
+
+def load_pricing_rows(path: str | Path | None = None) -> list[dict]:
+    path_str = str(path or config.PRICING_ROWS_PATH)
+    return list(_load_pricing_rows_from_path(path_str))
 
 
 def _row_text(row: dict) -> str:
