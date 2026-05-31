@@ -99,7 +99,15 @@ _QUERY_PRODUCT_SYNONYMS: dict[str, tuple[str, ...]] = {
         "podnikatelskeho uctu",
     ),
     "firemni_ucet": ("firemni ucet", "ucet pro firmu", "firemni konto", "firmy", "firma", "pravnicke osoby", "firemniho uctu"),
-    "kreditni_karta": ("kreditni karta", "kreditni karty", "kreditni kartu", "kreditni kartou", "kreditni karte", "kreditka", "credit card"),
+    "kreditni_karta": (
+        "kreditni karta", "kreditni karty", "kreditni kartu", "kreditni kartou", "kreditni karte", "kreditka", "credit card",
+        # aliasy pro konkrétní varianty kreditních karet RB
+        "easy", "karta easy", "easy karta", "kreditni easy",
+        "style", "karta style", "style karta", "kreditni style",
+        "rb premium", "karta premium", "premium karta", "kreditni premium",
+        "visa gold", "karta visa gold", "gold karta",
+        "o2 rb", "o2rb", "karta o2", "o2 karta",
+    ),
     "debetni_karta": ("debetni karta", "debetni karty", "debetni kartu", "debetni kartou", "debitni karta", "debitni karty", "debetka", "debit card"),
     "hypoteky": ("hypoteka", "hypotecni", "hypoteky"),
     "pujcky": ("pujcka", "pujcky", "uver", "uvery", "spotrebitelsky uver"),
