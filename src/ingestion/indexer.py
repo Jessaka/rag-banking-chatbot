@@ -34,8 +34,6 @@ from collections import deque
 from pathlib import Path
 
 from langchain_core.documents import Document
-from qdrant_client import QdrantClient
-from qdrant_client.http import models as qmodels
 from tqdm import tqdm
 
 import config
@@ -85,8 +83,18 @@ def _get_embeddings():
     return OllamaEmbeddings(model=config.EMBED_MODEL, base_url=config.OLLAMA_BASE_URL)
 
 
-def _get_qdrant_client() -> QdrantClient:
+def _get_qdrant_client():
+    t_import = time.perf_counter()
+    from qdrant_client import QdrantClient
+    logger.info(f"import_timing.qdrant_client.QdrantClient ms={(time.perf_counter() - t_import) * 1000:.1f}")
+
     return QdrantClient(host=config.QDRANT_HOST, port=config.QDRANT_PORT, timeout=config.QDRANT_TIMEOUT_SECONDS)
+
+
+def _qmodels():
+    from qdrant_client.http import models as qdrant_models
+
+    return qdrant_models
 
 
 # ---------------------------------------------------------------------------
@@ -189,6 +197,149 @@ def _bm25_searchable_text(chunk: Document) -> str:
         if "ekonto" in product or "ekonto" in chunk.page_content.lower():
             extra_fields.append("eKonto ekonto ekonta")
     return "\n".join([chunk.page_content, *(str(x) for x in extra_fields if x)])
+
+
+def _pricing_doc_generation(row: dict) -> int:
+    """Best-effort sortable generation/year for structured pricing rows."""
+    for key in ("document_generation", "document_year", "source_year"):
+        value = row.get(key)
+        try:
+            if value not in (None, ""):
+                return int(value)
+        except Exception:
+            continue
+    text = " ".join(str(row.get(k) or "") for k in ("valid_from", "source_date", "title", "source_file", "source_url"))
+    years = [int(y) for y in re.findall(r"(?:19|20)\d{2}", text)]
+    return max(years) if years else 0
+
+
+def _pricing_bm25_dedupe_key(row: dict) -> tuple[str, str, str, str]:
+    """Canonical key that suppresses stale contradictory rows for one fee slot."""
+    from src.retrieval.pricing_retriever import _norm
+
+    groups = row.get("canonical_product_groups") or []
+    canonical = "|".join(sorted(str(g) for g in groups if g)) or str(row.get("canonical_product") or row.get("product_name") or "")
+    fee_type = str(row.get("fee_type") or row.get("pricing_type") or "")
+    pricing_type = str(row.get("pricing_type") or "")
+    period = str(row.get("period") or row.get("billing_period") or "")
+    return (_norm(canonical), _norm(fee_type), _norm(pricing_type), _norm(period))
+
+
+def _pricing_bm25_rank(row: dict) -> tuple[int, int, int, int, float]:
+    """Prefer current official rows over older/generic rows during BM25 corpus cleanup."""
+    hay = " ".join(str(row.get(k) or "") for k in ("source_file", "source_url", "title", "document_type"))
+    hay_norm = hay.lower()
+    official = int(("cenik" in hay_norm or "sazeb" in hay_norm or "pricing" in hay_norm) and ("pdf" in hay_norm or row.get("document_type") == "pricing"))
+    table_row = int(row.get("table_index") is not None or row.get("row_index") is not None)
+    confidence = row.get("confidence") or 0
+    try:
+        confidence_float = float(confidence)
+    except Exception:
+        confidence_float = 0.0
+    return (
+        1 if row.get("is_active") is True and row.get("is_archived") is not True else 0,
+        _pricing_doc_generation(row),
+        official,
+        table_row,
+        confidence_float,
+    )
+
+
+def _pricing_row_to_bm25_document(row: dict) -> Document:
+    """Convert one normalized pricing JSONL row into a BM25-only Document."""
+    from src.retrieval.pricing_resolver import normalize_row_price
+
+    normalized = normalize_row_price(row)
+    canonical_groups = row.get("canonical_product_groups") or []
+    canonical_product = canonical_groups[0] if canonical_groups else row.get("canonical_product")
+    generation = _pricing_doc_generation(row)
+    content = (
+        f"Produkt: {row.get('product_name', '')}\n"
+        f"Typ poplatku: {row.get('fee_type', '')}\n"
+        f"Cena: {row.get('fee_value') or row.get('amount') or ''}\n"
+        f"Normalizovaná cena: {normalized.get('normalized_price')} {normalized.get('currency') or row.get('currency') or ''}\n"
+        f"Období: {row.get('period') or normalized.get('billing_period') or ''}\n"
+        f"Podmínky: {row.get('conditions') or row.get('condition_text') or ''}\n"
+        f"Zdroj: {row.get('source_file') or row.get('source_url') or ''}\n"
+        f"Rok dokumentu: {generation or ''}"
+    ).strip()
+    content_hash = hashlib.sha256(json.dumps(row, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+    metadata = {
+        **row,
+        "chunk_type": "pricing_row",
+        "document_type": "pricing",
+        "chunk_quality": "ok",
+        "structured_pricing": True,
+        "source_type": "structured_pricing_row",
+        "canonical_product": canonical_product,
+        "canonical_product_groups": canonical_groups,
+        "fee_type": row.get("fee_type"),
+        "normalized_price": normalized.get("normalized_price"),
+        "currency": normalized.get("currency") or row.get("currency"),
+        "billing_period": normalized.get("billing_period") or row.get("period"),
+        "normalized_currency": normalized.get("currency") or row.get("currency"),
+        "normalized_billing_period": normalized.get("billing_period") or row.get("period"),
+        "pricing_semantic_label": normalized.get("semantic_label"),
+        "source_file": row.get("source_file") or row.get("source_url") or "pricing_rows.jsonl",
+        "document_generation": generation,
+        "content_hash": content_hash,
+        "chunk_id": f"pricing_row_jsonl:{content_hash[:24]}",
+    }
+    return Document(page_content=content, metadata=metadata)
+
+
+def load_structured_pricing_bm25_docs() -> list[Document]:
+    """Load active structured pricing rows and convert them into BM25 documents.
+
+    This is BM25-only enrichment: it does not touch Qdrant, embeddings, crawling,
+    or the source JSONL. Stale/inactive rows and contradictory older rows are
+    suppressed before writing ``documents.pkl``.
+    """
+    from src.ingestion.quality_filters import is_valid_pricing_row
+    from src.retrieval.pricing_retriever import _normalize_pricing_metadata, load_pricing_rows
+
+    best: dict[tuple[str, str, str, str], dict] = {}
+    total = 0
+    invalid = 0
+    inactive = 0
+    for raw_row in load_pricing_rows():
+        total += 1
+        row = _normalize_pricing_metadata(raw_row)
+        valid, _reason = is_valid_pricing_row(row)
+        if not valid:
+            invalid += 1
+            continue
+        if row.get("is_active") is not True or row.get("is_archived") is True:
+            inactive += 1
+            continue
+        key = _pricing_bm25_dedupe_key(row)
+        if not any(key):
+            key = (hashlib.sha256(json.dumps(row, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest(), "", "", "")
+        current = best.get(key)
+        if current is None or _pricing_bm25_rank(row) > _pricing_bm25_rank(current):
+            best[key] = row
+
+    docs = [_pricing_row_to_bm25_document(row) for row in best.values()]
+    logger.info(
+        "Structured pricing BM25 docs: loaded=%s invalid=%s inactive_or_archived=%s deduped=%s",
+        total, invalid, inactive, len(docs),
+    )
+    return docs
+
+
+def _replace_structured_pricing_bm25_docs(chunks: list[Document]) -> list[Document]:
+    """Merge chunks with regenerated JSONL pricing rows for BM25 docs store."""
+    base_chunks = [
+        c for c in chunks
+        if not (
+            c.metadata.get("source_type") == "structured_pricing_row"
+            or str(c.metadata.get("chunk_id") or "").startswith("pricing_row_jsonl:")
+        )
+    ]
+    pricing_docs = load_structured_pricing_bm25_docs()
+    existing_ids = {c.metadata.get("chunk_id") for c in base_chunks if c.metadata.get("chunk_id")}
+    pricing_docs = [d for d in pricing_docs if d.metadata.get("chunk_id") not in existing_ids]
+    return base_chunks + pricing_docs
 
 
 def _guard_embed_chunks(chunks: list[Document]) -> list[Document]:
@@ -372,7 +523,8 @@ def _log_openai_throughput(batch_index: int, total_batches: int, batch_size: int
     )
 
 
-def _make_points(batch_chunks: list[Document], batch_vecs: list[list[float]]) -> list[qmodels.PointStruct]:
+def _make_points(batch_chunks: list[Document], batch_vecs: list[list[float]]) -> list:
+    qmodels = _qmodels()
     points = []
     for chunk, vec in zip(batch_chunks, batch_vecs):
         cid = chunk.metadata.get("chunk_id", "")
@@ -407,6 +559,7 @@ def _ensure_collection_exists(client: QdrantClient) -> None:
     """Vytvoří kolekci pokud neexistuje. Existující kolekci netkne."""
     if _collection_exists(client):
         return
+    qmodels = _qmodels()
     client.create_collection(
         collection_name=config.QDRANT_COLLECTION,
         vectors_config=qmodels.VectorParams(
@@ -422,6 +575,7 @@ def _recreate_collection(client: QdrantClient) -> None:
     if _collection_exists(client):
         client.delete_collection(config.QDRANT_COLLECTION)
         logger.warning(f"Kolekce '{config.QDRANT_COLLECTION}' smazána (full reindex)")
+    qmodels = _qmodels()
     client.create_collection(
         collection_name=config.QDRANT_COLLECTION,
         vectors_config=qmodels.VectorParams(
@@ -639,6 +793,7 @@ def save_bm25_index(chunks: list[Document]) -> None:
     from rank_bm25 import BM25Okapi
 
     config.INDEX_DIR.mkdir(parents=True, exist_ok=True)
+    chunks = _replace_structured_pricing_bm25_docs(chunks)
     tokenized = [_tokenize_bm25(_bm25_searchable_text(c)) for c in chunks]
     bm25 = BM25Okapi(tokenized)
 
@@ -674,6 +829,16 @@ def update_bm25_index(new_chunks: list[Document]) -> int:
         with open(config.DOCS_STORE_PATH, "rb") as f:
             existing_chunks = pickle.load(f)
 
+    # JSONL pricing rows are regenerated on every BM25 rebuild so stale rows do
+    # not remain in documents.pkl after pricing_rows.jsonl changes.
+    existing_chunks = [
+        c for c in existing_chunks
+        if not (
+            c.metadata.get("source_type") == "structured_pricing_row"
+            or str(c.metadata.get("chunk_id") or "").startswith("pricing_row_jsonl:")
+        )
+    ]
+
     # Deduplikace: sestavíme množinu existujících chunk_id
     existing_ids = {
         c.metadata.get("chunk_id")
@@ -686,7 +851,7 @@ def update_bm25_index(new_chunks: list[Document]) -> int:
         if not c.metadata.get("chunk_id") or c.metadata["chunk_id"] not in existing_ids
     ]
 
-    all_chunks = existing_chunks + truly_new
+    all_chunks = _replace_structured_pricing_bm25_docs(existing_chunks + truly_new)
     tokenized = [_tokenize_bm25(_bm25_searchable_text(c)) for c in all_chunks]
     bm25 = BM25Okapi(tokenized)
 

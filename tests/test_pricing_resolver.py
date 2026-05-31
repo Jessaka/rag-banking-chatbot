@@ -1,5 +1,8 @@
 import json
 
+from langchain_core.documents import Document
+
+from src.ingestion import indexer
 from src.retrieval import pricing_retriever
 from src.retrieval.pricing_resolver import normalize_price, resolve_pricing_query
 
@@ -98,6 +101,48 @@ def test_duplicate_pricing_docs_prefer_newest_generation(tmp_path):
     finally:
         _restore_path(original)
     assert docs[0].metadata["document_year"] == 2026
+
+
+def test_bm25_structured_pricing_docs_dedupe_current_fee_slot(tmp_path):
+    stale = _row(fee_value="89 Kč", document_year=2024, source_file="cenik-pi-2024.pdf")
+    current = _row(fee_value="zdarma", document_year=2026, source_file="cenik-pi-2026.pdf")
+    archived = _row(fee_value="129 Kč", document_year=2020, source_file="archiv-2020.pdf", is_archived=True)
+    original = _write_rows(tmp_path, [stale, archived, current])
+    try:
+        docs = indexer.load_structured_pricing_bm25_docs()
+    finally:
+        _restore_path(original)
+
+    ekonto_docs = [doc for doc in docs if doc.metadata.get("product_name") == "eKonto"]
+    assert len(ekonto_docs) == 1
+    assert ekonto_docs[0].metadata["fee_value"] == "zdarma"
+    assert ekonto_docs[0].metadata["document_generation"] == 2026
+    assert ekonto_docs[0].metadata["source_type"] == "structured_pricing_row"
+    assert ekonto_docs[0].metadata["chunk_type"] == "pricing_row"
+
+
+def test_replace_structured_pricing_bm25_docs_regenerates_without_duplicates(tmp_path):
+    current = _row(fee_value="zdarma", document_year=2026, source_file="cenik-pi-2026.pdf")
+    original = _write_rows(tmp_path, [current])
+    try:
+        base_doc = Document(page_content="base", metadata={"chunk_id": "base-1", "chunk_type": "text"})
+        old_structured = Document(
+            page_content="old",
+            metadata={
+                "chunk_id": "pricing_row_jsonl:old",
+                "chunk_type": "pricing_row",
+                "source_type": "structured_pricing_row",
+            },
+        )
+        docs = indexer._replace_structured_pricing_bm25_docs([base_doc, old_structured])
+    finally:
+        _restore_path(original)
+
+    assert any(doc.metadata.get("chunk_id") == "base-1" for doc in docs)
+    structured_docs = [doc for doc in docs if doc.metadata.get("source_type") == "structured_pricing_row"]
+    assert len(structured_docs) == 1
+    assert structured_docs[0].metadata["fee_value"] == "zdarma"
+    assert structured_docs[0].metadata["chunk_id"] != "pricing_row_jsonl:old"
 
 
 def test_stale_conflict_resolution_blocks_old_price(tmp_path):

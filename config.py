@@ -104,10 +104,17 @@ GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 
 # ---------------------------------------------------------------------------
 # OpenAI Chat API (aktivní pouze pokud LLM_BACKEND == "openai")
-# Výchozí model: gpt-4.1-mini, fallback: gpt-4o-mini
-# API klíč je sdílený s embedding backendem (OPENAI_API_KEY).
 # ---------------------------------------------------------------------------
-OPENAI_CHAT_MODEL: str = os.getenv("OPENAI_CHAT_MODEL", "gpt-4.1-mini")
+# Primary and fast model configuration – used by the routing layer to select
+# the appropriate model for a given answer strategy.  The historic
+# ``OPENAI_CHAT_MODEL``/``OPENAI_CHAT_FALLBACK_MODEL`` pair is retained for
+# backward‑compatibility but the new variables are preferred.
+PRIMARY_MODEL: str = os.getenv("PRIMARY_MODEL", "gpt-5.5-pro")
+FAST_MODEL: str = os.getenv("FAST_MODEL", "gpt-5.4-mini-fast")
+
+# Legacy defaults – kept so existing deployments that only set the old env
+# variables continue to work.
+OPENAI_CHAT_MODEL: str = os.getenv("OPENAI_CHAT_MODEL", PRIMARY_MODEL)
 OPENAI_CHAT_FALLBACK_MODEL: str = os.getenv("OPENAI_CHAT_FALLBACK_MODEL", "gpt-4o-mini")
 
 # ---------------------------------------------------------------------------
@@ -141,7 +148,7 @@ RERANKER_DEVICE: str = os.getenv("RERANKER_DEVICE", "cpu")  # "cuda" pro GPU
 # Minimální skóre cross-encoderu pro zachování dokumentu ve výsledcích.
 # ms-marco-MiniLM-L-6-v2 vrací raw logity (bez sigmoid), typicky -10 až +10.
 # Hodnota 0.0 odfiltruje negativní skóre (jednoznačně irelevantní dokumenty).
-RERANK_MIN_SCORE: float = float(os.getenv("RERANK_MIN_SCORE", "0.0"))
+RERANK_MIN_SCORE: float = float(os.getenv("RERANK_MIN_SCORE", "-10.0"))
 
 # ---------------------------------------------------------------------------
 # Persistence lokálních indexů
@@ -164,20 +171,36 @@ CACHE_MAX_ENTRIES: int = int(os.getenv("CACHE_MAX_ENTRIES", "500"))
 # ---------------------------------------------------------------------------
 # Redis / distributed storage (Priority 1)
 # ---------------------------------------------------------------------------
-# Feature flags — set to "1" to enable Redis-backed storage.
-# When Redis is unavailable, falls back gracefully to in-memory.
-USE_REDIS_CACHE: bool = os.getenv("USE_REDIS_CACHE", "").lower() in ("1", "true", "yes")
-USE_REDIS_SESSIONS: bool = os.getenv("USE_REDIS_SESSIONS", "").lower() in ("1", "true", "yes")
+# Master switch — set to "1" to enable Redis-backed storage.
+# When Redis is unavailable, all storage falls back gracefully to in-memory.
+# Individual feature flags for finer control:
+USE_REDIS_CACHE: bool = _env_bool("USE_REDIS_CACHE", "true")
+USE_REDIS_SESSIONS: bool = _env_bool("USE_REDIS_SESSIONS", "true")
+REDIS_ENABLED: bool = _env_bool("REDIS_ENABLED", "false")
 
-# Redis connection
+# Redis connection — REDIS_URL takes priority; if set, HOST/PORT/PASSWORD/DB ignored.
+REDIS_URL: str = os.getenv("REDIS_URL", "")
 REDIS_HOST: str = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT: int = int(os.getenv("REDIS_PORT", "6379"))
 REDIS_PASSWORD: str | None = os.getenv("REDIS_PASSWORD", None)
 REDIS_DB: int = int(os.getenv("REDIS_DB", "0"))
 REDIS_TIMEOUT: int = int(os.getenv("REDIS_TIMEOUT", "3"))  # socket connect timeout
 
-# Per-route TTL (seconds)
+# Namespace prefix for all Redis keys
+REDIS_KEY_PREFIX: str = os.getenv("REDIS_KEY_PREFIX", "rag:")
 
+# Session store TTL (seconds)
+REDIS_SESSION_TTL: int = int(os.getenv("REDIS_SESSION_TTL", "3600"))     # 1h
+
+# Per-strategy cache TTLs (seconds)
+REDIS_CACHE_TTL_IDENTITY: int = int(os.getenv("REDIS_CACHE_TTL_IDENTITY", "86400"))       # 24h
+REDIS_CACHE_TTL_OVERVIEW: int = int(os.getenv("REDIS_CACHE_TTL_OVERVIEW", "21600"))       # 6h
+REDIS_CACHE_TTL_PRICING: int = int(os.getenv("REDIS_CACHE_TTL_PRICING", "900"))           # 15 min
+
+# ---------------------------------------------------------------------------
+# Response cache — legacy per-route TTLs (used by cache.py)
+# ---------------------------------------------------------------------------
+CACHE_MAX_ENTRIES: int = int(os.getenv("CACHE_MAX_ENTRIES", "500"))
 CACHE_TTL_IDENTITY: int = int(os.getenv("CACHE_TTL_IDENTITY", "86400"))       # 24h
 CACHE_TTL_OVERVIEW: int = int(os.getenv("CACHE_TTL_OVERVIEW", "21600"))       # 6h
 CACHE_TTL_SOFT_GUIDANCE: int = int(os.getenv("CACHE_TTL_SOFT_GUIDANCE", "3600"))   # 1h

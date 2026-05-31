@@ -436,6 +436,26 @@ def classify_query(query: str) -> QueryProfile:
     if "insurance" in labels:
         preferred_categories.append("insurance")
 
+    # ---------------------------------------------------------------------
+    # 1️⃣  Fix: pokud jsou současně přítomny labely "catalog_intent" a "product_overview",
+    #     odebereme automatické labely "faq" a "support" a nastavíme explicitní
+    #     preferované typy dokumentů (product‑related).
+    # ---------------------------------------------------------------------
+    if "catalog_intent" in labels and "product_overview" in labels:
+        # odebereme případně dříve přidané labely
+        labels.discard("faq")
+        labels.discard("support")
+        # explicitně definujeme, že chceme pouze produktové typy
+        preferred_doc_types = (
+            "product_page",
+            "account_product",
+            "credit_card",
+            "mortgage_product",
+            "product_catalog",
+        )
+    # ---------------------------------------------------------------------
+    # Vytvoření a vrácení QueryProfile (původní chování)
+    # ---------------------------------------------------------------------
     return QueryProfile(
         labels=labels or {"general"},
         preferred_url_contains=tuple(dict.fromkeys(preferred_urls)),
@@ -1353,7 +1373,9 @@ def compute_source_trust(doc: Document) -> dict[str, Any]:
       - authority_tier (str): the authority tier name
     """
     md = doc.metadata
-    _, authority_tier, _ = _classify_document_authority(doc)
+    authority_tier, _, _ = _classify_document_authority(doc)
+    if not isinstance(authority_tier, str):
+        authority_tier = str(authority_tier) if authority_tier is not None else ""
     base_authority = DOCUMENT_AUTHORITY_TIERS.get(authority_tier, 0.5)
 
     # Extract metadata strings early for all sub-computations

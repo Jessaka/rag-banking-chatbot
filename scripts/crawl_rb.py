@@ -229,10 +229,15 @@ def _extract_structured(html: str, url: str) -> tuple[dict, str, list[str]]:
     page["markdown"] = _clean_text("\n\n".join(markdown_parts))
 
     links = []
+    pdf_links = []
     for a in soup.find_all("a", href=True):
         link = _normalize_url(a["href"], canonical_url)
         if _is_rb_html_url(link):
             links.append(link)
+        elif link.lower().endswith('.pdf'):
+            pdf_links.append(link)
+    # Attach PDF links to the page metadata for downstream download
+    page["pdf_links"] = sorted(set(pdf_links))
     return page, page["markdown"], sorted(set(links))
 
 

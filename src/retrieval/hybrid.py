@@ -220,7 +220,11 @@ def hybrid_search(
         )
     )
 
-    if "retail_banking" in query_profile.labels and "corporate_banking" not in query_profile.labels:
+    if (
+    "retail_banking" in query_profile.labels
+    and "corporate_banking" not in query_profile.labels
+    and "product_overview" not in query_profile.labels
+):
         personal_mode = "personal_retail_account" in query_profile.labels
         def _allowed_retail_doc(doc: Document) -> bool:
             return is_personal_retail_doc(doc) if personal_mode else (is_retail_doc(doc) and not is_corporate_doc(doc))

@@ -39,7 +39,10 @@
       "Bash(ldd /tmp/chromium-linux/chrome-linux/chrome)",
       "Bash(/tmp/chromium-linux/chrome-linux/chrome --headless --version)",
       "Bash(apt-get install *)",
-      "Bash(ldconfig -p)"
+      "Bash(ldconfig -p)",
+      "Bash(kill -HUP 366626)",
+      "Bash(kill 366626)",
+      "Bash(nohup /usr/bin/python3 -m uvicorn src.api.main:app --host 127.0.0.1 --port 8000)"
     ]
   }
 }

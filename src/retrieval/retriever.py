@@ -24,6 +24,7 @@ from src.retrieval.hybrid import hybrid_search
 from src.retrieval.pricing_resolver import resolve_pricing_query
 from src.retrieval.query_classifier import classify_query, is_archived_doc
 from src.retrieval.reranker import rerank
+from src.retrieval.url_product_filter import is_product_url
 from src.retrieval.source_governance import (
     MAX_RECOVERY_DOCS,
     MIN_REQUIRED_DOCS,
@@ -577,6 +578,22 @@ class BankingRetriever(BaseRetriever):
             query_profile=query_profile,
         )
         hybrid_ms = (time.perf_counter() - t_hybrid) * 1000
+        # URL product filter disabled — was incorrectly dropping valid product pages
+        # (e.g. kreditni-karta-easy, kreditni-karta-rb-premium) whose URLs contain
+        # segments that matched NON_PRODUCT_SEGMENTS. BM25+vector already surface them.
+        # if "catalog_intent" in query_profile.labels and "product_overview" in query_profile.labels:
+        #     before_cnt = len(candidates)
+        #     filtered_candidates = [
+        #         doc for doc in candidates
+        #         if is_product_url(
+        #             str(doc.metadata.get("source_url") or doc.metadata.get("url") or "")
+        #         )
+        #     ]
+        #     after_cnt = len(filtered_candidates)
+        #     logger.info(
+        #         f"URL product filter – catalog_intent & product_overview: before={before_cnt}, after={after_cnt}"
+        #     )
+        #     candidates = filtered_candidates
 
         if not candidates:
             logger.warning("Hybrid search nevrátil žádné výsledky")

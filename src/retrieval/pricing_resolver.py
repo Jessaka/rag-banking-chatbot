@@ -389,6 +389,13 @@ def resolve_pricing_query(query: str, top_k: int = 5, min_score: float = 0.5) ->
     verified_conditional = _verified_conditional_rows(query, canonical_product)
     if verified_conditional:
         rows = verified_conditional + rows
+    if is_primary_account_fee_query(query):
+        primary_rows = [
+            item for item in rows
+            if _is_primary_pricing_answer_row(item[0])
+        ]
+        if primary_rows:
+            rows = primary_rows
     debug["pricing_candidate_count"] = len(rows)
     if not rows:
         return [_safe_fallback_doc(query, profile, debug, reason="no_canonical_pricing_row")]
@@ -459,10 +466,20 @@ def _candidate_rows(
             rows.append((row, score, reasons))
     deduped = _dedupe_pricing_rows(rows)
     if is_primary_account_fee_query(query):
-        primary_rows = [item for item in deduped if is_primary_account_fee_row(item[0]) or _is_fee_abolished_row(item[0]) or detect_conditional_pricing(item[0])]
+        primary_rows = [item for item in deduped if _is_primary_pricing_answer_row(item[0])]
         if primary_rows:
             return primary_rows
     return deduped
+
+
+def _is_primary_pricing_answer_row(row: dict) -> bool:
+    """True for account/tariff maintenance rows suitable as account price answers."""
+    if is_primary_account_fee_row(row) or _is_fee_abolished_row(row):
+        return True
+    if not detect_conditional_pricing(row):
+        return False
+    fee_type = _norm(str(row.get("fee_type") or ""))
+    return any(token in fee_type for token in ("vedeni", "cena tarifu", "mesicni poplatek"))
 
 
 def _verified_conditional_rows(query: str, canonical_product: str | None) -> list[tuple[dict, float, list[str]]]:
@@ -517,16 +534,41 @@ def _verified_conditional_rows(query: str, canonical_product: str | None) -> lis
 def _dedupe_pricing_rows(rows: list[tuple[dict, float, list[str]]]) -> list[tuple[dict, float, list[str]]]:
     best: dict[tuple[str, str, str, str], tuple[dict, float, list[str]]] = {}
     for row, score, reasons in rows:
+        groups = row.get("canonical_product_groups") or []
+        canonical = "|".join(sorted(str(g) for g in groups if g)) or str(row.get("product_name") or "")
         key = (
-            _norm(str(row.get("product_name") or "")),
+            _norm(canonical),
             _norm(str(row.get("fee_type") or "")),
-            _norm(str(row.get("fee_value") or row.get("amount") or "")),
-            _norm(str(row.get("source_file") or row.get("source_url") or "")),
+            _norm(str(row.get("pricing_type") or "")),
+            _norm(str(row.get("period") or "")),
         )
         current = best.get(key)
-        if current is None or (int(row.get("document_year") or 0), score) > (int(current[0].get("document_year") or 0), current[1]):
+        row_rank = _dedupe_rank(row, score)
+        current_rank = _dedupe_rank(current[0], current[1]) if current else None
+        if current is None or row_rank > current_rank:
             best[key] = (row, score, reasons)
     return sorted(best.values(), key=lambda item: item[1], reverse=True)
+
+
+def _dedupe_rank(row: dict, score: float) -> tuple[int, int, int, int, float]:
+    """Rank rows within one canonical fee slot.
+
+    The key deliberately ignores fee value and source so a stale `89 Kč` row and
+    a current `zdarma` row for the same product/fee do not both survive.
+    """
+    source_type = pricing_source_type(row)
+    try:
+        year = int(row.get("document_year") or row.get("document_generation") or 0)
+    except Exception:
+        year = 0
+    official_priority = SOURCE_PRIORITY.get(source_type, 0)
+    return (
+        1 if row.get("is_active") is True and not _is_row_archived(row) else 0,
+        year,
+        official_priority,
+        1 if row.get("table_index") is not None or row.get("row_index") is not None else 0,
+        score,
+    )
 
 
 def _pricing_confidence(row: dict, *, exact_product: bool, exact_fee: bool, source_type: str, conditional: ConditionalPricing | None = None) -> str:

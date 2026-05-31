@@ -12,8 +12,6 @@ from functools import lru_cache
 from collections import Counter
 
 from langchain_core.documents import Document
-from qdrant_client import QdrantClient
-from qdrant_client.http import models as qmodels
 
 import config
 from src.utils.logger import get_logger
@@ -22,7 +20,10 @@ logger = get_logger(__name__)
 
 
 @lru_cache(maxsize=1)
-def _get_client() -> QdrantClient:
+def _get_client():
+    t_import = time.perf_counter()
+    from qdrant_client import QdrantClient
+    logger.info(f"import_timing.qdrant_client.QdrantClient ms={(time.perf_counter() - t_import) * 1000:.1f}")
     return QdrantClient(host=config.QDRANT_HOST, port=config.QDRANT_PORT)
 
 
@@ -46,6 +47,8 @@ def _get_embeddings():
 def _build_filter(metadata_filters: dict | None):
     if not metadata_filters:
         return None
+    from qdrant_client.http import models as qmodels
+
     conditions = []
     for key, value in metadata_filters.items():
         if value is None:
@@ -59,6 +62,8 @@ def _build_filter(metadata_filters: dict | None):
 
 def qdrant_pricing_row_debug(limit: int = 12) -> dict:
     """Return pricing_row coverage diagnostics from Qdrant payloads."""
+    from qdrant_client.http import models as qmodels
+
     client = _get_client()
     rows = []
     offset = None

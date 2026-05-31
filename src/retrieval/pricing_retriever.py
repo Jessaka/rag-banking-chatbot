@@ -580,6 +580,11 @@ def is_primary_account_fee_query(query: str) -> bool:
     # "stojí" + "účet" → "Kolik stojí účet?", "cena účtu", "stojí vedení účtu"
     if "stoji" in qt and "ucet" in qt:
         return True
+    # Product shorthand: users often ask "Kolik stojí eKonto SMART?" without
+    # saying "vedení účtu". For account products this should resolve to the
+    # primary account/tariff fee, not secondary fees like electronic keys.
+    if ("stoji" in qt or "cena" in qt) and any(token in qt for token in ("ekonto", "konto")):
+        return True
     # "měsíční poplatek" → "měsíční poplatek za eKonto", "měsíční poplatek za účet"
     if "mesicni" in qt and "poplatek" in qt:
         return True

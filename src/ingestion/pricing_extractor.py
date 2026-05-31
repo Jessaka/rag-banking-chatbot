@@ -25,21 +25,6 @@ from src.ingestion.quality_filters import (
 )
 from src.utils.logger import get_logger
 
-try:
-    import camelot
-except ImportError:
-    camelot = None
-
-try:
-    import tabula
-except ImportError:
-    tabula = None
-
-try:
-    import pandas
-except ImportError:
-    pandas = None
-
 logger = get_logger(__name__)
 
 TABLE_METHOD_PREFERENCE = ["pdfplumber", "camelot", "tabula"]
@@ -266,7 +251,9 @@ def _extract_tables_pdfplumber(path: str, max_pages: int | None = None) -> list[
 
 
 def _extract_tables_camelot(path: str) -> list[list[list[str]]]:
-    if camelot is None:
+    try:
+        import camelot
+    except ImportError:
         logger.warning(f"Camelot není nainstalovaný, přeskakuji PDF table fallback path={path}")
         return []
     try:
@@ -292,9 +279,15 @@ def _extract_tables_camelot(path: str) -> list[list[list[str]]]:
 
 
 def _extract_tables_tabula(path: str) -> list[list[list[str]]]:
-    if tabula is None:
+    try:
+        import tabula
+    except ImportError:
         logger.warning(f"Tabula není nainstalovaná, přeskakuji PDF table fallback path={path}")
         return []
+    try:
+        import pandas
+    except ImportError:
+        pandas = None
     try:
         dataframes = tabula.read_pdf(path, pages="all", multiple_tables=True) or []
         tables_out: list[list[list[str]]] = []

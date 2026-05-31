@@ -17,7 +17,6 @@ import time
 from functools import lru_cache
 
 from langchain_core.documents import Document
-from sentence_transformers import CrossEncoder
 
 import config
 from src.retrieval.query_classifier import QueryProfile, classify_query
@@ -27,15 +26,21 @@ logger = get_logger(__name__)
 
 
 @lru_cache(maxsize=1)
-def _load_reranker() -> CrossEncoder:
+def _load_reranker():
     """Načte cross-encoder model (singleton)."""
+    logger.info("Importuji sentence_transformers.CrossEncoder")
+    t_import = time.perf_counter()
+    from sentence_transformers import CrossEncoder
+    logger.info(f"import_timing.sentence_transformers.CrossEncoder ms={(time.perf_counter() - t_import) * 1000:.1f}")
+
     logger.info(f"Načítám reranker: {config.RERANKER_MODEL}")
+    t_model = time.perf_counter()
     model = CrossEncoder(
         config.RERANKER_MODEL,
         device=config.RERANKER_DEVICE,
         max_length=512,
     )
-    logger.info("Reranker připraven")
+    logger.info(f"Reranker připraven model_load_ms={(time.perf_counter() - t_model) * 1000:.1f}")
     return model
 
 

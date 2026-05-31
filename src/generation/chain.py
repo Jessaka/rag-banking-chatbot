@@ -20,15 +20,9 @@ from pathlib import Path
 
 from langchain_core.documents import Document
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
-from langchain_ollama import OllamaLLM
 
 import config
-from src.generation.prompts import (
-    CONVERSATIONAL_PROMPT,
-    QUERY_REWRITE_PROMPT,
-    SIMPLE_PROMPT,
-    format_context,
-)
+from src.generation.prompts import format_context, get_conversational_prompt, get_query_rewrite_prompt, get_simple_prompt
 from src.generation.product_intelligence import (
     generate_overview_fallback,
     get_product,
@@ -40,7 +34,6 @@ from src.generation.confidence_semantics import (
     resolve_confidence_semantics,
 )
 from src.generation.pricing_response_formatter import format_conditional_fee, format_tiered_pricing
-from src.retrieval.retriever import BankingRetriever
 from src.retrieval.query_classifier import classify_query
 from src.utils.logger import get_logger
 
@@ -1105,6 +1098,36 @@ def _format_sepa_swift_overview_answer(docs: list[Document]) -> str | None:
     )
 
 
+def _product_names_from_docs(docs: list[Document]) -> list[str]:
+    """Extract product names from document metadata.
+    - Considers `title`, `page_title` and `document_type`.
+    - Accepts document types: `product_page`, `product_catalog`, `credit_card`,
+      `account_product`, `mortgage_product`.
+    - Returns a deduplicated list of titles (no keyword filtering)."""
+    names: set[str] = set()
+    allowed_types = {
+        "product_page",
+        "product_catalog",
+        "credit_card",
+        "account_product",
+        "mortgage_product",
+        "pricing",
+    }
+    for doc in docs:
+        md = doc.metadata
+        doc_type = str(md.get("document_type") or "").lower()
+        if doc_type not in allowed_types:
+            continue
+        for field in ["title", "page_title"]:
+            val = md.get(field)
+            if val:
+                s = str(val).strip()
+                # Skip obvious file names or attachment identifiers
+                if s.lower().endswith('.pdf') or 'attachments' in s.lower():
+                    continue
+                names.add(s)
+    return list(names)
+
 def _format_product_overview_answer(docs: list[Document]) -> str | None:
     """Safe generic formatter for any supported product overview as fallback."""
     if docs:
@@ -1113,6 +1136,15 @@ def _format_product_overview_answer(docs: list[Document]) -> str | None:
     else:
         source = "rb.cz"
 
+    # Try to extract concrete product names from metadata
+    product_names = _product_names_from_docs(docs)
+    if product_names:
+        lines = ["Raiffeisenbank nabízí tyto produkty:"]
+        lines += [f"- {name}" for name in product_names]
+        lines.append("\nPro konkrétní informace otevřete detail produktu na webu RB.")
+        lines.append(f"Zdroj: {source}")
+        return "\n".join(lines)
+    # Fallback – generic overview
     return (
         "Raiffeisenbank nabízí širokou škálu bankovních produktů a služeb:\n"
         "- Osobní a podnikatelské účty\n"
@@ -1702,7 +1734,7 @@ class OpenAILLM:
 # Factory – výběr backendu dle konfigurace
 # ---------------------------------------------------------------------------
 
-def _build_llm() -> OllamaLLM | AnthropicLLM:
+def _build_llm(model_override: str | None = None) -> OllamaLLM | AnthropicLLM:
     """
     Vytvoří LLM instanci dle config.LLM_BACKEND.
 
@@ -1716,6 +1748,9 @@ def _build_llm() -> OllamaLLM | AnthropicLLM:
     backend = config.LLM_BACKEND.lower()
 
     if backend == "ollama":
+        t_import = time.perf_counter()
+        from langchain_ollama import OllamaLLM
+        logger.info(f"import_timing.langchain_ollama ms={(time.perf_counter() - t_import) * 1000:.1f}")
         return OllamaLLM(
             model=config.LLM_MODEL,
             base_url=config.OLLAMA_BASE_URL,
@@ -1752,8 +1787,9 @@ def _build_llm() -> OllamaLLM | AnthropicLLM:
             raise ValueError(
                 "LLM_BACKEND='openai' vyžaduje nastavený OPENAI_API_KEY v .env"
             )
+        model_name = model_override if model_override else config.OPENAI_CHAT_MODEL
         return OpenAILLM(
-            model=config.OPENAI_CHAT_MODEL,
+            model=model_name,
             api_key=config.OPENAI_API_KEY,
             max_tokens=config.LLM_MAX_TOKENS,
             temperature=config.LLM_TEMPERATURE,
@@ -1814,6 +1850,10 @@ class BankingRAGChain:
         self.last_canonical_product: str | None = None
 
         self._llm = _build_llm()
+        self._fast_llm = _build_llm(model_override=config.FAST_MODEL)
+        t_import = time.perf_counter()
+        from src.retrieval.retriever import BankingRetriever
+        logger.info(f"import_timing.retrieval.BankingRetriever ms={(time.perf_counter() - t_import) * 1000:.1f}")
         self._retriever = BankingRetriever()
 
         if config.LLM_BACKEND == "anthropic":
@@ -1837,7 +1877,7 @@ class BankingRAGChain:
         if not self.chat_history:
             return question
 
-        messages = QUERY_REWRITE_PROMPT.format_messages(
+        messages = get_query_rewrite_prompt().format_messages(
             chat_history=self.chat_history,
             question=question,
         )
@@ -2392,8 +2432,9 @@ class BankingRAGChain:
                     **ux,
                     "timing_ms": {"retrieval": round(retrieval_ms), "total": round(total_ms), "llm": 0},
                 }
-        if "product_overview" in query_profile.labels and "supported_domain" in query_profile.labels:
-            # Generic fallback for any supported product overview not handled above.
+        if "product_overview" in query_profile.labels and "supported_domain" in query_profile.labels and len(source_docs) < 2:
+            # Generic template only when retrieval is nearly empty — with real docs
+            # let LLM synthesize from context instead of serving a generic product list.
             overview_answer = _format_product_overview_answer(source_docs)
             if overview_answer:
                 total_ms = (time.perf_counter() - t_ask) * 1000
@@ -2514,13 +2555,13 @@ class BankingRAGChain:
 
         # 4. Generování odpovědi
         if self.conversational and self.chat_history:
-            messages = CONVERSATIONAL_PROMPT.format_messages(
+            messages = get_conversational_prompt().format_messages(
                 context=context,
                 chat_history=self.chat_history,
                 question=question,
             )
         else:
-            messages = SIMPLE_PROMPT.format_messages(
+            messages = get_simple_prompt().format_messages(
                 context=context,
                 question=question,
             )
@@ -2628,7 +2669,14 @@ class BankingRAGChain:
         Also handles pricing fallback and no-answer markers.
         """
         t_llm = time.perf_counter()
-        answer = self._llm.invoke(messages)
+        # Select appropriate LLM based on answer_strategy
+        if answer_strategy.startswith("overview_") or answer_strategy.startswith("comparison_") or answer_strategy.startswith("advisory_") or answer_strategy == "generic_llm":
+            llm = self._llm
+        elif answer_strategy.startswith("procedural_flow") or answer_strategy.startswith("clarification"):
+            llm = self._fast_llm
+        else:
+            llm = self._llm
+        answer = llm.invoke(messages)
         llm_ms = (time.perf_counter() - t_llm) * 1000
         answer_text = answer if isinstance(answer, str) else str(answer)
         answer_text = _normalize_answer_text(answer_text, answer_strategy=answer_strategy)

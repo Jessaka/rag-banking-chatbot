@@ -14,8 +14,6 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-import pdfplumber
-
 SCANNED_TEXT_THRESHOLD = 50
 SCANNED_DENSITY_THRESHOLD = 0.001
 OCR_QUALITY_MIN = 0.3
@@ -60,6 +58,12 @@ def _resolve_pdf_obj(value: Any) -> Any:
         return resolve1(value)
     except Exception:
         return value
+
+
+def _get_pdfplumber():
+    import pdfplumber
+
+    return pdfplumber
 
 
 def _stream_size(value: Any) -> int:
@@ -108,6 +112,7 @@ def _page_has_fonts(page: Any) -> bool:
 
 
 def _pdf_text_stats(path: str) -> dict[str, Any]:
+    pdfplumber = _get_pdfplumber()
     total_text_len = 0
     total_content_bytes = 0
     page_count = 0

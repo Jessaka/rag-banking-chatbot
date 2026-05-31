@@ -7,7 +7,11 @@ Prompty jsou optimalizovány pro:
   - Transparentnost zdrojů (citace dokumentu a stránky)
 """
 
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from functools import lru_cache
+import logging
+import time
+
+logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """Jsi pomocný AI asistent zákaznické podpory Raiffeisenbank.
 Odpovídáš výhradně na základě poskytnutého kontextu z interní dokumentace banky.
@@ -28,36 +32,55 @@ Kontext z dokumentů:
 
 HUMAN_TEMPLATE = "{question}"
 
-# Prompt pro konverzační RAG (s historií)
-CONVERSATIONAL_PROMPT = ChatPromptTemplate.from_messages(
-    [
-        ("system", SYSTEM_PROMPT),
-        MessagesPlaceholder(variable_name="chat_history"),
-        ("human", HUMAN_TEMPLATE),
-    ]
-)
+def _prompt_classes():
+    t_import = time.perf_counter()
+    from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
-# Jednoduchý prompt bez historie (pro jednoduché dotazy)
-SIMPLE_PROMPT = ChatPromptTemplate.from_messages(
-    [
-        ("system", SYSTEM_PROMPT),
-        ("human", HUMAN_TEMPLATE),
-    ]
-)
+    logger.info(f"import_timing.langchain_core.prompts ms={(time.perf_counter() - t_import) * 1000:.1f}")
+    return ChatPromptTemplate, MessagesPlaceholder
 
-# Prompt pro přeformulování dotazu s ohledem na historii konverzace
-QUERY_REWRITE_PROMPT = ChatPromptTemplate.from_messages(
-    [
-        (
-            "system",
-            "Přeformuluj následující otázku uživatele tak, aby byla samostatná "
-            "a obsahovala veškerý kontext z předchozí konverzace. "
-            "Vrať pouze přeformulovanou otázku, bez vysvětlení.",
-        ),
-        MessagesPlaceholder(variable_name="chat_history"),
-        ("human", "{question}"),
-    ]
-)
+
+@lru_cache(maxsize=1)
+def get_conversational_prompt():
+    """Lazy prompt builder; avoids importing prompt stack during API module import."""
+    ChatPromptTemplate, MessagesPlaceholder = _prompt_classes()
+    return ChatPromptTemplate.from_messages(
+        [
+            ("system", SYSTEM_PROMPT),
+            MessagesPlaceholder(variable_name="chat_history"),
+            ("human", HUMAN_TEMPLATE),
+        ]
+    )
+
+
+@lru_cache(maxsize=1)
+def get_simple_prompt():
+    """Lazy prompt builder for non-conversational RAG."""
+    ChatPromptTemplate, _MessagesPlaceholder = _prompt_classes()
+    return ChatPromptTemplate.from_messages(
+        [
+            ("system", SYSTEM_PROMPT),
+            ("human", HUMAN_TEMPLATE),
+        ]
+    )
+
+
+@lru_cache(maxsize=1)
+def get_query_rewrite_prompt():
+    """Lazy prompt builder for query rewriting."""
+    ChatPromptTemplate, MessagesPlaceholder = _prompt_classes()
+    return ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                "Přeformuluj následující otázku uživatele tak, aby byla samostatná "
+                "a obsahovala veškerý kontext z předchozí konverzace. "
+                "Vrať pouze přeformulovanou otázku, bez vysvětlení.",
+            ),
+            MessagesPlaceholder(variable_name="chat_history"),
+            ("human", "{question}"),
+        ]
+    )
 
 
 def format_context(documents) -> str:
