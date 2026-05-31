@@ -105,7 +105,7 @@ _ROW_PRODUCT_SYNONYMS: dict[str, tuple[str, ...]] = {
     "ekonto_podnikatelske": ("podnikatelske ekonto", "podnikatelsky ekonto", "podnikatelsk e konto"),
     "podnikatelsky_ucet": ("podnikatel", "podnikatelske", "business", "osvc"),
     "firemni_ucet": ("firma", "firmy", "firemni", "corporate", "pravnicke", "pravnickych"),
-    "kreditni_karta": ("kreditni karta", "credit card", "kreditka"),
+    "kreditni_karta": ("kreditni karta", "kreditni karty", "credit card", "kreditka"),
     "debetni_karta": ("debetni karta", "debitni karta", "debit card", "debetka"),
     "hypoteky": ("hypotek", "hypotec"),
     "pujcky": ("pujck", "uver", "spotrebitelsk"),
@@ -608,8 +608,12 @@ def _score_row(row: dict, query: str, profile: QueryProfile) -> tuple[float, lis
     # --- HARD EXCLUDE based on fee_type ---
     # If the row's fee_type contains a known non-account-fee stem, block it
     # completely regardless of token overlap or other scoring signals.
+    # Exception: credit card queries need card maintenance fee rows ("kart" stem).
     fee_type_norm = _norm(str(row.get("fee_type") or ""))
+    card_pricing_query = "kredit" in q_norm
     for stem in _FEE_EXCLUDE_STEMS:
+        if stem == "kart" and card_pricing_query:
+            continue
         if stem in fee_type_norm:
             return -999.0, [f"hard_excluded_fee_type={stem}"]
 
