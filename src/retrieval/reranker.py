@@ -24,6 +24,10 @@ from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+# Maximální počet kandidátů poslaných do rerankeru.
+# Snižuje latenci na CPU bez výrazné ztráty kvality (top-N je dostačující).
+_RERANK_CANDIDATES_CAP = 10
+
 
 @lru_cache(maxsize=1)
 def _load_reranker():
@@ -38,10 +42,18 @@ def _load_reranker():
     model = CrossEncoder(
         config.RERANKER_MODEL,
         device=config.RERANKER_DEVICE,
-        max_length=512,
+        max_length=256,  # 512→256: ~2× rychlejší inference na CPU, minimální ztráta kvality
     )
     logger.info(f"Reranker připraven model_load_ms={(time.perf_counter() - t_model) * 1000:.1f}")
     return model
+
+
+@lru_cache(maxsize=512)
+def _cached_predict(query: str, doc_contents: tuple[str, ...]) -> tuple[float, ...]:
+    """Predikuje skóre pro (query, docs) s LRU cache pro opakované dotazy."""
+    model = _load_reranker()
+    pairs = [(query, content) for content in doc_contents]
+    return tuple(model.predict(pairs, batch_size=32).tolist())
 
 
 def rerank(
@@ -74,16 +86,17 @@ def rerank(
     query_profile = query_profile or classify_query(query)
     min_score = max(min_score, query_profile.rerank_min_score)
 
-    model = _load_reranker()
+    # Cap kandidátů: omezíme počet párů pro rychlejší CPU inference
+    candidates = documents[:_RERANK_CANDIDATES_CAP]
 
-    pairs = [(query, doc.page_content) for doc in documents]
+    doc_contents = tuple(doc.page_content for doc in candidates)
 
     t0 = time.perf_counter()
-    scores: list[float] = model.predict(pairs).tolist()
+    scores: list[float] = list(_cached_predict(query, doc_contents))
     rerank_ms = (time.perf_counter() - t0) * 1000
 
     ranked = sorted(
-        zip(documents, scores),
+        zip(candidates, scores),
         key=lambda x: x[1],
         reverse=True,
     )
@@ -106,7 +119,7 @@ def rerank(
 
     logger.info(
         f"⏱ BGE reranking: {rerank_ms:.0f}ms "
-        f"({len(documents)} párů → {len(results)} výsledků, "
+        f"({len(candidates)} párů → {len(results)} výsledků, "
         f"threshold: {min_score:.4f}, top score: {ranked[0][1]:.4f})"
         if ranked else "⏱ BGE reranking: 0 výsledků"
     )
