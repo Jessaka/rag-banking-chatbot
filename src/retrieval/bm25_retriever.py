@@ -108,13 +108,20 @@ def bm25_pricing_row_debug(limit: int = 12) -> dict:
     }
 
 
-def bm25_search(query: str, top_k: int = config.BM25_TOP_K, metadata_filters: dict | None = None) -> list[Document]:
+def bm25_search(
+    query: str,
+    top_k: int = config.BM25_TOP_K,
+    metadata_filters: dict | None = None,
+    max_query_tokens: int | None = None,
+) -> list[Document]:
     """
     Vyhledá top_k nejrelevantnějších chunků pomocí BM25.
 
     Args:
-        query: Uživatelský dotaz v přirozeném jazyce.
-        top_k: Počet výsledků.
+        query:            Uživatelský dotaz v přirozeném jazyce.
+        top_k:            Počet výsledků.
+        max_query_tokens: Pokud zadáno, omezí BM25 tokeny na N s nejvyšším IDF.
+                          Pricing: 4, non-pricing: 3. Snižuje O(n_tokens × n_docs).
 
     Returns:
         Seřazený seznam Document objektů (nejlepší první).
@@ -123,6 +130,12 @@ def bm25_search(query: str, top_k: int = config.BM25_TOP_K, metadata_filters: di
     documents = _load_documents()
 
     tokenized_query = _tokenize(query)
+    if max_query_tokens and len(tokenized_query) > max_query_tokens:
+        tokenized_query = sorted(
+            tokenized_query,
+            key=lambda t: bm25.idf.get(t, 0.0),
+            reverse=True,
+        )[:max_query_tokens]
 
     t0 = time.perf_counter()
     scores = bm25.get_scores(tokenized_query)

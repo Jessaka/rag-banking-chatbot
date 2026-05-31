@@ -80,8 +80,12 @@ def hybrid_search(
     bm25_weight = query_profile.bm25_weight if bm25_weight == 0.4 else bm25_weight
     vector_weight = query_profile.vector_weight if vector_weight == 0.6 else vector_weight
 
+    # Limit BM25 tokenů podle typu dotazu: pricing=4, ostatní=3.
+    # BM25Okapi.get_scores() je O(n_tokens × n_docs) → méně tokenů = rychlejší.
+    _bm25_token_cap = 4 if "pricing" in query_profile.labels else 3
+
     # Paralelní dotazy na oba retrievery
-    bm25_results = bm25_search(expanded_query, top_k=config.BM25_TOP_K, metadata_filters=metadata_filters)
+    bm25_results = bm25_search(expanded_query, top_k=config.BM25_TOP_K, metadata_filters=metadata_filters, max_query_tokens=_bm25_token_cap)
     try:
         vector_results = vector_search(expanded_query, top_k=config.VECTOR_TOP_K, metadata_filters=metadata_filters)
     except Exception as exc:
@@ -92,7 +96,7 @@ def hybrid_search(
     pricing_row_vector: list[Document] = []
     if "pricing" in query_profile.labels:
         row_filter = {**(metadata_filters or {}), "chunk_type": "pricing_row"}
-        pricing_row_bm25 = bm25_search(expanded_query, top_k=min(config.BM25_TOP_K, 30), metadata_filters=row_filter)
+        pricing_row_bm25 = bm25_search(expanded_query, top_k=min(config.BM25_TOP_K, 30), metadata_filters=row_filter, max_query_tokens=_bm25_token_cap)
         try:
             pricing_row_vector = vector_search(expanded_query, top_k=min(config.VECTOR_TOP_K, 30), metadata_filters=row_filter)
         except Exception as exc:
