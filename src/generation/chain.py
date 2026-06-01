@@ -1116,13 +1116,29 @@ def _product_names_from_docs(docs: list[Document]) -> list[str]:
                 names.add(s)
     return list(names)
 
-def _format_product_overview_answer(docs: list[Document]) -> str | None:
+def _format_product_overview_answer(docs: list[Document], query_labels: set[str] | None = None) -> str | None:
     """Safe generic formatter for any supported product overview as fallback."""
     if docs:
         first = docs[0]
         source = first.metadata.get("source_url") or first.metadata.get("url") or first.metadata.get("file_name") or "rb.cz"
     else:
         source = "rb.cz"
+
+    labels = query_labels or set()
+
+    # Loans-specific overview
+    if "loans" in labels or "pujcky" in labels:
+        return (
+            "Raiffeisenbank nabízí tyto půjčky a úvěry:\n"
+            "- Minutová půjčka – až 1 200 000 Kč na cokoliv, sjednání online, 0 Kč za sjednání\n"
+            "- Sloučení a převod půjček – nižší splátky, vše pod jednou střechou\n"
+            "- Přečerpání účtu (kontokorent) – finanční rezerva na běžném účtu\n"
+            "- Půjčka na auto – online sjednání, žádné poplatky za vedení\n"
+            "- Půjčka na rekonstrukci – bez zástavy nemovitostí\n"
+            "- PlatímPak – odložená platba\n\n"
+            "Pro konkrétní podmínky a výši RPSN doporučuji kalkulačku na rb.cz/osobni/pujcky.\n\n"
+            f"Zdroj: {source}"
+        )
 
     # Try to extract concrete product names from metadata
     product_names = _product_names_from_docs(docs)
@@ -2188,7 +2204,7 @@ class BankingRAGChain:
             overview_profile = classify_query(retrieval_query)
             if "product_overview" in overview_profile.labels and "supported_domain" in overview_profile.labels:
                 # Supported overview query with empty retrieval — still provide a safe overview.
-                overview_answer = _format_product_overview_answer([])
+                overview_answer = _format_product_overview_answer([], query_labels=overview_profile.labels)
                 if overview_answer:
                     total_ms = (time.perf_counter() - t_ask) * 1000
                     ux = _ux_meta("medium", "supported product overview with safe fallback (retrieval empty)")
@@ -2423,7 +2439,7 @@ class BankingRAGChain:
         if "product_overview" in query_profile.labels and "supported_domain" in query_profile.labels and len(source_docs) == 0:
             # Generic template only when retrieval is nearly empty — with real docs
             # let LLM synthesize from context instead of serving a generic product list.
-            overview_answer = _format_product_overview_answer(source_docs)
+            overview_answer = _format_product_overview_answer(source_docs, query_labels=query_profile.labels)
             if overview_answer:
                 total_ms = (time.perf_counter() - t_ask) * 1000
                 ux = _ux_meta("medium", "supported product overview generic route with safe overview")
