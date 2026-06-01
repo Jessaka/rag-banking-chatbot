@@ -1,130 +1,72 @@
 # RAG Banking Chatbot — Raiffeisenbank
 
-> Production-ready Retrieval-Augmented Generation chatbot for Czech banking customer support. Answers questions about Raiffeisenbank products, fees, mortgages, and terms using public PDF documents — entirely locally or via cloud LLM APIs.
+> Production-quality Retrieval-Augmented Generation chatbot for Czech banking customer support. Answers questions about Raiffeisenbank products, fees, cards, and terms using public PDFs and web data — with deterministic pricing lookup, hybrid retrieval, and Redis-backed session caching.
 
 ---
 
 ## Features
 
-- **Hybrid retrieval** — BM25 sparse + Qdrant dense vectors fused with Reciprocal Rank Fusion
-- **Cross-encoder reranking** — BGE-Reranker-v2-m3 for precise final ranking
-- **Three LLM backends** — Ollama (local), Anthropic Claude, Google Gemini with auto model discovery
-- **Web scraper** — sitemap-driven crawler for rb.cz PDFs and FAQ pages with robots.txt compliance
-- **FastAPI REST API** — `/chat`, `/health`, `/collections` endpoints with per-session conversation memory
-- **Interactive CLI** — conversational chat with source citations and debug mode
-- **Czech language** — prompts, cleaning pipeline, and tokenization tuned for Czech banking text
+- **Deterministic pricing** — structured `pricing_rows.jsonl` lookup for cards/accounts, no LLM required (~2s cold, ~0.6s warm)
+- **Hybrid retrieval** — BM25 sparse (96K docs) + Qdrant dense vectors fused with Reciprocal Rank Fusion
+- **NVIDIA NIM reranker** — `llama-nemotron-rerank-vl-1b-v2` via API, BGE CPU fallback
+- **SSE streaming** — `/chat/stream` for real-time token streaming with sub-3s first-token for deterministic routes
+- **Redis cache** — per-session conversation memory + cross-session response cache (pricing TTL 900s)
+- **SvelteKit frontend** — chat UI on port 5173 with dark mode, source cards, confidence badges
+- **FastAPI REST API** — `/chat`, `/chat/stream`, `/health`, `/health/deep` with OpenAPI docs
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        INGESTION PIPELINE                           │
-│                                                                     │
-│  rb.cz ──► Scraper ──► PDF Downloader ──► Parser ──► Chunker       │
-│             (sitemap)   (retry, idempotent) (PyMuPDF)  (recursive)  │
-│                                                   │                 │
-│                                            ┌──────▼──────┐         │
-│                                            │   Indexer   │         │
-│                                            │ Qdrant+BM25 │         │
-│                                            └──────┬──────┘         │
-└───────────────────────────────────────────────────┼─────────────────┘
-                                                    │
-┌───────────────────────────────────────────────────▼─────────────────┐
-│                         QUERY PIPELINE                              │
-│                                                                     │
-│  Question ──► Query Rewrite ──► Hybrid Search ──► RRF Fusion       │
-│               (if follow-up)    BM25 + Qdrant                      │
-│                                      │                             │
-│                              BGE Reranker (cross-encoder)          │
-│                                      │                             │
-│                    ┌─────────────────┼──────────────────┐          │
-│                    │ Ollama (local)  │ Anthropic Claude │ Gemini   │
-│                    └─────────────────┼──────────────────┘          │
-│                                      │                             │
-│                                 Czech Answer + Sources             │
-└─────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                      INGESTION PIPELINE                         │
+│                                                                 │
+│  rb.cz ──► Scraper ──► PDF Downloader ──► Parser ──► Chunker   │
+│             (sitemap)   (retry, idempotent) (PyMuPDF) (recursive)│
+│                                                 │               │
+│                                          ┌──────▼──────┐       │
+│                                          │   Indexer   │       │
+│                                          │ Qdrant+BM25 │       │
+│                                          └──────┬──────┘       │
+└─────────────────────────────────────────────────┼───────────────┘
+                                                  │
+┌─────────────────────────────────────────────────▼───────────────┐
+│                       QUERY PIPELINE                            │
+│                                                                 │
+│  Question ──► Classifier ──► Pricing Resolver ──► FAST PATH    │
+│                  │              (JSONL rows)    (pricing_row_    │
+│                  │                              direct, no LLM) │
+│                  └──► Hybrid Search ──► RRF Fusion              │
+│                         BM25 + Qdrant                           │
+│                              │                                  │
+│                    NVIDIA NIM Reranker                          │
+│                    (llama-nemotron, API)                        │
+│                              │                                  │
+│                    OpenAI GPT-5.5-pro                           │
+│                    (gpt-4o-mini fast path)                      │
+│                              │                                  │
+│          Redis Cache  ◄──── Czech Answer + Sources             │
+│          (session + response)                                   │
+└─────────────────────────────────────────────────────────────────┘
 ```
-
-### Enterprise rb.cz RAG Pipeline
-
-Nová enterprise pipeline rozšiřuje původní PDF-only ingestion o plný structured crawl webu rb.cz:
-
-```text
-rb.cz sitemap + internal links
-  └─ scripts/crawl_rb.py --depth N
-       ├─ data/crawl/raw_html/*.html
-       └─ data/crawl/structured/*.json + *.md
-
-rb.cz PDF dokumenty
-  └─ scripts/download_documents.py --category pricing|mortgages|cards
-       ├─ data/documents/*.pdf
-       └─ data/documents/metadata.jsonl
-
-Enterprise ingestion
-  └─ scripts/ingest.py --enterprise --full
-       ├─ structured JSON sections / FAQ / tables / cards
-       ├─ PDF text + PDF tables via PyMuPDF/pdfplumber
-       ├─ semantic chunks with metadata
-       ├─ Qdrant dense vectors
-       └─ BM25 sparse index
-```
-
-Structured page JSON schema:
-
-```json
-{
-  "url": "https://www.rb.cz/...",
-  "title": "Page title",
-  "sections": [],
-  "tables": [],
-  "faq": [],
-  "metadata": {
-    "source_type": "web",
-    "document_type": "product_page|pricing|terms|faq|article",
-    "category": "accounts|cards|mortgages|loans|pricing|...",
-    "canonical_url": "https://www.rb.cz/...",
-    "content_hash": "sha256",
-    "pricing_detected": false
-  }
-}
-```
-
-Every indexed chunk carries at least:
-
-```text
-source_url, title, section_title, source_type, document_type,
-page, category, chunk_type, chunk_id, content_hash, char_count
-```
-
-Chunk types include:
-
-- `section_text`
-- `faq`
-- `table`
-- `pricing`
-- `pdf_text`
-- `pdf_table`
-
-Pricing detection marks chunks/documents as `document_type=pricing` when content contains terms such as `sazebník`, `ceník`, `fee`, `price`, `poplatek`, `Kč`, `zdarma`, `měsíčně`.
 
 ### Component Overview
 
-| Component | Technology | Purpose |
+| Component | Technology | Notes |
 |---|---|---|
-| **Embeddings** | Ollama `nomic-embed-text` or OpenAI `text-embedding-3-small` | 768 or 1536-dim dense vectors |
-| **Vector DB** | Qdrant | Dense retrieval with cosine similarity |
-| **Sparse retrieval** | BM25 (rank-bm25) | Exact keyword matching |
-| **Fusion** | Reciprocal Rank Fusion | Combines dense + sparse rankings |
-| **Reranker** | BGE-Reranker-v2-m3 | Cross-encoder final scoring |
-| **LLM — local** | Ollama (Mistral, Llama 3.2) | No cloud dependency |
-| **LLM — cloud** | Anthropic claude-haiku-4-5 | Fast, with prompt caching |
-| **LLM — cloud** | Google Gemini 2.5 Flash | Auto-discovers best available model |
-| **PDF parsing** | PyMuPDF + pdfplumber fallback | Czech text extraction and cleaning |
-| **Chunking** | RecursiveCharacterTextSplitter | Overlapping context-aware chunks |
-| **API** | FastAPI + uvicorn | REST interface with session management |
-| **Scraper** | requests + BeautifulSoup4 | Sitemap-driven, robots.txt compliant |
+| **LLM primary** | OpenAI `gpt-5.5-pro` | timeout 20s, 1 retry |
+| **LLM fast** | OpenAI `gpt-4o-mini` | query rewrite, classification |
+| **Embeddings** | OpenAI `text-embedding-3-small` | 1536-dim, timeout 15s |
+| **Vector DB** | Qdrant | 607 points, cosine similarity |
+| **Sparse retrieval** | BM25 (rank-bm25) | 96 341 documents, 78 MB index |
+| **Fusion** | Reciprocal Rank Fusion | weighted BM25:0.3–0.65 / vector:0.35–0.7 |
+| **Reranker** | NVIDIA NIM `llama-nemotron-rerank-vl-1b-v2` | API; BGE CPU fallback |
+| **Pricing lookup** | `pricing_rows.jsonl` (2 554 rows) | deterministic, canonical product matching |
+| **Cache** | Redis 7 (Docker) | sessions + response cache, port 6379 |
+| **API** | FastAPI + uvicorn | port 8000, SSE streaming |
+| **Frontend** | SvelteKit | port 5173, dark mode, SSE |
+| **PDF parsing** | PyMuPDF + pdfplumber | Czech text + table extraction |
 
 ---
 
@@ -133,242 +75,140 @@ Pricing detection marks chunks/documents as `document_type=pricing` when content
 ### Prerequisites
 
 ```bash
-# 1. Ollama — local LLM inference and optional local embeddings
-curl -fsSL https://ollama.com/install.sh | sh
-ollama pull nomic-embed-text   # required only when EMBEDDING_BACKEND=ollama
-ollama pull llama3.2           # required only for LLM_BACKEND=ollama
+# 1. Docker — Redis cache
+docker run -d --name redis-temp -p 6379:6379 redis:7-alpine
 
-# 2. Qdrant — vector database
-docker run -d -p 6333:6333 qdrant/qdrant
-
-# 3. Python dependencies
-python -m venv .venv && source .venv/bin/activate
+# 2. Python dependencies
+python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
+
+# 3. Node.js dependencies (frontend)
+cd frontend && npm install && cd ..
 ```
 
 ### Configuration
 
 ```bash
 cp .env.example .env
-# Edit .env — see Configuration section below
+# Required: OPENAI_API_KEY, PRIMARY_MODEL, OPENAI_EMBED_MODEL
+# Optional: NVIDIA_API_KEY (NIM reranker)
 ```
 
-### Scrape documents
+Key `.env` values:
 
 ```bash
-# Discover and download PDFs from rb.cz (respects robots.txt, ~1-3s delay)
-python scripts/scrape_rb.py
+LLM_BACKEND=openai
+PRIMARY_MODEL=gpt-5.5-pro
+OPENAI_API_KEY=sk-...
+OPENAI_EMBED_MODEL=text-embedding-3-small
 
-# Dry run — only writes sources.txt, no downloads
-python scripts/scrape_rb.py --dry-run
+LLM_TIMEOUT=20
+LLM_MAX_RETRIES=1
+OPENAI_EMBED_TIMEOUT_SECONDS=15
+
+NVIDIA_API_KEY=nvapi-...   # optional — enables NIM reranker
 ```
 
 ### Build the index
 
 ```bash
-# Embed, index into Qdrant, build BM25 index
-python scripts/ingest.py
-
-# Re-index existing PDFs without re-downloading
-python scripts/ingest.py --skip-download
-```
-
-### Enterprise crawl + ingest
-
-```bash
-# 1. Structured crawl rb.cz webu
+# Structured crawl + PDF download
 python3 scripts/crawl_rb.py --max-pages 200 --depth 2
-
-# 2. PDF sazebníky/ceníky/podmínky
 python3 scripts/download_documents.py --category pricing
 python3 scripts/download_documents.py --category mortgages
-python3 scripts/download_documents.py --category cards
 
-# 3. Full enterprise ingest do Qdrant + BM25
-python3 scripts/ingest.py --enterprise --full --chunk-size 1100 --chunk-overlap 150
-
-# 4. Dataset diagnostics
-python3 scripts/debug_dataset.py
+# Ingest into Qdrant + BM25
+python3 scripts/ingest.py --enterprise --full
 ```
 
-> Playwright crawler requires Chromium. On unsupported systems use the official image
-> `mcr.microsoft.com/playwright/python:v1.44.0-jammy` or a supported Ubuntu/macOS/Windows host.
-
-### Chat
+### Start everything
 
 ```bash
-# Interactive CLI
-python scripts/chat.py
-
-# With source citations
-python scripts/chat.py --show-sources
-
-# REST API
-python scripts/serve.py
-# → http://127.0.0.1:8000/docs
+./start.sh
+# Backend:  http://localhost:8000
+# Frontend: http://localhost:5173
+# API docs: http://localhost:8000/docs
 ```
+
+`start.sh` starts Redis (if not running), uvicorn backend, and SvelteKit dev server.
 
 ---
 
-## LLM Backends
+## Performance
 
-Switch backends by setting `LLM_BACKEND` in `.env`. Embeddings always run locally via Ollama regardless of backend.
+| Query type | Cold (no cache) | Warm (Redis hit) |
+|---|---|---|
+| Pricing (`pricing_row_direct`) | ~2s | ~0.6s |
+| Deterministic (catalog, FAQ) | ~0.2s | ~0.06s |
+| LLM (hybrid + GPT) | ~3–18s | ~0.6s |
+| Stream first token (deterministic) | ~2s | ~0.6s |
 
-### Ollama (default — fully local)
+BM25 warm-up runs at startup — first non-pricing query after cold start: ~3s (vs. 15s without warm-up).
 
-```bash
-LLM_BACKEND=ollama
-LLM_MODEL=llama3.2        # or: mistral, llama3.1, phi3, etc.
-OLLAMA_BASE_URL=http://localhost:11434
-```
+---
 
-No API keys required. All inference runs on your hardware.
+## Capabilities
 
-### Anthropic Claude Haiku
+### What it answers well
 
-```bash
-LLM_BACKEND=anthropic
-ANTHROPIC_API_KEY=sk-ant-...
-ANTHROPIC_MODEL=claude-haiku-4-5-20251001
-```
+- **Credit card pricing** — EASY (free), STYLE (50 Kč/mo), RB PREMIUM (199 Kč/mo), Visa Gold (199 Kč/mo), O2 RB (89 Kč/mo) — deterministic lookup
+- **Account fees** — eKonto SMART (99 Kč/mo, conditional free), basic payment account
+- **Card catalog** — types of payment cards (debit + credit)
+- **Procedural** — how to block a card, online banking setup
+- **Mortgage conditions** — from PDF documents (general terms, not live rates)
+- **Conversational follow-up** — session context carries product/intent between turns
 
-Uses ephemeral **prompt caching** on the system message, reducing cost on follow-up questions with similar retrieved context.
+### Known gaps
 
-### Google Gemini (with auto model discovery)
-
-```bash
-LLM_BACKEND=gemini
-GEMINI_API_KEY=AIza...
-GEMINI_MODEL=gemini-2.0-flash   # triggers auto-discovery at startup
-```
-
-At startup, `discover_gemini_model()` calls `client.models.list()` and picks the best available model in priority order:
-
-```
-gemini-2.5-flash-preview-05-20 → gemini-2.5-flash → gemini-2.0-flash → gemini-2.0-flash-001 → …
-```
-
-Set `GEMINI_MODEL` to a specific name (e.g. `gemini-2.5-flash`) to skip discovery and pin the model.
-
-> **Note:** `google-generativeai` is deprecated. This project uses the official successor `google-genai`.
+- **Live mortgage rates** — individual, not publicly disclosed; answered with honest "data not available"
+- **Consumer loans** — data coverage gap in current index
+- **Real-time balances/account data** — not connected to banking systems
 
 ---
 
 ## REST API
-
-```bash
-python scripts/serve.py --host 0.0.0.0 --port 8000
-# Swagger UI: http://localhost:8000/docs
-```
 
 ### `POST /chat`
 
 ```bash
 curl -X POST http://localhost:8000/chat \
   -H "Content-Type: application/json" \
-  -d '{"question": "Jaký je poplatek za vedení běžného účtu?", "session_id": null}'
+  -d '{"question": "Kolik stojí kreditní karta STYLE?", "session_id": null}'
 ```
 
 ```json
 {
-  "answer": "Poplatek za vedení běžného účtu eKonto je...",
-  "sources": [
-    {
-      "file_name": "cenik-pi-1.pdf",
-      "page": 3,
-      "chunk_id": "a1b2c3d4",
-      "rerank_score": 0.9821,
-      "preview": "Měsíční poplatek za vedení účtu..."
-    }
-  ],
-  "session_id": "550e8400-e29b-41d4-a716-446655440000",
-  "processing_time_ms": 3241.7
+  "answer": "Kreditní karty:\n* hlavní karta STYLE: 50 Kč měsíčně",
+  "sources": [{"file_name": "pricing_cenik-pi-1_...", "page": null}],
+  "session_id": "550e8400-...",
+  "answer_strategy": "pricing_row_direct",
+  "processing_time_ms": 623.4
 }
 ```
 
-Follow-up questions reuse `session_id` — the chain rewrites the query with conversation context before retrieval.
+### `POST /chat/stream`
+
+Server-Sent Events — yields `start`, `token`, `answer`, `done` events. Used by the SvelteKit frontend.
+
+```bash
+curl -N -X POST http://localhost:8000/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{"question": "Co je eKonto SMART?"}'
+```
 
 ### `GET /health`
-
-Returns component status for all active backends. `"anthropic"` and `"gemini"` fields are `null` when inactive.
 
 ```json
 {
   "status": "ok",
-  "qdrant":     {"status": "ok", "detail": "'raiffeisenbank_docs': 18700 bodů"},
-  "ollama":     {"status": "ok", "detail": "embeddings OK: ['nomic-embed-text:latest']"},
-  "bm25_index": {"status": "ok", "detail": "bm25_index.pkl (19.0 MB)"},
-  "anthropic":  null,
-  "gemini":     {"status": "ok", "detail": "Model 'gemini-2.5-flash' dostupný (2 tokenů/test)"}
+  "bm25_index": {"status": "ok", "detail": "bm25_index.pkl (78.7 MB)"},
+  "qdrant":     {"status": "ok", "detail": "Skipped in fast health; use /health/deep"},
+  "redis":      {"status": "ok", "detail": "Redis ping OK (localhost:6379)"},
+  "openai":     null
 }
 ```
 
-### `GET /collections`
-
-```json
-{
-  "name": "raiffeisenbank_docs",
-  "points_count": 18700,
-  "indexed_vectors_count": 17600,
-  "status": "green",
-  "vector_size": 768,
-  "distance_metric": "Cosine"
-}
-```
-
----
-
-## CLI Chatbot
-
-```bash
-python scripts/chat.py [OPTIONS]
-
-Options:
-  --show-sources    Print source citations after every answer
-  --debug           Show retrieval scores (hybrid, rerank) and rewritten queries
-  --no-history      Disable conversational memory (stateless Q&A)
-
-In-chat commands:
-  /reset            Clear conversation history
-  /sources          Toggle source display
-  /debug            Toggle debug mode
-  /quit             Exit
-```
-
-**Example session:**
-
-```
-Vy: Jaké jsou podmínky pro hypotéku?
-Asistent: Raiffeisenbank nabízí hypoteční úvěry od 200 000 Kč...
-          [Zdroj 1: hypoteky-podminky.pdf, str. 2]
-
-Vy: A jaká je maximální splatnost?
-Asistent: Maximální splatnost hypotečního úvěru je 30 let...
-```
-
----
-
-## Web Scraper
-
-```bash
-python scripts/scrape_rb.py [OPTIONS]
-
-Options:
-  --max-pages INT     Crawl limit (default: 600)
-  --delay FLOAT       Fixed request delay in seconds (default: random 1–3s)
-  --dry-run           Write sources.txt only, do not download
-  --no-download       Discover URLs only, skip PDF download
-  --no-faq            Skip FAQ page text extraction
-```
-
-**How it works:**
-
-1. Fetches `robots.txt` and parses allowed paths
-2. Loads `sitemap.xml` → 2 300+ Czech-language URLs
-3. Scores URLs by banking keywords (sazebník, podmínky, FAQ, hypotéka…)
-4. Crawls priority pages, extracts PDF links via `<a href>`, data attributes, and inline JS regex
-5. Detects FAQ pages by URL pattern and `<details>` accordion structure; saves as `.txt`
-6. Downloads PDFs to `data/raw/`, writes categorised `data/sources.txt`
+Use `/health/deep` for full Qdrant + OpenAI + Redis checks.
 
 ---
 
@@ -377,18 +217,19 @@ Options:
 ```
 rag-banking-chatbot/
 │
+├── start.sh                     # One-command start (Redis + backend + frontend)
 ├── config.py                    # Central configuration (all env-overridable)
 ├── requirements.txt
 ├── .env.example                 # Template — copy to .env
 │
 ├── scripts/
 │   ├── crawl_rb.py              # Playwright structured crawler: HTML → JSON/MD
-│   ├── download_documents.py    # PDF downloader for sazebníky/ceníky/podmínky
-│   ├── debug_dataset.py         # Dataset/chunk diagnostics
-│   ├── scrape_rb.py             # Sitemap-driven web scraper for rb.cz
+│   ├── download_documents.py    # PDF downloader (pricing / mortgages / cards)
 │   ├── ingest.py                # Ingestion pipeline CLI
+│   ├── debug_dataset.py         # Dataset/chunk diagnostics
+│   ├── scrape_rb.py             # Sitemap-driven web scraper
 │   ├── chat.py                  # Interactive terminal chatbot
-│   └── serve.py                 # FastAPI server launcher (uvicorn)
+│   └── serve.py                 # FastAPI server launcher (uvicorn wrapper)
 │
 ├── src/
 │   ├── ingestion/
@@ -396,34 +237,44 @@ rag-banking-chatbot/
 │   │   ├── downloader.py        # HTTP downloader with retry + idempotency
 │   │   ├── parser.py            # PDF text extraction (PyMuPDF + pdfplumber)
 │   │   ├── chunker.py           # RecursiveCharacterTextSplitter + chunk IDs
-│   │   └── indexer.py           # Qdrant upsert + BM25 pickle index
+│   │   ├── indexer.py           # Qdrant upsert + BM25 pickle index
+│   │   ├── pricing_extractor.py # Structured pricing row extraction
+│   │   └── quality_filters.py   # Chunk quality validation
 │   │
 │   ├── retrieval/
-│   │   ├── bm25_retriever.py    # Sparse BM25 search
-│   │   ├── vector_retriever.py  # Dense Qdrant search (query_points API)
-│   │   ├── hybrid.py            # RRF fusion (weighted, k=60)
-│   │   ├── reranker.py          # BGE cross-encoder reranking
-│   │   └── retriever.py         # LangChain BaseRetriever orchestration
+│   │   ├── pricing_retriever.py # Deterministic pricing lookup (JSONL)
+│   │   ├── pricing_resolver.py  # Canonical product matching + scoring
+│   │   ├── hybrid.py            # RRF fusion (BM25 + Qdrant, weighted)
+│   │   ├── reranker.py          # NVIDIA NIM + BGE CPU fallback
+│   │   ├── retriever.py         # BankingRetriever orchestration
+│   │   ├── query_classifier.py  # Intent + product label detection
+│   │   └── source_governance.py # Source quality + diversity filters
 │   │
 │   ├── generation/
+│   │   ├── chain.py             # BankingRAGChain — ask() + ask_stream()
+│   │   ├── llm.py               # OpenAI LLM wrapper (timeout, retry)
 │   │   ├── prompts.py           # Czech system prompts + context formatting
-│   │   └── chain.py             # BankingRAGChain + OllamaLLM / AnthropicLLM /
-│   │                            #   GeminiLLM + discover_gemini_model()
+│   │   └── confidence_semantics.py # Answer confidence scoring
 │   │
 │   ├── api/
-│   │   └── main.py              # FastAPI app — /chat, /health, /collections
+│   │   └── main.py              # FastAPI app — /chat, /chat/stream, /health
 │   │
-│   └── utils/
-│       └── logger.py            # Rich-formatted logger
+│   └── storage/
+│       ├── redis_impl.py        # Redis cache + session backends
+│       └── response_cache.py    # Distributed response cache (Redis + in-memory)
+│
+├── frontend/                    # SvelteKit chat UI
+│   └── src/lib/
+│       ├── api.ts               # sendChatMessage() + streamChatMessage()
+│       └── components/          # Chat, ChatMessage, SourcesCard, DebugPanel...
 │
 └── data/
-    ├── crawl/
-    │   ├── raw_html/            # Audit HTML from Playwright crawler
-    │   └── structured/          # One JSON + Markdown export per URL
+    ├── pricing/
+    │   └── pricing_rows.jsonl   # 2 554 structured pricing rows
     ├── documents/               # PDF documents + metadata.jsonl
-    ├── raw/                     # Downloaded PDFs + extracted FAQ .txt files
+    ├── crawl/structured/        # Structured JSON/MD from crawler
     ├── indexes/                 # BM25 index + document store (pickle)
-    └── sources.txt              # Auto-generated PDF URL list (scraper output)
+    └── raw/                     # Downloaded PDFs + FAQ .txt files
 ```
 
 ---
@@ -432,26 +283,23 @@ rag-banking-chatbot/
 
 | Variable | Default | Description |
 |---|---|---|
-| `LLM_BACKEND` | `ollama` | LLM provider: `ollama` \| `anthropic` \| `gemini` |
-| `LLM_MODEL` | `llama3.2` | Ollama model name (ollama backend only) |
-| `EMBEDDING_BACKEND` | `ollama` | Embedding provider: `ollama` \| `openai` |
-| `EMBED_MODEL` | `nomic-embed-text` | Ollama embedding model when `EMBEDDING_BACKEND=ollama` |
-| `OPENAI_API_KEY` | — | OpenAI API key when `EMBEDDING_BACKEND=openai` |
-| `OPENAI_EMBED_MODEL` | `text-embedding-3-small` | OpenAI embedding model; default is 1536 dimensions |
-| `OPENAI_EMBED_BATCH_SIZE` | `16` | Max chunks per OpenAI embedding request; also capped by estimated token count |
-| `OPENAI_EMBED_SLEEP_MS` | `250` | Sleep between OpenAI embedding requests to reduce TPM/RPM pressure |
-| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama API endpoint |
-| `ANTHROPIC_API_KEY` | — | Anthropic API key (anthropic backend) |
-| `ANTHROPIC_MODEL` | `claude-haiku-4-5-20251001` | Anthropic model ID |
-| `GEMINI_API_KEY` | — | Google AI Studio API key (gemini backend) |
-| `GEMINI_MODEL` | `gemini-2.0-flash` | Gemini model; default triggers auto-discovery |
+| `LLM_BACKEND` | `openai` | LLM provider (`openai` only in current deployment) |
+| `PRIMARY_MODEL` | `gpt-5.5-pro` | Primary OpenAI chat model |
+| `OPENAI_CHAT_FALLBACK_MODEL` | `gpt-4o-mini` | Fallback / fast path model |
+| `OPENAI_API_KEY` | — | OpenAI API key |
+| `EMBEDDING_BACKEND` | `openai` | Embedding provider |
+| `OPENAI_EMBED_MODEL` | `text-embedding-3-small` | OpenAI embedding model (1536 dim) |
+| `OPENAI_EMBED_TIMEOUT_SECONDS` | `15` | Embedding request timeout |
+| `LLM_TIMEOUT` | `20` | LLM call timeout in seconds |
+| `LLM_MAX_RETRIES` | `1` | Max LLM retry attempts |
+| `NVIDIA_API_KEY` | — | NVIDIA NIM API key (enables cloud reranker) |
 | `QDRANT_HOST` | `localhost` | Qdrant server host |
 | `QDRANT_PORT` | `6333` | Qdrant REST API port |
 | `QDRANT_COLLECTION` | `raiffeisenbank_docs` | Qdrant collection name |
+| `RERANKER_MODEL` | `BAAI/bge-reranker-v2-m3` | BGE fallback reranker model |
+| `RERANKER_DEVICE` | `cpu` | `cpu` or `cuda` for BGE reranker |
 | `CHUNK_SIZE` | `1000` | Max chunk size in characters |
 | `CHUNK_OVERLAP` | `200` | Overlap between adjacent chunks |
-| `RERANKER_MODEL` | `BAAI/bge-reranker-v2-m3` | HuggingFace cross-encoder model |
-| `RERANKER_DEVICE` | `cpu` | `cpu` or `cuda` |
 | `LLM_TEMPERATURE` | `0.1` | Generation temperature (low = factual) |
 | `LLM_MAX_TOKENS` | `1024` | Max output tokens per response |
 
@@ -459,87 +307,20 @@ rag-banking-chatbot/
 
 ## Design Decisions
 
+**Deterministic pricing over LLM synthesis**
+Card and account fees are looked up directly from `pricing_rows.jsonl` using canonical product matching (`detect_query_product`). This eliminates hallucination risk for the most common query type and cuts latency from ~15s to ~2s.
+
 **Why hybrid retrieval?**
-BM25 excels at exact matches — product codes, Czech abbreviations (RPSN, ČNB), specific fee amounts. Dense retrieval captures semantic equivalents — "jak otevřít účet" ≈ "zřízení bankovního konta". RRF combines rank orders without score normalization, making it robust to score distribution differences.
+BM25 excels at exact matches — product codes, Czech abbreviations (RPSN, ČNB), specific fee amounts. Dense retrieval captures semantic equivalents — "jak otevřít účet" ≈ "zřízení bankovního konta". RRF combines rank orders without score normalization.
 
-**Why a cross-encoder reranker?**
-Bi-encoders encode query and document independently; cross-encoders see both together and produce significantly more accurate relevance scores. The cost is linear with candidate count, so reranking runs after pre-filtering to top-10 candidates only.
+**Why NVIDIA NIM reranker?**
+`llama-nemotron-rerank-vl-1b-v2` runs on NVIDIA cloud inference and outperforms the BGE CPU cross-encoder for Czech banking text. BGE remains as a local fallback when `NVIDIA_API_KEY` is absent.
 
-**Why `query_points` instead of `search`?**
-`qdrant-client ≥ 1.14` removed the `search()` method. `query_points()` is the universal replacement — it accepts a dense vector directly and returns results under `.points`.
+**Why suppress Qdrant recovery for structured pricing?**
+When the pricing resolver returns structured rows, governance recovery would inject Qdrant docs from unrelated card lists, corrupting the answer. Recovery is disabled when all candidate docs are `structured_pricing=True`.
 
-**Why prompt caching on Anthropic?**
-The system prompt contains static banking assistant instructions followed by dynamic retrieved context. Marking it `cache_control: ephemeral` caches the entire block. On follow-up questions retrieving the same documents, the cached tokens cost ~0.1× the standard input price.
-
-**Why `google-genai` instead of `google-generativeai`?**
-`google-generativeai` reached end-of-life and no longer receives updates. `google-genai` is the official successor with support for Gemini 2.x models.
-
----
-
-## Extending the Project
-
-**Add a new LLM backend**
-
-1. Implement a class with `invoke(messages: list[BaseMessage]) -> str`
-2. Add a branch to `_build_llm()` in `src/generation/chain.py`
-3. Add a `_check_<backend>()` function and `<backend>: ComponentStatus | None` field in `src/api/main.py`
-
-**Use GPU for reranking**
-
-```bash
-# .env
-RERANKER_DEVICE=cuda
-```
-
-**Add a Streamlit UI**
-
-```bash
-pip install streamlit
-# Point at http://localhost:8000/chat via API calls
-```
-
-**Swap the embedding model**
-
-For local embeddings keep:
-
-```bash
-EMBEDDING_BACKEND=ollama
-EMBED_MODEL=nomic-embed-text       # 768 dimensions
-```
-
-For OpenAI embeddings:
-
-```bash
-EMBEDDING_BACKEND=openai
-OPENAI_API_KEY=sk-...
-OPENAI_EMBED_MODEL=text-embedding-3-small  # 1536 dimensions
-```
-
-After changing embedding backend/model, rebuild Qdrant with `--full` so the collection is recreated with the correct vector dimension:
-
-```bash
-python3 scripts/ingest.py --enterprise --full
-```
-
-If an OpenAI embedding run is interrupted or rate-limited, resume without recreating Qdrant:
-
-```bash
-python3 scripts/ingest.py --enterprise --full --resume
-```
-
----
-
-## Production Deployment Recommendations
-
-- Run crawling as a scheduled batch job, not inside the chat API process.
-- Use a supported Playwright runtime, preferably Docker image `mcr.microsoft.com/playwright/python:v1.44.0-jammy` or newer supported equivalent.
-- Keep raw HTML and structured JSON as immutable audit artifacts with timestamps and content hashes.
-- Run `scripts/debug_dataset.py` after every crawl/ingest and alert on drops in URL/PDF/chunk counts.
-- Use `scripts/ingest.py --enterprise --full` for planned rebuilds; use incremental mode for daily deltas only after validating chunk IDs.
-- Back up Qdrant storage and `data/indexes/*.pkl` together so dense and BM25 indexes stay in sync.
-- For pricing/legal answers, require citations and prefer `document_type=pricing` and `chunk_type=pricing|table|pdf_table` retrieval filters.
-- Do not expose crawler endpoints publicly; treat crawled content as untrusted data to mitigate prompt injection.
-- Version prompts, crawler code, chunking parameters and crawl manifests together for reproducible answers.
+**BM25 warm-up**
+The 78 MB BM25 index takes ~12s to load on first access. A `hypotéka podmínky` warm-up query runs at startup to load it into RAM, reducing first-user latency from 15s to 3s.
 
 ---
 
@@ -549,4 +330,4 @@ MIT — free for commercial and non-commercial use.
 
 ---
 
-*Portfolio project demonstrating production-quality RAG with hybrid retrieval, multi-backend LLM support, and a web scraping pipeline. Not an official Raiffeisenbank a.s. product.*
+*Portfolio project demonstrating production-quality RAG with hybrid retrieval, deterministic pricing lookup, NVIDIA NIM reranking, Redis caching, and a SvelteKit streaming frontend. Not an official Raiffeisenbank a.s. product.*
