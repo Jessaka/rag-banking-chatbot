@@ -1,6 +1,15 @@
+import pytest
+from pathlib import Path
+
 from langchain_core.documents import Document
 
 from src.generation.chain import BankingRAGChain, extract_structured_pricing_answer, normalize_product_name
+
+_PRICING_ROWS_PATH = Path("data/pricing/pricing_rows.jsonl")
+_REQUIRES_PRICING_DATA = pytest.mark.skipif(
+    not _PRICING_ROWS_PATH.exists(),
+    reason="pricing_rows.jsonl not available in CI",
+)
 
 
 class FakeRetriever:
@@ -382,6 +391,7 @@ def test_clarification_entity_memory_preserved(tmp_path):
     assert intent == "pricing"
 
 
+@_REQUIRES_PRICING_DATA
 def test_generic_bezny_ucet_not_basic_payment():
     """Generic 'běžný účet' must NOT map to basic payment account."""
     from src.retrieval.pricing_resolver import resolve_pricing_query
