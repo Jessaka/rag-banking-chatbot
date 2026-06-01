@@ -185,6 +185,7 @@ _sessions: dict[str, tuple[BankingRAGChain, float]] = {}
 # ve stejném sezení při paralelních requestech.
 _session_locks: dict[str, asyncio.Lock] = {}
 
+_warmup_complete: bool = False
 
 _SESSION_STATE_FIELDS = (
     "resolved_product",
@@ -383,6 +384,10 @@ class HealthResponse(BaseModel):
     redis: ComponentStatus | None = Field(
         None,
         description="Stav Redis cache/session store.",
+    )
+    warmup: str | None = Field(
+        None,
+        description="Stav inicializace: 'complete' nebo 'in_progress'.",
     )
 
 
@@ -970,6 +975,7 @@ async def lifespan(app: FastAPI):
     # Warm-up: projde celou pipeline (BM25 + embedding + reranker) aby se
     # vše načetlo do paměti před prvním uživatelským dotazem.
     async def _warmup() -> None:
+        global _warmup_complete
         try:
             t_wu = time.perf_counter()
             chain = BankingRAGChain(conversational=False)
@@ -981,8 +987,11 @@ async def lifespan(app: FastAPI):
             chain_bm25 = BankingRAGChain(conversational=False)
             await asyncio.to_thread(chain_bm25.ask, "hypotéka podmínky")
             logger.info(f"Warm-up (BM25) complete ({(time.perf_counter() - t_bm25) * 1000:.0f}ms)")
+            _warmup_complete = True
+            logger.info("Warm-up complete, accepting requests")
         except Exception as exc:
-            logger.warning(f"Warm-up selhal (server pokračuje): {exc!s:.100}")
+            logger.warning(f"Warm-up selhal (server pokračuje bez guardu): {exc!s:.100}")
+            _warmup_complete = True  # neblokuj requesty pokud warmup selhal
 
     asyncio.ensure_future(_warmup())
 
@@ -1101,6 +1110,8 @@ async def _request_body_size_limit(request: Request, call_next: Any) -> Any:
     ),
 )
 async def chat(request: ChatRequest) -> ChatResponse:
+    if not _warmup_complete:
+        raise HTTPException(status_code=503, detail="Server se inicializuje, zkuste za chvíli")
     t_start = time.perf_counter()
     request_id = str(uuid.uuid4())
     partial_result: dict[str, Any] | None = None
@@ -1421,6 +1432,8 @@ def _sse_format(event: str, data: Any) -> str:
     ),
 )
 async def chat_stream(request: ChatRequest) -> StreamingResponse:
+    if not _warmup_complete:
+        raise HTTPException(status_code=503, detail="Server se inicializuje, zkuste za chvíli")
     request_id = str(uuid.uuid4())
 
     async def event_stream() -> Any:
@@ -1650,6 +1663,7 @@ async def health() -> HealthResponse:
         gemini=None,
         openai=None,
         redis=redis,
+        warmup="complete" if _warmup_complete else "in_progress",
         active_provider=config.LLM_BACKEND,
         active_model=config.PRIMARY_MODEL,
         fallback_model=config.OPENAI_CHAT_FALLBACK_MODEL,
