@@ -2737,6 +2737,9 @@ class BankingRAGChain:
                 result_container[0] = result
             except Exception as exc:
                 error_container[0] = exc
+            finally:
+                # Unblock llm_started.wait() for deterministic routes that skip LLM
+                llm_started.set()
 
         thread = threading.Thread(target=_run_ask, daemon=True)
         thread.start()
@@ -2745,7 +2748,7 @@ class BankingRAGChain:
         # 1. The LLM streaming starts (routing complete, LLM generating)
         # 2. Or ask() finishes entirely (deterministic route)
         # Timeout prevents hanging if something goes wrong.
-        llm_started.wait(timeout=60)
+        llm_started.wait(timeout=config.LLM_TIMEOUT)
         elapsed_until_llm = (time.perf_counter() - t_start) * 1000
 
         if error_container[0]:
