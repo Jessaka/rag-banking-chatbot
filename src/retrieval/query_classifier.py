@@ -287,6 +287,8 @@ def classify_query(query: str) -> QueryProfile:
 
     if any(k in q for k in ("hypot", "úvěr na bydlení", "uver na bydleni")):
         labels.add("mortgages")
+    if any(k in q for k in ("půjčk", "pujck", "úvěr", "uver", "kontokorent", "spotřebitelský", "spotrebitelsky", "refinancov", "rpsn")):
+        labels.add("loans")
     if any(k in q for k in ("invest", "fond", "dip", "akcie", "dluhopis")):
         labels.add("investing")
     if any(k in q for k in FAQ_TERMS):
@@ -439,6 +441,9 @@ def classify_query(query: str) -> QueryProfile:
     if "mortgages" in labels:
         preferred_categories.append("mortgages")
         preferred_urls.append("/hypotek")
+    if "loans" in labels:
+        preferred_categories.extend(["loans", "pujcky"])
+        preferred_urls.extend(["/pujcky", "/uvery", "pujcka"])
     if "investing" in labels:
         preferred_categories.append("investments")
         preferred_urls.extend(["investice", "fondy", "dip"])
@@ -464,6 +469,14 @@ def classify_query(query: str) -> QueryProfile:
         )
         if "mortgages" in labels:
             rerank_min_score = -3.0
+            hybrid_top_k = 20
+        if "loans" in labels or "pujcky" in labels:
+            rerank_min_score = -3.0
+            hybrid_top_k = 20
+    # Loans threshold mimo catalog_intent blok — platí i pro specifické dotazy
+    if ("loans" in labels or "pujcky" in labels) and rerank_min_score > -3.0:
+        rerank_min_score = -3.0
+        if hybrid_top_k < 20:
             hybrid_top_k = 20
     # ---------------------------------------------------------------------
     # Vytvoření a vrácení QueryProfile (původní chování)
