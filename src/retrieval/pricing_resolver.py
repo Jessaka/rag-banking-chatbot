@@ -24,6 +24,7 @@ _CANONICAL_QUICK_TERMS: dict[str, tuple[str, ...]] = {
     "podnikatelsky_ucet":    ("podnikatel", "business", "osvc", "ekonto"),
     "firemni_ucet":          ("firemni", "firma", "firmy", "corporate"),
     "kreditni_karta":        ("kredit", "credit"),
+    "rb_premium_karta":      ("kredit", "credit", "private"),
     "debetni_karta":         ("debet", "debit"),
     "hypoteky":              ("hypot",),
     "pujcky":                ("pujck", "uver", "spotreb"),

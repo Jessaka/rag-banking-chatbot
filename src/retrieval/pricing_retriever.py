@@ -26,6 +26,7 @@ NO_UNAMBIGUOUS_PRICING_MESSAGE = "Nepodařilo se najít jednoznačný aktuální
 EKONTO_CLARIFICATION_MESSAGE = "Upřesněte prosím, jestli myslíte osobní eKonto, nebo podnikatelské eKonto."
 CANONICAL_PRODUCT_LABELS = {
     "kreditni_karta": "kreditní karta",
+    "rb_premium_karta": "kreditní kartu RB PREMIUM",
     "debetni_karta": "debetní karta",
     "hypoteky": "hypotéku / nemovitost",
     "pujcky": "půjčku / úvěr",
@@ -104,9 +105,11 @@ _QUERY_PRODUCT_SYNONYMS: dict[str, tuple[str, ...]] = {
         # aliasy pro konkrétní varianty kreditních karet RB
         "easy", "karta easy", "easy karta", "kreditni easy",
         "style", "karta style", "style karta", "kreditni style",
-        "rb premium", "karta premium", "premium karta", "kreditni premium",
         "visa gold", "karta visa gold", "gold karta",
         "o2 rb", "o2rb", "karta o2", "o2 karta",
+    ),
+    "rb_premium_karta": (
+        "rb premium", "rb_premium", "premium karta", "karta premium", "kreditni premium",
     ),
     "debetni_karta": ("debetni karta", "debetni karty", "debetni kartu", "debetni kartou", "debitni karta", "debitni karty", "debetka", "debit card"),
     "hypoteky": ("hypoteka", "hypotecni", "hypoteky"),
@@ -125,6 +128,7 @@ _ROW_PRODUCT_SYNONYMS: dict[str, tuple[str, ...]] = {
     "podnikatelsky_ucet": ("podnikatel", "podnikatelske", "business", "osvc"),
     "firemni_ucet": ("firma", "firmy", "firemni", "corporate", "pravnicke", "pravnickych"),
     "kreditni_karta": ("kreditni karta", "kreditni karty", "credit card", "kreditka"),
+    "rb_premium_karta": ("rb premium",),
     "debetni_karta": ("debetni karta", "debitni karta", "debit card", "debetka"),
     "hypoteky": ("hypotek", "hypotec"),
     "pujcky": ("pujck", "uver", "spotrebitelsk"),

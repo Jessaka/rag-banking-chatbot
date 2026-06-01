@@ -539,12 +539,23 @@ class BankingRetriever(BaseRetriever):
             pricing_docs = resolve_pricing_query(query, top_k=self.rerank_top_k)
             pricing_ms = (time.perf_counter() - t_pricing) * 1000
             if pricing_docs:
-                pricing_docs, gov_meta, gov_ms, recovery_ms = self._apply_governance_with_recovery(
-                    query=query,
-                    docs=pricing_docs,
-                    original_candidates=pricing_docs,
-                    query_profile=query_profile,
-                )
+                # Structured pricing rows are curated canonical results — applying
+                # Qdrant recovery would add unrelated card/product docs and corrupt
+                # the answer. Apply governance only (no recovery) in that case.
+                all_structured = all(d.metadata.get("structured_pricing") is True for d in pricing_docs)
+                if all_structured:
+                    t_gov = time.perf_counter()
+                    pricing_docs, gov_meta = apply_governance_pipeline(pricing_docs, query_profile)
+                    gov_meta["recovery_pass_needed"] = False
+                    gov_ms = (time.perf_counter() - t_gov) * 1000
+                    recovery_ms = 0.0
+                else:
+                    pricing_docs, gov_meta, gov_ms, recovery_ms = self._apply_governance_with_recovery(
+                        query=query,
+                        docs=pricing_docs,
+                        original_candidates=pricing_docs,
+                        query_profile=query_profile,
+                    )
                 logger.info(
                     f"⏱ PricingRetriever deterministic: {pricing_ms:.0f}ms → {len(pricing_docs)} výsledků; "
                     f"governance={gov_ms:.0f}ms, recovery={recovery_ms:.0f}ms; "
