@@ -180,7 +180,15 @@ def detect_query_product(query: str) -> tuple[str | None, float, str]:
             if not alias_n:
                 continue
             if alias_n in q:
-                confidence = 1.0 if canonical in {"ekonto_osobni", "ekonto_podnikatelske", "podnikatelsky_ucet", "firemni_ucet"} else 0.9
+                _HIGH_CONF = {"ekonto_osobni", "ekonto_podnikatelske", "podnikatelsky_ucet", "firemni_ucet"}
+                # Variant-specific card canonicals beat generic kreditni_karta (0.9) on tie
+                _CARD_VARIANTS = {"rb_premium_karta", "easy_karta", "style_karta", "visa_gold_karta", "o2_rb_karta"}
+                if canonical in _HIGH_CONF:
+                    confidence = 1.0
+                elif canonical in _CARD_VARIANTS:
+                    confidence = 0.95
+                else:
+                    confidence = 0.9
                 if len(alias_n.split()) == 1 and canonical not in {"investice"}:
                     confidence = min(confidence, 0.82)
                 if confidence > best[1]:
