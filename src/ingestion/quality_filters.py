@@ -708,10 +708,13 @@ def is_valid_pricing_row(row: dict[str, Any] | Any) -> tuple[bool, str | None]:
     # ── Hard reject: strict normalized schema fields ─────────────────────
     if not amount:
         return False, "missing_amount"
-    if not currency:
-        return False, "missing_currency"
-    if not period:
-        return False, "missing_period"
+    # "zdarma" rows are valid without currency/period — "free" is self-describing
+    _is_free = fee_value.lower().strip() in {"zdarma", "free", "bez poplatku", "0 kč", "0 czk"}
+    if not _is_free:
+        if not currency:
+            return False, "missing_currency"
+        if not period:
+            return False, "missing_period"
 
     return True, None
 
