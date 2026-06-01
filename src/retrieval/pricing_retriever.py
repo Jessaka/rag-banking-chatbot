@@ -27,6 +27,10 @@ EKONTO_CLARIFICATION_MESSAGE = "Upřesněte prosím, jestli myslíte osobní eKo
 CANONICAL_PRODUCT_LABELS = {
     "kreditni_karta": "kreditní karta",
     "rb_premium_karta": "kreditní kartu RB PREMIUM",
+    "easy_karta": "kreditní kartu EASY",
+    "style_karta": "kreditní kartu STYLE",
+    "visa_gold_karta": "kreditní kartu Visa Gold",
+    "o2_rb_karta": "kreditní kartu O2 RB",
     "debetni_karta": "debetní karta",
     "hypoteky": "hypotéku / nemovitost",
     "pujcky": "půjčku / úvěr",
@@ -102,14 +106,21 @@ _QUERY_PRODUCT_SYNONYMS: dict[str, tuple[str, ...]] = {
     "firemni_ucet": ("firemni ucet", "ucet pro firmu", "firemni konto", "firmy", "firma", "pravnicke osoby", "firemniho uctu"),
     "kreditni_karta": (
         "kreditni karta", "kreditni karty", "kreditni kartu", "kreditni kartou", "kreditni karte", "kreditka", "credit card",
-        # aliasy pro konkrétní varianty kreditních karet RB
-        "easy", "karta easy", "easy karta", "kreditni easy",
-        "style", "karta style", "style karta", "kreditni style",
-        "visa gold", "karta visa gold", "gold karta",
-        "o2 rb", "o2rb", "karta o2", "o2 karta",
     ),
     "rb_premium_karta": (
         "rb premium", "rb_premium", "premium karta", "karta premium", "kreditni premium",
+    ),
+    "easy_karta": (
+        "easy", "karta easy", "easy karta", "kreditni easy",
+    ),
+    "style_karta": (
+        "style", "karta style", "style karta", "kreditni style",
+    ),
+    "visa_gold_karta": (
+        "visa gold", "karta visa gold", "gold karta", "kreditni visa gold",
+    ),
+    "o2_rb_karta": (
+        "o2 rb", "o2rb", "karta o2", "o2 karta", "o2rb karta",
     ),
     "debetni_karta": ("debetni karta", "debetni karty", "debetni kartu", "debetni kartou", "debitni karta", "debitni karty", "debetka", "debit card"),
     "hypoteky": ("hypoteka", "hypotecni", "hypoteky"),
@@ -129,6 +140,10 @@ _ROW_PRODUCT_SYNONYMS: dict[str, tuple[str, ...]] = {
     "firemni_ucet": ("firma", "firmy", "firemni", "corporate", "pravnicke", "pravnickych"),
     "kreditni_karta": ("kreditni karta", "kreditni karty", "credit card", "kreditka"),
     "rb_premium_karta": ("rb premium",),
+    "easy_karta": ("karta easy", "hlavni karta easy"),
+    "style_karta": ("karta style", "hlavni karta style"),
+    "visa_gold_karta": ("visa gold", "karta visa gold"),
+    "o2_rb_karta": ("o2 rb", "karta o2 rb"),
     "debetni_karta": ("debetni karta", "debitni karta", "debit card", "debetka"),
     "hypoteky": ("hypotek", "hypotec"),
     "pujcky": ("pujck", "uver", "spotrebitelsk"),

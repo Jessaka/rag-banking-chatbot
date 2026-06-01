@@ -380,6 +380,10 @@ class HealthResponse(BaseModel):
         None,
         description="Stav OpenAI API – přítomno pouze pokud LLM_BACKEND='openai'.",
     )
+    redis: ComponentStatus | None = Field(
+        None,
+        description="Stav Redis cache/session store.",
+    )
 
 
 class CollectionInfo(BaseModel):
@@ -774,6 +778,24 @@ def _check_bm25() -> ComponentStatus:
         status="ok",
         detail=f"{config.BM25_INDEX_PATH.name} ({size_mb:.1f} MB)",
     )
+
+
+def _check_redis() -> ComponentStatus:
+    """Synchronní Redis ping pro health endpoint."""
+    try:
+        import redis as _redis
+        client = _redis.Redis(
+            host=getattr(config, "REDIS_HOST", "localhost"),
+            port=getattr(config, "REDIS_PORT", 6379),
+            password=getattr(config, "REDIS_PASSWORD", None) or None,
+            db=getattr(config, "REDIS_DB", 0),
+            socket_connect_timeout=getattr(config, "REDIS_TIMEOUT", 2),
+        )
+        client.ping()
+        client.close()
+        return ComponentStatus(status="ok", detail=f"Redis ping OK ({getattr(config, 'REDIS_HOST', 'localhost')}:{getattr(config, 'REDIS_PORT', 6379)})")
+    except Exception as exc:
+        return ComponentStatus(status="degraded", detail=f"Redis unavailable: {exc}")
 
 
 def _check_gemini() -> ComponentStatus:
@@ -1605,7 +1627,14 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
 )
 async def health() -> HealthResponse:
     bm25 = _check_bm25()
-    overall: Literal["ok", "degraded", "error"] = "ok" if bm25.status == "ok" else bm25.status
+    redis = _check_redis()
+    statuses = {bm25.status, redis.status}
+    if "error" in statuses:
+        overall: Literal["ok", "degraded", "error"] = "error"
+    elif "degraded" in statuses:
+        overall = "degraded"
+    else:
+        overall = "ok"
     return HealthResponse(
         status=overall,
         qdrant=ComponentStatus(status="ok", detail="Skipped in fast health; use /health/deep for Qdrant check"),
@@ -1614,6 +1643,7 @@ async def health() -> HealthResponse:
         anthropic=None,
         gemini=None,
         openai=None,
+        redis=redis,
         active_provider=config.LLM_BACKEND,
         active_model=config.PRIMARY_MODEL,
         fallback_model=config.OPENAI_CHAT_FALLBACK_MODEL,
@@ -1634,6 +1664,7 @@ async def health_deep() -> HealthResponse:
     gather_tasks = [
         asyncio.to_thread(_check_qdrant),
         asyncio.to_thread(_check_ollama),
+        asyncio.to_thread(_check_redis),
     ]
     llm_check = None
     if config.LLM_BACKEND == "anthropic":
@@ -1647,14 +1678,14 @@ async def health_deep() -> HealthResponse:
         llm_check = "openai"
 
     results = await asyncio.gather(*gather_tasks)
-    qdrant, ollama = results[0], results[1]
-    llm_status: ComponentStatus | None = results[2] if llm_check else None
+    qdrant, ollama, redis_status = results[0], results[1], results[2]
+    llm_status: ComponentStatus | None = results[3] if llm_check else None
     anthropic_status: ComponentStatus | None = llm_status if config.LLM_BACKEND == "anthropic" else None
     gemini_status: ComponentStatus | None = llm_status if config.LLM_BACKEND == "gemini" else None
     openai_status: ComponentStatus | None = llm_status if config.LLM_BACKEND == "openai" else None
     bm25 = _check_bm25()
 
-    all_statuses = {qdrant.status, ollama.status, bm25.status}
+    all_statuses = {qdrant.status, ollama.status, bm25.status, redis_status.status}
     for extra in (anthropic_status, gemini_status, openai_status):
         if extra:
             all_statuses.add(extra.status)
@@ -1674,6 +1705,7 @@ async def health_deep() -> HealthResponse:
         anthropic=anthropic_status,
         gemini=gemini_status,
         openai=openai_status,
+        redis=redis_status,
     )
 
 # ---------------------------------------------------------------------------

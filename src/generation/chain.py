@@ -892,14 +892,9 @@ def _minimal_structured_sources(docs: list[Document]) -> list[dict]:
 
 
 def _credit_card_products_from_docs(docs: list[Document]) -> list[str]:
-    """Return the full RB credit card catalog for catalog-intent queries.
-
-    Previously filtered by doc content, which caused only doc-mentioned cards
-    to appear. Since this is called exclusively for credit_card_catalog_direct
-    (a deterministic catalog route), we always return the full known product
-    list. Docs are used only to validate the source URL footer.
-    """
+    """Return the full RB payment card catalog for catalog-intent queries."""
     return [
+        "Debetní karta (k běžnému účtu)",
         "Kreditní karta EASY",
         "Kreditní karta STYLE",
         "Kreditní karta RB PREMIUM",
@@ -912,24 +907,26 @@ def _format_credit_card_catalog_answer(docs: list[Document]) -> str | None:
     products = _credit_card_products_from_docs(docs)
     if not products:
         return None
-    lines = ["Raiffeisenbank v dostupných zdrojích uvádí tyto kreditní karty / kreditní produkty:", ""]
+    lines = ["Raiffeisenbank nabízí tyto platební karty:", ""]
     for product in products:
-        if "easy" in product.lower():
-            desc = "základní kreditní karta zaměřená na jednoduché používání."
+        if "debetní" in product.lower():
+            desc = "karta napojená na běžný účet; vydává se automaticky k eKontu (Mastercard nebo Visa)."
+        elif "easy" in product.lower():
+            desc = "základní kreditní karta zdarma."
         elif "style" in product.lower():
-            desc = "kreditní karta s odměnami / výhodami."
+            desc = "kreditní karta s cashback odměnami."
         elif "premium" in product.lower():
-            desc = "prémiovější kreditní karta."
+            desc = "prémiová kreditní karta (199 Kč/měs)."
         elif "visa gold" in product.lower():
-            desc = "kreditní karta typu Visa Gold."
+            desc = "kreditní karta Visa Gold s cestovními výhodami."
         elif "o2" in product.lower():
             desc = "partnerská kreditní karta O2 RB Club."
         else:
-            desc = "katalog kreditních karet Raiffeisenbank."
+            desc = "platební karta Raiffeisenbank."
         lines.append(f"- {product}: {desc}")
     lines.extend([
         "",
-        "Pro výběr konkrétní karty doporučuji otevřít detail produktu a porovnat podmínky, limity, bonusy a poplatky.",
+        "Pro porovnání podmínek, limitů a poplatků doporučuji detail produktu na rb.cz.",
     ])
     first = docs[0]
     source = first.metadata.get("source_url") or first.metadata.get("url") or first.metadata.get("file_name") or "rb.cz"

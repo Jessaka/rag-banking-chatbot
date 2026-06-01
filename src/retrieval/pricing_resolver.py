@@ -25,6 +25,10 @@ _CANONICAL_QUICK_TERMS: dict[str, tuple[str, ...]] = {
     "firemni_ucet":          ("firemni", "firma", "firmy", "corporate"),
     "kreditni_karta":        ("kredit", "credit"),
     "rb_premium_karta":      ("kredit", "credit", "private"),
+    "easy_karta":            ("kredit", "credit"),
+    "style_karta":           ("kredit", "credit"),
+    "visa_gold_karta":       ("kredit", "credit", "visa"),
+    "o2_rb_karta":           ("kredit", "credit", "o2"),
     "debetni_karta":         ("debet", "debit"),
     "hypoteky":              ("hypot",),
     "pujcky":                ("pujck", "uver", "spotreb"),
@@ -492,6 +496,13 @@ def _candidate_rows(
                 continue
         if canonical_product and not _product_group_match(row, canonical_product):
             continue
+        # Kreditní karta varianty nesmí matchovat řádky ZPÚ (debit Visa Gold apod.)
+        _CREDIT_CARD_VARIANT_CANONICALS = frozenset({
+            "rb_premium_karta", "easy_karta", "style_karta", "visa_gold_karta", "o2_rb_karta",
+        })
+        if canonical_product in _CREDIT_CARD_VARIANT_CANONICALS:
+            if "basic_payment_account" in canonical_product_for_row(row):
+                continue
         if pricing_source_type(row) in {"faq", "generic_overview"}:
             continue
         score, reasons = pricing_priority_score(row, query, profile, canonical_product)
