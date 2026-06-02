@@ -111,6 +111,7 @@ GUIDED_FLOW_PATTERNS = (
     (re.compile(r"(jak\s+zadat|údaje|udaje|iban|bic).*(sepa|swift|zahraničn|zahranicn)", re.I), "sepa_swift"),
     (re.compile(r"(rb\s+klíč|rb\s+klic).*(aktiv|nefung|odblok|přen|pren|telefon|mobil)", re.I), "rb_key"),
     (re.compile(r"(jak\s+požádat|jak\s+pozadat|chci|vyřídit|vyridit).*(hypot[eé]k)", re.I), "mortgage"),
+    (re.compile(r"bankomat\w*|pobočk\w*|pobocek|kde.*(bankomat|pobočk|pobock)|najít.*(bankomat|pobočk)|hledat.*(bankomat|pobočk)", re.I), "branch_atm"),
 )
 
 # --- Priority 3: Procedural flow patterns ---
@@ -378,6 +379,11 @@ def _guided_flow_answer(intent: str) -> str:
             "2. Připravit údaje o příjmech, výdajích a vlastních zdrojích.\n"
             "3. Porovnat fixaci, sazbu, poplatky a možnost mimořádných splátek.\n"
             "4. Domluvit si další postup s hypotečním specialistou RB."
+        ),
+        "branch_atm": (
+            "Pro vyhledání bankomatů a poboček Raiffeisenbank použijte oficiální vyhledávač:\n"
+            "🏧 https://www.rb.cz/o-nas/kontakty/pobocky-a-bankomaty\n\n"
+            "Vyhledávač umožňuje filtrovat podle města, otevírací doby a dostupných služeb."
         ),
     }
     return flows[intent]
