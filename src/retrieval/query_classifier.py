@@ -300,6 +300,10 @@ def classify_query(query: str) -> QueryProfile:
     if any(k in q for k in ("raia", "asistentka", "bankovní identita", "bankovni identita", "rb klíč", "rb klic", "mobilní bankovnictví", "mobilni bankovnictvi", "internetové bankovnictví", "internetove bankovnictvi", "platba mobilem", "platba hodinkami", "platimpak", "platím pak", "online služby", "online sluzby")):
         labels.add("online_services")
         labels.add("supported_domain")
+        # online_services přebíjí generické activation_flow/cards aby se zabránilo
+        # falešné klasifikaci follow-up dotazů jako karty
+        labels.discard("activation_flow")
+        labels.discard("cards")
     if any(k in q for k in FAQ_TERMS):
         labels.add("faq")
     if any(k in q for k in COMPLAINT_TERMS):

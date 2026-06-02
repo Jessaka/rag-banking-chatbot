@@ -2041,6 +2041,35 @@ class BankingRAGChain:
                 if self.conversational and self.chat_history
                 else question
             )
+
+            # Context guard: krátké ambiguózní follow-upy dostanou prefix z posledního kontextu
+            _CONTEXT_SIGNALS = {
+                "raia": "RAIA",
+                "asistentk": "RAIA asistentka",
+                "bankovn": "bankovní identita RB",
+                "identit": "bankovní identita RB",
+                "rb klic": "RB klíč",
+                "rb klíč": "RB klíč",
+            }
+            def _strip_diacritics(text: str) -> str:
+                repl = str.maketrans("áčďéěíňóřšťúůýžÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ", "acdeeinorstuuyzACDEEINORSTUUYZ")
+                return text.translate(repl).lower()
+
+            if self.chat_history and len(retrieval_query.split()) <= 6:
+                last_ai = next(
+                    (m.content for m in reversed(self.chat_history)
+                     if hasattr(m, "content") and m.__class__.__name__ == "AIMessage"),
+                    ""
+                )
+                last_ai_norm = _strip_diacritics(last_ai)
+                for signal, prefix in _CONTEXT_SIGNALS.items():
+                    signal_norm = _strip_diacritics(signal)
+                    if signal_norm in last_ai_norm:
+                        original_rq = retrieval_query
+                        retrieval_query = f"{prefix}: {retrieval_query}"
+                        logger.debug(f"Context guard: '{original_rq}' → '{retrieval_query}'")
+                        break
+
         rewrite_ms = (time.perf_counter() - t_rewrite) * 1000
         if self.chat_history:  # rewriting probíhá jen pokud existuje historie
             logger.info(f"⏱ Query rewriting: {rewrite_ms:.0f}ms")
