@@ -1997,6 +1997,14 @@ class BankingRAGChain:
                 if self.conversational
                 else question
             )
+            # Guard: pokud rewrite vrátil otázku delší než originál → zůstaň u originálu
+            if (
+                retrieval_query.strip().endswith("?")
+                and len(retrieval_query) > len(question) * 0.8
+                and retrieval_query.strip() != question.strip()
+            ):
+                logger.debug(f"Query rewrite guard triggered: revert to original (rewritten='{retrieval_query[:60]}')")
+                retrieval_query = question
         rewrite_ms = (time.perf_counter() - t_rewrite) * 1000
         if self.chat_history:  # rewriting probíhá jen pokud existuje historie
             logger.info(f"⏱ Query rewriting: {rewrite_ms:.0f}ms")
