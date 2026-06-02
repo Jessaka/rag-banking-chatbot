@@ -289,6 +289,9 @@ def classify_query(query: str) -> QueryProfile:
         labels.add("mortgages")
     if any(k in q for k in ("půjčk", "pujck", "úvěr", "uver", "kontokorent", "spotřebitelský", "spotrebitelsky", "refinancov", "rpsn")):
         labels.add("loans")
+    if any(k in q for k in ("spoření", "sporeni", "spořicí", "sporici", "termínovaný vklad", "terminovany vklad", "stavební spoření", "stavebni sporeni", "úrok", "urok", "zhodnocení", "zhodnoceni", "vklad")):
+        labels.add("savings")
+        labels.add("supported_domain")
     if any(k in q for k in ("invest", "fond", "dip", "akcie", "dluhopis")):
         labels.add("investing")
     if any(k in q for k in FAQ_TERMS):
@@ -447,6 +450,9 @@ def classify_query(query: str) -> QueryProfile:
     if "investing" in labels:
         preferred_categories.append("investments")
         preferred_urls.extend(["investice", "fondy", "dip"])
+    if "savings" in labels:
+        preferred_categories.extend(["savings", "sporeni"])
+        preferred_urls.extend(["/sporeni", "/sporici", "vklad", "zhodnoceni"])
     if "insurance" in labels:
         preferred_categories.append("insurance")
 
@@ -476,8 +482,11 @@ def classify_query(query: str) -> QueryProfile:
         if "investing" in labels:
             rerank_min_score = -4.0
             hybrid_top_k = 20
-    # Loans/investing threshold mimo catalog_intent blok
-    if ("loans" in labels or "pujcky" in labels or "investing" in labels) and rerank_min_score > -4.0:
+        if "savings" in labels:
+            rerank_min_score = -4.0
+            hybrid_top_k = 20
+    # Loans/investing/savings threshold mimo catalog_intent blok
+    if ("loans" in labels or "pujcky" in labels or "investing" in labels or "savings" in labels) and rerank_min_score > -4.0:
         rerank_min_score = -4.0
         if hybrid_top_k < 20:
             hybrid_top_k = 20

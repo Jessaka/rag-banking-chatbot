@@ -2348,7 +2348,7 @@ class BankingRAGChain:
                     **ux,
                     "timing_ms": {"retrieval": round(retrieval_ms), "total": round(total_ms), "llm": 0},
                 }
-        if "account_overview" in query_profile.labels:
+        if "account_overview" in query_profile.labels and "savings" not in query_profile.labels:
             overview_answer = _format_account_overview_answer(source_docs)
             if overview_answer:
                 total_ms = (time.perf_counter() - t_ask) * 1000
