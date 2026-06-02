@@ -132,6 +132,7 @@ PROCEDURAL_FLOW_PATTERNS = (
 # For common FAQ/procedural queries where retrieval is weak but the
 # domain is supported and the risk is low.
 SOFT_GUIDANCE_FAQ_PATTERNS = (
+    (re.compile(r"raia|asistentka\s+raia|co\s+(je|umí|umi|dělá|dela)\s+raia", re.I), "raia_info"),
     (re.compile(r"(jak\s+)?funguje\s+(plateb|kart|limit|v[ýy]b[eě]r|mobil)", re.I), "card_how_it_works"),
     (re.compile(r"(co\s+)?je\s+(to\s+)?(kredit|debet|limit|disponibil|z[ůu]statek)", re.I), "card_what_is"),
     (re.compile(r"(jak\s+)?(m[ůu][žz]u|mohu|lze|jde)\s+(pou[žz][íi]t|platit|v[ýy]brat)", re.I), "card_usage_can_i"),
@@ -452,6 +453,17 @@ def _procedural_flow_answer(intent: str) -> str:
 # --- Priority 2: Soft guidance formatters ---
 
 SOFT_GUIDANCE_ANSWERS: dict[str, str] = {
+    "raia_info": (
+        "RAIA je AI asistentka Raiffeisenbank dostupná v mobilní aplikaci a na webu.\n\n"
+        "Co RAIA umí:\n"
+        "- Odpovídat na otázky o produktech a službách RB\n"
+        "- Pomoct s orientací v bankovnictví\n"
+        "- Zjednodušovat bankovní služby pomocí umělé inteligence\n\n"
+        "Co RAIA neumí:\n"
+        "- Zobrazovat osobní údaje nebo zustatky (napr. 'za co jste mi strhli 19 Kc')\n"
+        "- Zpracovat více dotazů najednou nebo příliš dlouhé otázky\n\n"
+        "Více informací: https://www.rb.cz/informacni-servis/asistentka-raia"
+    ),
     "card_how_it_works": (
         "Platební karta funguje tak, že umožňuje bezhotovostní platby "
         "a výběry z bankomatu. Každá karta je navázána na váš účet "

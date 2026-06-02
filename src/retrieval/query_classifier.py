@@ -297,6 +297,9 @@ def classify_query(query: str) -> QueryProfile:
     if any(k in q for k in ("phishing", "bezpečnost", "bezpecnost", "podvod", "zabezpečení", "zabezpeceni", "bezpečné bankovnictví", "bezpecne bankovnictvi", "smishing", "vishing", "podvodný", "podvodny", "falešný", "falesny", "heslo", "pin kód", "pin kod", "bezpečnostní", "bezpecnostni")):
         labels.add("security")
         labels.add("supported_domain")
+    if any(k in q for k in ("raia", "asistentka", "bankovní identita", "bankovni identita", "rb klíč", "rb klic", "mobilní bankovnictví", "mobilni bankovnictvi", "internetové bankovnictví", "internetove bankovnictvi", "platba mobilem", "platba hodinkami", "platimpak", "platím pak", "online služby", "online sluzby")):
+        labels.add("online_services")
+        labels.add("supported_domain")
     if any(k in q for k in FAQ_TERMS):
         labels.add("faq")
     if any(k in q for k in COMPLAINT_TERMS):
@@ -460,6 +463,8 @@ def classify_query(query: str) -> QueryProfile:
         preferred_categories.append("insurance")
     if "security" in labels:
         preferred_urls.extend(["bezpecne-bankovnictvi", "bezpecnost", "phishing"])
+    if "online_services" in labels:
+        preferred_urls.extend(["asistentka-raia", "bankovni-identita", "rb-klic", "mobilni-bankovnictvi", "internetove-bankovnictvi"])
 
     # ---------------------------------------------------------------------
     # 1️⃣  Fix: pokud jsou současně přítomny labely "catalog_intent" a "product_overview",
@@ -493,7 +498,14 @@ def classify_query(query: str) -> QueryProfile:
         if "security" in labels:
             rerank_min_score = -4.0
             hybrid_top_k = 20
-    # Loans/investing/savings/security threshold mimo catalog_intent blok
+        if "online_services" in labels:
+            rerank_min_score = -6.0
+            hybrid_top_k = 20
+    # Loans/investing/savings/security/online_services threshold mimo catalog_intent blok
+    if "online_services" in labels and rerank_min_score > -6.0:
+        rerank_min_score = -6.0
+        if hybrid_top_k < 20:
+            hybrid_top_k = 20
     if ("loans" in labels or "pujcky" in labels or "investing" in labels or "savings" in labels or "security" in labels) and rerank_min_score > -4.0:
         rerank_min_score = -4.0
         if hybrid_top_k < 20:
