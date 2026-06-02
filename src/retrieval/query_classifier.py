@@ -294,6 +294,9 @@ def classify_query(query: str) -> QueryProfile:
         labels.add("supported_domain")
     if any(k in q for k in ("invest", "fond", "dip", "akcie", "dluhopis")):
         labels.add("investing")
+    if any(k in q for k in ("phishing", "bezpečnost", "bezpecnost", "podvod", "zabezpečení", "zabezpeceni", "bezpečné bankovnictví", "bezpecne bankovnictvi", "smishing", "vishing", "podvodný", "podvodny", "falešný", "falesny", "heslo", "pin kód", "pin kod", "bezpečnostní", "bezpecnostni")):
+        labels.add("security")
+        labels.add("supported_domain")
     if any(k in q for k in FAQ_TERMS):
         labels.add("faq")
     if any(k in q for k in COMPLAINT_TERMS):
@@ -455,6 +458,8 @@ def classify_query(query: str) -> QueryProfile:
         preferred_urls.extend(["/sporeni", "/sporici", "vklad", "zhodnoceni"])
     if "insurance" in labels:
         preferred_categories.append("insurance")
+    if "security" in labels:
+        preferred_urls.extend(["bezpecne-bankovnictvi", "bezpecnost", "phishing"])
 
     # ---------------------------------------------------------------------
     # 1️⃣  Fix: pokud jsou současně přítomny labely "catalog_intent" a "product_overview",
@@ -485,8 +490,11 @@ def classify_query(query: str) -> QueryProfile:
         if "savings" in labels:
             rerank_min_score = -4.0
             hybrid_top_k = 20
-    # Loans/investing/savings threshold mimo catalog_intent blok
-    if ("loans" in labels or "pujcky" in labels or "investing" in labels or "savings" in labels) and rerank_min_score > -4.0:
+        if "security" in labels:
+            rerank_min_score = -4.0
+            hybrid_top_k = 20
+    # Loans/investing/savings/security threshold mimo catalog_intent blok
+    if ("loans" in labels or "pujcky" in labels or "investing" in labels or "savings" in labels or "security" in labels) and rerank_min_score > -4.0:
         rerank_min_score = -4.0
         if hybrid_top_k < 20:
             hybrid_top_k = 20
