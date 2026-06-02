@@ -659,7 +659,7 @@ def _score_row(row: dict, query: str, profile: QueryProfile) -> tuple[float, lis
     # Bypass kart exclusion for any credit card query — including short aliases
     # like "easy", "style", "premium" which resolve to kreditni_karta but don't
     # contain the word "kredit" literally.
-    _CARD_ALIASES_NORM = ("easy", "style", "premium", "visa gold", "o2 rb", "kreditka", "credit card")
+    _CARD_ALIASES_NORM = ("easy", "style", "premium", "visa gold", "o2 rb", "o2 kart", "o2rb", "kreditka", "credit card")
     card_pricing_query = "kredit" in q_norm or any(a in q_norm for a in _CARD_ALIASES_NORM)
     for stem in _FEE_EXCLUDE_STEMS:
         if stem == "kart" and card_pricing_query:
