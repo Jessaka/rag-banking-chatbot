@@ -2014,14 +2014,10 @@ class BankingRAGChain:
             retrieval_query = ""
 
         # 1. Query rewriting pro follow-up otázky
+        # DISABLED: způsobuje zacyklení — LLM vrací otázku místo přepsaného dotazu
         t_rewrite = time.perf_counter()
         if not retrieval_query:
-            # Rewrite jen s konverzační historií — bez kontextu nemá co přeformulovat
-            retrieval_query = (
-                self._rewrite_query(question)
-                if self.conversational and self.chat_history
-                else question
-            )
+            retrieval_query = question
             # Guard: pokud rewrite vrátil otázku delší než originál → zůstaň u originálu
             if (
                 retrieval_query.strip().endswith("?")
