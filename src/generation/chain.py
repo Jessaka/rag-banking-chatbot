@@ -1887,9 +1887,27 @@ class BankingRAGChain:
         )
         rewritten = self._llm.invoke(messages)
         # OllamaLLM vrátí str, AnthropicLLM také vrátí str
-        rewritten_text = rewritten if isinstance(rewritten, str) else str(rewritten)
-        logger.debug(f"Query rewrite: '{question}' → '{rewritten_text.strip()}'")
-        return rewritten_text.strip()
+        rewritten_text = (rewritten if isinstance(rewritten, str) else str(rewritten)).strip()
+
+        # Guard 1: rewrite vrátil otázku → originál
+        if rewritten_text.endswith("?"):
+            logger.debug(f"Query rewrite guard (question): revert '{rewritten_text[:60]}'")
+            return question
+
+        # Guard 2: rewrite je výrazně delší než originál → originál
+        if len(rewritten_text) > len(question) * 1.5:
+            logger.debug(f"Query rewrite guard (too long): revert '{rewritten_text[:60]}'")
+            return question
+
+        # Guard 3: rewrite neobsahuje žádné klíčové slovo z originálního dotazu → originál
+        original_words = {w.lower() for w in question.split() if len(w) > 3}
+        rewritten_words = rewritten_text.lower()
+        if original_words and not any(w in rewritten_words for w in original_words):
+            logger.debug(f"Query rewrite guard (no keywords): revert '{rewritten_text[:60]}'")
+            return question
+
+        logger.debug(f"Query rewrite: '{question}' → '{rewritten_text}'")
+        return rewritten_text
 
     def ask(self, question: str) -> dict:
         """
