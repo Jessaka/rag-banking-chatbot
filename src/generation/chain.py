@@ -347,7 +347,8 @@ def _guided_flow_answer(intent: str) -> str:
         "card_blocking": (
             "Doporučený postup při ztrátě nebo podezření na zneužití karty:\n"
             "1. Kartu ihned zablokujte v mobilním/internetovém bankovnictví, pokud ho máte k dispozici.\n"
-            "2. Pokud se do bankovnictví nedostanete, kontaktujte nonstop podporu Raiffeisenbank.\n"
+            "2. Pokud se do bankovnictví nedostanete, zavolejte na nonstop linku blokace karet:\n"
+            "   📞 412 446 402 (nonstop 24/7)\n"
             "3. Zkontrolujte poslední transakce a podezřelé platby reklamujte.\n"
             "4. Nikomu nesdělujte PIN, hesla ani autorizační kódy.\n\n"
             "Jde o bezpečnostní situaci — jednejte co nejrychleji."
