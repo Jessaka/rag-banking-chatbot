@@ -92,12 +92,23 @@ PRIORITY_KEYWORDS: list[str] = [
 
 # Cesty ke kompletnímu přeskočení (nesouvisí s bankovními produkty)
 SKIP_PATH_PREFIXES: tuple[str, ...] = (
-    "/o-nas/kariera", "/attachments/kariera",
+    "/o-nas/", "/attachments/kariera",
     "/promo/", "/test/", "/ing",
     "/meetit", "/zalozeni-uctu",
     "/informacni-servis/aml",
+    "/informacni-servis/aktuality/",
+    "/kariera/",
+    "/media/",
+    "/investori/",
     "/en/", "/uk/",
     "/affiliat",
+)
+
+# Substrings v URL které způsobí přeskočení (stará/irelevantní data)
+SKIP_URL_SUBSTRINGS: tuple[str, ...] = (
+    "marketingove-akce", "pravidla-akce", "pravidla-souteze",
+    "/2014", "/2015", "/2016", "/2017", "/2018", "/2019", "/2020",
+    "2014-", "2015-", "2016-", "2017-", "2018-", "2019-", "2020-",
 )
 
 # CSS selektory pro hlavní obsah stránky (FAQ extrakce)
@@ -193,6 +204,11 @@ class RBScraper:
 
         # Přímé přeskočení vybraných cest
         if any(path.startswith(p) for p in SKIP_PATH_PREFIXES):
+            return False
+
+        # Přeskočení stránek se starým nebo irelevantním obsahem
+        full_url_lower = url.lower()
+        if any(s in full_url_lower for s in SKIP_URL_SUBSTRINGS):
             return False
 
         # Kontrola robots.txt
