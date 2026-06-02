@@ -1914,9 +1914,10 @@ class BankingRAGChain:
         # OllamaLLM vrátí str, AnthropicLLM také vrátí str
         rewritten_text = (rewritten if isinstance(rewritten, str) else str(rewritten)).strip()
 
-        # Guard 1: rewrite vrátil otázku → originál
-        if rewritten_text.endswith("?"):
-            logger.debug(f"Query rewrite guard (question): revert '{rewritten_text[:60]}'")
+        # Guard 1: rewrite vrátil identický nebo téměř stejný dotaz → originál
+        # (Povolujeme rewrites co končí '?' — jsou to validní přeformulované otázky)
+        if rewritten_text.strip().lower() == question.strip().lower():
+            logger.debug(f"Query rewrite guard (identical): revert '{rewritten_text[:60]}'")
             return question
 
         # Guard 2: rewrite je výrazně delší než originál → originál
@@ -2032,19 +2033,14 @@ class BankingRAGChain:
         else:
             retrieval_query = ""
 
-        # 1. Query rewriting pro follow-up otázky
-        # DISABLED: způsobuje zacyklení — LLM vrací otázku místo přepsaného dotazu
+        # 1. Query rewriting pro follow-up otázky (jen s historií)
         t_rewrite = time.perf_counter()
         if not retrieval_query:
-            retrieval_query = question
-            # Guard: pokud rewrite vrátil otázku delší než originál → zůstaň u originálu
-            if (
-                retrieval_query.strip().endswith("?")
-                and len(retrieval_query) > len(question) * 0.8
-                and retrieval_query.strip() != question.strip()
-            ):
-                logger.debug(f"Query rewrite guard triggered: revert to original (rewritten='{retrieval_query[:60]}')")
-                retrieval_query = question
+            retrieval_query = (
+                self._rewrite_query(question)
+                if self.conversational and self.chat_history
+                else question
+            )
         rewrite_ms = (time.perf_counter() - t_rewrite) * 1000
         if self.chat_history:  # rewriting probíhá jen pokud existuje historie
             logger.info(f"⏱ Query rewriting: {rewrite_ms:.0f}ms")
