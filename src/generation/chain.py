@@ -1881,6 +1881,12 @@ class BankingRAGChain:
         if not self.chat_history:
             return question
 
+        # Pricing dotazy jsou self-contained — rewrite by je kontaminoval
+        _q = question.lower()
+        _PRICING_SIGNALS = ("kolik stojí", "kolik stoji", "cena", "poplatek", "poplatky", "stojí", "stoji", "sazba", "úrok", "zdarma")
+        if any(s in _q for s in _PRICING_SIGNALS):
+            return question
+
         messages = get_query_rewrite_prompt().format_messages(
             chat_history=self.chat_history,
             question=question,
