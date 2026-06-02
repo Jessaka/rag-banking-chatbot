@@ -1,8 +1,9 @@
 # Automaticky vygenerováno scraperem scripts/scrape_rb.py
-# Nalezeno: 369 PDF souborů z https://www.rb.cz
+# Nalezeno: 360 PDF souborů z https://www.rb.cz
 # Jeden URL na řádek. Řádky začínající # jsou komentáře.
 
-# ── Sazebníky a ceníky (22) ──────────────────
+# ── Sazebníky a ceníky (21) ──────────────────
+https://www.rb.cz/attachments/ceniky/Cenik_investicnich_sluzeb_ENG_01012026.pdf
 https://www.rb.cz/attachments/ceniky/Cenik_produktu-a-sluzeb-Equa-bank-pro-soukrome-osoby-podnikatele-a-pravnicke-osoby.pdf
 https://www.rb.cz/attachments/ceniky/cenik-corp-1.pdf
 https://www.rb.cz/attachments/ceniky/cenik-corp-2.pdf
@@ -17,8 +18,6 @@ https://www.rb.cz/attachments/ceniky/cenik-pi-01042018.pdf
 https://www.rb.cz/attachments/ceniky/cenik-pi-1.pdf
 https://www.rb.cz/attachments/ceniky/cenik-pi-2.pdf
 https://www.rb.cz/attachments/ceniky/cenik-porovnani-osobnich-uctu.pdf
-https://www.rb.cz/attachments/ceniky/cenik-porovnani-podnikatelskych-uctu.pdf
-https://www.rb.cz/attachments/ceniky/cenik-srovnani-pi-ekonto.pdf
 https://www.rb.cz/attachments/ceniky/ceniky-dopis-042018.pdf
 https://www.rb.cz/attachments/ceniky/ceniky-fop-porovnani-042018.pdf
 https://www.rb.cz/attachments/ceniky/ceniky-pi-porovnani-042018.pdf
@@ -67,8 +66,7 @@ https://www.rb.cz/attachments/urokove-sazby/ul-depozita-fo.pdf?v=1
 https://www.rb.cz/attachments/urokove-sazby/ul-depozita-po.pdf?v=1
 https://www.rb.cz/attachments/urokove-sazby/ul-uvery-fop.pdf?v=1
 
-# ── Produktové a informační listy (108) ──────────────────
-https://www.rb.cz/attachments/Corp/robot_produktovy-list.pdf
+# ── Produktové a informační listy (107) ──────────────────
 https://www.rb.cz/attachments/investice/dluhopisy/10_2025/Produktovy_list_RBI_Dluhopis_CZK_2028_V.pdf
 https://www.rb.cz/attachments/investice/dluhopisy/11_2025/Produktovy_list_RBI_Dluhopis_CZK_2028_VI.pdf
 https://www.rb.cz/attachments/investice/dluhopisy/12_2025/Produktovy_list_RBI_Dluhopis_CZK_2028_VII.pdf
@@ -141,6 +139,7 @@ https://www.rb.cz/attachments/pi/karty/program-vyhod-kk.pdf
 https://www.rb.cz/attachments/pi/karty/pruvodce-pro-drzitele-kk.pdf
 https://www.rb.cz/attachments/pi/karty/pruvodce_debetkami_FOP_PO.pdf
 https://www.rb.cz/attachments/pi/karty/souhlas-telco-karty.pdf
+https://www.rb.cz/attachments/pi/pravidla-reklamni-akce/2026/pravidla_reklamni_akce_2026-kreditni_karta_STYLE.pdf
 https://www.rb.cz/attachments/pi/pravidla-reklamni-akce/Pravidla-marketingove-akce-10-zpet-z-nakupu.pdf
 https://www.rb.cz/attachments/pi/pravidla-reklamni-akce/Pravidla-marketingove-akce-Media-Market-Consulting.pdf
 https://www.rb.cz/attachments/pi/pravidla-reklamni-akce/pravidla-marketingove-akce-Attigente-Group-kk-DELUXE.pdf
@@ -158,7 +157,6 @@ https://www.rb.cz/attachments/pi/pravidla-reklamni-akce/pravidla-marketingove-ak
 https://www.rb.cz/attachments/pi/pravidla-reklamni-akce/pravidla-marketingove-akce-kreditni-karta-easy-s-odmenou.pdf
 https://www.rb.cz/attachments/pi/pravidla-reklamni-akce/pravidla-marketingove-akce-mall-kredit-info.pdf
 https://www.rb.cz/attachments/pi/pravidla-reklamni-akce/pravidla-marketingove-akce-ranger-kk-style.pdf
-https://www.rb.cz/attachments/pi/pravidla-reklamni-akce/pujcky/27955-pravidla-reklamni-akce-repujcka-odmena-20000kc-leden-2026.pdf
 https://www.rb.cz/attachments/pi/pujcky/dokumenty-ke-stazeni/VPP-schopnost-splacet.pdf
 https://www.rb.cz/attachments/pi/pujcky/dokumenty-ke-stazeni/pojistna-smlouva-splaceni-pujcky-zuno.pdf
 https://www.rb.cz/attachments/pi/pujcky/dokumenty-ke-stazeni/pujcka-standardni-formular.pdf
@@ -226,8 +224,7 @@ https://www.rb.cz/attachments/pojisteni/schopnost-splacet-uver/pojisteni-schopno
 https://www.rb.cz/attachments/pojisteni/soubor-pojistnych-podminek-podnikatele.pdf
 https://www.rb.cz/attachments/pojisteni/uniqua-ukrajina-dopady.pdf
 
-# ── Investice a fondy (36) ──────────────────
-https://www.rb.cz/attachments/certifikaty/certifikat-systemu-rizeni-iso27001.pdf
+# ── Investice a fondy (35) ──────────────────
 https://www.rb.cz/attachments/elektronicke-bankovnictvi/eKomunikator_navod_na_obnovu_certifikatu.pdf
 https://www.rb.cz/attachments/investice/AT0000A2YBG1_produktova_brozura.pdf
 https://www.rb.cz/attachments/investice/AT0000A2Z740_produktova_brozura.pdf
@@ -264,19 +261,15 @@ https://www.rb.cz/attachments/investice/raiffeisen-investice/pravidla-reklamni-a
 https://www.rb.cz/attachments/podnikatele/vytvoreni-certifikatu-premium-api-rbcz.pdf
 https://www.rb.cz/attachments/ris/parametry_fondu.pdf
 
-# ── Ostatní (121) ──────────────────
+# ── Ostatní (115) ──────────────────
 https://www.rb.cz/attachements/pdf/financni-trhy/cenne-papiry/smlouvy/biu-fo-cz.pdf
 https://www.rb.cz/attachements/pdf/financni-trhy/cenne-papiry/smlouvy/kscu-fo-cz.pdf
-https://www.rb.cz/attachments/Corp/navod_financovani_pohledavek_on-line.pdf
 https://www.rb.cz/attachments/Corp/prirucka-pro-platformu-robot.pdf
-https://www.rb.cz/attachments/Micro/pravidla-reklamni-akce/pravidla-reklamni-akce-soutez-o-3x100000-kc-2026.pdf
 https://www.rb.cz/attachments/Micro/ucty/IB-micro-formaty-vypisu.pdf
 https://www.rb.cz/attachments/Micro/ucty/ekom-prevod-vzoru.pdf
 https://www.rb.cz/attachments/ZPS/IBAN.pdf
 https://www.rb.cz/attachments/asset-management/asset_allocation_2026Q2.pdf
 https://www.rb.cz/attachments/asset-management/asset_allocation_2026Q2_EN.pdf
-https://www.rb.cz/attachments/elektronicke-bankovnictvi/ActiveCard_manual.pdf
-https://www.rb.cz/attachments/elektronicke-bankovnictvi/Manual_OEk_Vasco.pdf
 https://www.rb.cz/attachments/gdpr/gdpr-uniqa-souhlas.pdf
 https://www.rb.cz/attachments/informacni-servis/Informace_kelhutam_CZ.pdf
 https://www.rb.cz/attachments/informacni-servis/informacni-memorandum.pdf
@@ -292,8 +285,6 @@ https://www.rb.cz/attachments/platebni-styk/cestne-prohlaseni-spatny-ucet-firmy.
 https://www.rb.cz/attachments/platebni-styk/cestne-prohlaseni-spatny-ucet-fo.pdf
 https://www.rb.cz/attachments/platebni-styk/cestne-prohlaseni-spatny-ucet-pokladna.pdf
 https://www.rb.cz/attachments/platebni-styk/e_Prikaz_k_uhrade.pdf
-https://www.rb.cz/attachments/platebni-styk/lhuty-konec-roku-2018-en.pdf
-https://www.rb.cz/attachments/platebni-styk/lhuty-konec-roku-2018.pdf
 https://www.rb.cz/attachments/platebni-styk/odchozi-uhrady-do-SAE.pdf
 https://www.rb.cz/attachments/platebni-styk/prikaz-k-uhrade-z-cizomenove-slozky.pdf
 https://www.rb.cz/attachments/platebni-styk/ucel-odchozi-uhrady-do-sae.pdf
