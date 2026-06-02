@@ -23,7 +23,6 @@
 		<span>U důležitých nebo citlivých úkonů doporučujeme ověřit postup přímo u Raiffeisenbank.</span>
 	</div>
 	<div class="flex shrink-0 gap-2">
-		<Button variant="ghost" size="sm" onclick={() => ask('Chci dotaz upřesnit')}>Upřesnit</Button>
 		<Button variant="outline" size="sm" onclick={() => ask('Jak to ověřím přímo u RB?')}>
 			<MessageSquareText class="mr-1 h-3.5 w-3.5" />
 			Ověřit u RB
