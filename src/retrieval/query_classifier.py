@@ -473,8 +473,11 @@ def classify_query(query: str) -> QueryProfile:
         if "loans" in labels or "pujcky" in labels:
             rerank_min_score = -4.0
             hybrid_top_k = 20
-    # Loans threshold mimo catalog_intent blok — platí i pro specifické dotazy
-    if ("loans" in labels or "pujcky" in labels) and rerank_min_score > -4.0:
+        if "investing" in labels:
+            rerank_min_score = -4.0
+            hybrid_top_k = 20
+    # Loans/investing threshold mimo catalog_intent blok
+    if ("loans" in labels or "pujcky" in labels or "investing" in labels) and rerank_min_score > -4.0:
         rerank_min_score = -4.0
         if hybrid_top_k < 20:
             hybrid_top_k = 20
