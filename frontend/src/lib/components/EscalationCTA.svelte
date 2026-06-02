@@ -1,6 +1,5 @@
 <script lang="ts">
-	import { PhoneCall, MessageSquareText } from '@lucide/svelte';
-	import { Button } from '$ui';
+	import { PhoneCall } from '@lucide/svelte';
 	import { emitChatEvent } from '$lib/monitoring';
 
 	let {
@@ -21,11 +20,5 @@
 	<div class="flex items-start gap-2 text-gray-600 dark:text-gray-300">
 		<PhoneCall class="mt-0.5 h-4 w-4 text-rb-500" />
 		<span>U důležitých nebo citlivých úkonů doporučujeme ověřit postup přímo u Raiffeisenbank.</span>
-	</div>
-	<div class="flex shrink-0 gap-2">
-		<Button variant="outline" size="sm" onclick={() => ask('Jak to ověřím přímo u RB?')}>
-			<MessageSquareText class="mr-1 h-3.5 w-3.5" />
-			Ověřit u RB
-		</Button>
 	</div>
 </div>
