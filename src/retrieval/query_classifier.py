@@ -83,6 +83,76 @@ SEPA_SWIFT_OVERVIEW_TERMS = (
     "zahraniční platba jak", "zahranicni platba jak",
 )
 
+# --- New domain term tuples ---
+INSURANCE_TERMS = (
+    "pojiště", "pojist", "pojistka", "pojistné", "pojistnou", "pojistit",
+    "cestovní pojištění", "cestovni pojisteni",
+    "úrazové pojištění", "urazove pojisteni", "úrazov", "urazov",
+    "životní pojištění", "zivotni pojisteni", "životní pojiš", "zivotni pojis",
+    "majetkové pojištění", "majetkove pojisteni",
+    "pojištění vozidel", "pojisteni vozidel",
+    "pojištění k hypotéce", "pojisteni k hypotece",
+    "pojištění ke kartě", "pojisteni ke karte",
+    "pojištění schopnosti splácet", "pojisteni schopnosti splacet",
+    "havarijní pojištění", "havarijn",
+    "uniqa", "pojistka k",
+)
+
+STAVEBNI_SPORENI_TERMS = (
+    "stavební spoření", "stavebni sporeni",
+    "stavební spořitelna", "stavebni sporitelna",
+    "státní podpora spoření", "statni podpora sporeni",
+    "stavebko",
+)
+
+PAYMENT_SERVICES_TERMS = (
+    "platební styk", "platebni styk",
+    "okamžitá platba", "okamzita platba",
+    "trvalý příkaz", "travy prikaz", "trvalý platební příkaz",
+    "inkaso", "inkasem", "souhlas s inkasem",
+    "platba na kontakt", "platbu na kontakt",
+    "odchozí platba", "odchozi platba",
+    "příchozí platba", "prichozi platba",
+    "platební příkaz", "platebni prikaz",
+    "bankovní převod", "bankovni prevod",
+    "jak zadat platbu", "zadat platbu", "odeslat platbu",
+    "jak zadám", "jak poslu platbu",
+)
+
+DIGITAL_BANKING_TERMS = (
+    "internetové bankovnictví", "internetove bankovnictvi",
+    "mobilní bankovnictví", "mobilni bankovnictvi",
+    "mobilní aplikace", "mobilni aplikace",
+    "přihlásit", "prihlasit", "přihlášení", "prihlaseni",
+    "přihlásím", "prihlasim",
+    "online banking", "internet banking",
+    "přihlásit do", "jak se přihlásit", "jak se prihlasit",
+    "zapomněl jsem heslo", "zapomnel jsem heslo",
+    "reset hesla", "zapomenuté heslo",
+)
+
+RB_CLUB_TERMS = (
+    "rb club", "rbclub",
+    "věrnostní program", "vernostni program",
+    "věrnostní body", "vernostni body",
+    "program odměn", "program odmen",
+    "odměny za", "odmeny za",
+    "club výhody", "club vyhody",
+    "rb odměny", "rb odmeny",
+)
+
+SUPPORT_GENERAL_TERMS = (
+    "zákaznická linka", "zakaznicka linka",
+    "zákaznický servis", "zakaznicky servis",
+    "zákaznická podpora", "zakaznicka podpora",
+    "pobočka", "pobocka", "pobočky", "pobocky",
+    "otevírací doba", "oteviraci doba",
+    "telefonní číslo", "telefonni cislo",
+    "kde najdu pobočku", "kde najdu pobocku",
+    "jak kontaktovat", "kontaktovat banku",
+    "infolinka", "zákaznická linka",
+)
+
 
 # --- Priority 3: Procedural flow route term tuples ---
 ACTIVATION_FLOW_TERMS = (
@@ -313,6 +383,7 @@ def classify_query(query: str) -> QueryProfile:
     if any(k in q for k in COMPLAINT_TERMS):
         labels.add("complaints")
         labels.add("support")
+        labels.add("supported_domain")
     if any(k in q for k in RB_KEY_TERMS):
         labels.add("rb_key")
         labels.add("support")
@@ -322,8 +393,28 @@ def classify_query(query: str) -> QueryProfile:
     if any(k in q for k in PAYMENT_RAIL_TERMS):
         labels.add("sepa_swift")
         labels.add("payments")
-    if any(k in q for k in ("pojiště", "pojist", "cestovní pojištění")):
+    if any(k in q for k in INSURANCE_TERMS):
         labels.add("insurance")
+        labels.add("supported_domain")
+    if any(k in q for k in STAVEBNI_SPORENI_TERMS):
+        labels.add("stavebni_sporeni")
+        labels.add("savings")
+        labels.add("supported_domain")
+    if any(k in q for k in PAYMENT_SERVICES_TERMS):
+        labels.add("payment_services")
+        labels.add("payments")
+        labels.add("supported_domain")
+    if any(k in q for k in DIGITAL_BANKING_TERMS):
+        labels.add("digital_banking")
+        labels.add("online_services")
+        labels.add("supported_domain")
+    if any(k in q for k in RB_CLUB_TERMS):
+        labels.add("rb_club")
+        labels.add("supported_domain")
+    if any(k in q for k in SUPPORT_GENERAL_TERMS):
+        labels.add("support_general")
+        labels.add("support")
+        labels.add("supported_domain")
     if any(k in q for k in ("jak", "změnit", "zmenit", "nastavit", "ztráta", "blokace", "podpora", "kontakt")):
         labels.add("support")
 
@@ -468,7 +559,23 @@ def classify_query(query: str) -> QueryProfile:
         preferred_categories.extend(["savings", "sporeni"])
         preferred_urls.extend(["/sporeni", "/sporici", "vklad", "zhodnoceni"])
     if "insurance" in labels:
-        preferred_categories.append("insurance")
+        preferred_categories.extend(["insurance", "pojisteni"])
+        preferred_urls.extend(["pojisteni", "pojistka", "uniqa", "pojisteni-k-produktum"])
+    if "stavebni_sporeni" in labels:
+        preferred_categories.extend(["savings", "sporeni"])
+        preferred_urls.extend(["stavebni-sporeni", "sporeni", "stavebni-sporitele"])
+    if "payment_services" in labels:
+        preferred_categories.extend(["payments", "platby"])
+        preferred_urls.extend(["platby", "platba", "inkaso", "prikazy", "trvalé-príkazy"])
+    if "digital_banking" in labels:
+        preferred_categories.extend(["digital", "support"])
+        preferred_urls.extend(["internetove-bankovnictvi", "mobilni-bankovnictvi", "aplikace", "rb-klic"])
+    if "rb_club" in labels:
+        preferred_categories.extend(["loyalty", "accounts", "retail"])
+        preferred_urls.extend(["rb-club", "odmeny", "vernostni-program"])
+    if "support_general" in labels:
+        preferred_categories.extend(["support", "contact"])
+        preferred_urls.extend(["kontakt", "pobocky", "zakaznicky-servis", "podpora"])
     if "security" in labels:
         preferred_urls.extend(["bezpecne-bankovnictvi", "bezpecnost", "phishing"])
     if "online_services" in labels:
@@ -518,6 +625,10 @@ def classify_query(query: str) -> QueryProfile:
         if hybrid_top_k < 20:
             hybrid_top_k = 20
     if ("loans" in labels or "pujcky" in labels or "investing" in labels or "savings" in labels or "security" in labels) and rerank_min_score > -4.0:
+        rerank_min_score = -4.0
+        if hybrid_top_k < 20:
+            hybrid_top_k = 20
+    if any(label in labels for label in ("insurance", "stavebni_sporeni", "payment_services", "digital_banking", "rb_club", "support_general")) and rerank_min_score > -4.0:
         rerank_min_score = -4.0
         if hybrid_top_k < 20:
             hybrid_top_k = 20

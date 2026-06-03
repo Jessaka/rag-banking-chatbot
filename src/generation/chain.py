@@ -198,6 +198,8 @@ def _empty_retrieval_resilience(profile, forced_category: str | None = None) -> 
         for label in (
             "pricing", "cards", "accounts", "payments", "mortgages", "investments",
             "support", "product_overview", "account_overview", "card_overview",
+            "insurance", "stavebni_sporeni", "payment_services",
+            "digital_banking", "rb_club", "support_general",
         )
     )
     category = forced_category or ("supported_but_missing_data" if supported else "unsupported_domain")
@@ -1144,6 +1146,110 @@ def _format_product_overview_answer(docs: list[Document], query_labels: set[str]
         source = "rb.cz"
 
     labels = query_labels or set()
+
+    # Insurance overview
+    if "insurance" in labels:
+        return (
+            "Raiffeisenbank nabízí pojištění ve spolupráci s pojišťovnou UNIQA:\n\n"
+            "**Pojištění k produktům:**\n"
+            "- Pojištění schopnosti splácet půjčku – pro případ ztráty zaměstnání, nemoci nebo úrazu\n"
+            "- Pojištění k hypotéce – životní a majetkové pojištění nemovitosti\n"
+            "- Pojištění ke kreditní kartě – cestovní pojištění, pojištění nákupů\n\n"
+            "**Cestovní pojištění:**\n"
+            "- Cestovní pojištění NAPLNO – komplexní krytí pro cesty do zahraničí\n"
+            "- Úrazové pojištění Opora – pro případ úrazu\n"
+            "- Osobní strážce ke kartám – pojištění platebních karet\n\n"
+            "**Individuální pojištění:**\n"
+            "- Životní pojištění, majetkové pojištění, pojištění vozidel\n\n"
+            f"Více informací: rb.cz/osobni/pojisteni\n\nZdroj: {source}"
+        )
+
+    # Stavební spoření
+    if "stavebni_sporeni" in labels:
+        return (
+            "**Stavební spoření u Raiffeisenbank**\n\n"
+            "Raiffeisenbank nabízí stavební spoření prostřednictvím svých partnerů. "
+            "Stavební spoření kombinuje pravidelné spoření se státní podporou a možností "
+            "získat výhodný stavební úvěr na bydlení.\n\n"
+            "Výhody stavebního spoření:\n"
+            "- Státní podpora až 2 000 Kč ročně\n"
+            "- Garantované zhodnocení vkladů\n"
+            "- Možnost stavebního úvěru po 6 letech spoření\n"
+            "- Vhodné pro financování bydlení, rekonstrukcí a modernizací\n\n"
+            f"Pro sjednání kontaktujte pobočku RB nebo zákaznickou linku.\n\nZdroj: {source}"
+        )
+
+    # Payment services overview
+    if "payment_services" in labels:
+        return (
+            "**Platební služby Raiffeisenbank**\n\n"
+            "Raiffeisenbank umožňuje tyto typy plateb:\n\n"
+            "**Tuzemské platby:**\n"
+            "- Jednorázová platba – ihned nebo s budoucím datem\n"
+            "- Trvalý platební příkaz – pravidelné opakované platby\n"
+            "- Inkaso / souhlas s inkasem – povolení pro třetí stranu strhávat platby\n"
+            "- Platba na kontakt – odeslání peněz přes telefonní číslo nebo e-mail\n"
+            "- Okamžitá platba – převod peněz do 10 sekund\n\n"
+            "**Zahraniční platby:**\n"
+            "- SEPA platba – do zemí eurozóny v EUR\n"
+            "- SWIFT platba – mezinárodní platby mimo SEPA\n\n"
+            "Vše zadáte v internetovém nebo mobilním bankovnictví.\n\n"
+            f"Zdroj: {source}"
+        )
+
+    # Digital banking overview
+    if "digital_banking" in labels:
+        return (
+            "**Digitální bankovnictví Raiffeisenbank**\n\n"
+            "**Mobilní bankovnictví:**\n"
+            "- Aplikace Raiffeisenbank pro iOS a Android\n"
+            "- Správa účtů, platby, spoření a investice v mobilu\n"
+            "- Přihlášení přes RB klíč, biometrii nebo PIN\n\n"
+            "**Internetové bankovnictví:**\n"
+            "- Přístup na ebanking.rb.cz nebo přes rb.cz\n"
+            "- Přihlášení: SMS kód, RB klíč nebo Osobní klíč\n\n"
+            "**RB klíč:**\n"
+            "- Mobilní aplikace pro bezpečnou autorizaci plateb a přihlášení\n"
+            "- Náhrada SMS kódů, vyšší bezpečnost\n\n"
+            "**Placení mobilem:**\n"
+            "- Apple Pay, Google Pay, placení hodinkami\n\n"
+            f"Zdroj: {source}"
+        )
+
+    # RB Club
+    if "rb_club" in labels:
+        return (
+            "**RB Club – věrnostní program Raiffeisenbank**\n\n"
+            "RB Club je věrnostní program, kde získáváte odměny za aktivní využívání "
+            "produktů Raiffeisenbank.\n\n"
+            "Jak funguje:\n"
+            "- Za platby kartou, aktivní bankovnictví a využívání produktů získáváte body\n"
+            "- Body lze čerpat jako slevy, cashback nebo výhody\n"
+            "- Program je dostupný klientům s aktivním osobním účtem\n\n"
+            "Výhody:\n"
+            "- Cashback a odměny za každodenní bankovnictví\n"
+            "- Speciální nabídky a akce pro členy\n\n"
+            f"Více informací: rb.cz/osobni/ucty\n\nZdroj: {source}"
+        )
+
+    # Support general
+    if "support_general" in labels:
+        return (
+            "**Zákaznická podpora Raiffeisenbank**\n\n"
+            "**Telefonní linka:**\n"
+            "- 800 900 900 (zdarma, nonstop)\n"
+            "- 412 440 000 (ze zahraničí)\n\n"
+            "**Pobočky a bankomaty:**\n"
+            "- Vyhledávač poboček a bankomatů: rb.cz → Pobočky\n"
+            "- Otevírací doby se liší dle pobočky\n\n"
+            "**Online podpora:**\n"
+            "- Chat v mobilní aplikaci nebo na webu\n"
+            "- Asistentka RAIA v mobilní aplikaci\n\n"
+            "**Reklamace:**\n"
+            "- Online formulář na rb.cz/reklamace\n"
+            "- Na pobočce nebo telefonicky\n\n"
+            f"Zdroj: {source}"
+        )
 
     # Loans-specific overview
     if "loans" in labels or "pujcky" in labels:
