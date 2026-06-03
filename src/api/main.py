@@ -1528,6 +1528,13 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
                 elif event["type"] == "done":
                     # Cache the result if possible (reconstruct result from events)
                     elapsed_ms = round((time.perf_counter() - t_start) * 1000, 1)
+                    # Serialize sources from chain.py done event (LLM path sends them here)
+                    done_sources_raw = event.get("sources") or []
+                    done_sources = _serialize_sources(done_sources_raw)
+                    logger.debug(
+                        f"[{request_id}] SSE done: strategy={event.get('answer_strategy')} "
+                        f"sources={len(done_sources_raw)} elapsed={elapsed_ms:.0f}ms"
+                    )
                     yield _sse_format("done", {
                         "processing_time_ms": elapsed_ms,
                         "retrieval_latency_ms": event.get("retrieval_latency_ms"),
@@ -1536,6 +1543,7 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
                         "answer_strategy": event.get("answer_strategy"),
                         "confidence_bucket": event.get("confidence_bucket"),
                         "confidence_semantic_label": event.get("confidence_semantic_label"),
+                        "sources": [s.model_dump() for s in done_sources],
                     })
 
                 elif event["type"] == "error":

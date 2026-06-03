@@ -2986,6 +2986,10 @@ class BankingRAGChain:
         # Timeout prevents hanging if something goes wrong.
         llm_started.wait(timeout=config.LLM_TIMEOUT)
         elapsed_until_llm = (time.perf_counter() - t_start) * 1000
+        logger.debug(
+            f"ask_stream llm_started fired: elapsed={elapsed_until_llm:.0f}ms "
+            f"buffer_size={len(token_buffer)} thread_alive={thread.is_alive()}"
+        )
 
         if error_container[0]:
             self._llm = original_llm
@@ -2994,6 +2998,11 @@ class BankingRAGChain:
 
         # If ask() already completed, it was a deterministic route
         thread.join(timeout=0.1)
+        logger.debug(
+            f"ask_stream join(0.1): thread_alive={thread.is_alive()} "
+            f"result_ready={result_container[0] is not None} "
+            f"buffer_size={len(token_buffer)}"
+        )
         if result_container[0] is not None:
             self._llm = original_llm
             result = result_container[0]
@@ -3059,33 +3068,36 @@ class BankingRAGChain:
         # Save for downstream caching (SSE endpoint reads this after generator completes)
         self._last_stream_result = result  # type: ignore[attr-defined]
 
-        # Safety net: if ask() returned a direct (non-LLM) strategy but fell into
-        # the LLM streaming path (e.g. due to thread.join() timing), no answer token
-        # was ever sent. Send the actual answer now before the done event.
-        _DIRECT_STRATEGIES = frozenset({
-            "soft_guidance_direct", "identity_direct", "procedural_flow_direct",
-            "guided_flow_direct", "unsupported_direct", "clarification_direct",
-            "card_overview_direct", "account_overview_direct", "product_overview_direct",
-            "mortgage_overview_direct", "investment_overview_direct",
-            "rb_key_overview_direct", "payment_overview_direct",
-            "sepa_swift_overview_direct", "credit_card_catalog_direct",
-            "overview_fallback", "pricing_safe_fallback", "unsupported_domain_fallback",
-            "pricing_row_direct",
-        })
-        if result.get("answer_strategy") in _DIRECT_STRATEGIES and not token_buffer:
+        answer_strategy = result.get("answer_strategy", "")
+
+        # Safety net: if no tokens were streamed (buffer empty), the answer was never
+        # sent. This covers ALL direct strategies (soft_guidance_direct, guided_flow_direct,
+        # supported_but_missing_data_fallback, unsupported_domain_fallback, etc.) that
+        # fell into the LLM streaming path due to thread.join() timing or early
+        # llm_started firing (e.g. from a conversational query-rewrite LLM call).
+        if not token_buffer:
             answer_text = result.get("answer", "")
             if answer_text:
+                logger.debug(
+                    f"ask_stream safety-net: sending answer as single token "
+                    f"(strategy={answer_strategy}, buffer_empty=True, len={len(answer_text)})"
+                )
                 yield {"type": "token", "text": answer_text}
 
         timing = result.get("timing_ms", {}) or {}
         elapsed_total = (time.perf_counter() - t_start) * 1000
+        logger.debug(
+            f"ask_stream done: strategy={answer_strategy} "
+            f"buffer_tokens={len(token_buffer)} elapsed={elapsed_total:.0f}ms"
+        )
         yield {
             "type": "done",
             "processing_time_ms": round(elapsed_total, 1),
             "retrieval_latency_ms": timing.get("retrieval"),
             "llm_latency_ms": timing.get("llm"),
             "formatting_latency_ms": timing.get("formatting_latency_ms"),
-            "answer_strategy": result.get("answer_strategy"),
+            "answer_strategy": answer_strategy,
+            "sources": result.get("sources", []),
             "confidence_bucket": result.get("confidence_bucket"),
             "confidence_semantic_label": result.get("confidence_semantic_label"),
             "confidence_origin": result.get("confidence_origin"),
