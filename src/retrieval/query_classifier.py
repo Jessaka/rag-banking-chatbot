@@ -297,15 +297,16 @@ def classify_query(query: str) -> QueryProfile:
     if any(k in q for k in ("phishing", "bezpečnost", "bezpecnost", "podvod", "zabezpečení", "zabezpeceni", "bezpečné bankovnictví", "bezpecne bankovnictvi", "smishing", "vishing", "podvodný", "podvodny", "falešný", "falesny", "heslo", "pin kód", "pin kod", "bezpečnostní", "bezpecnostni")):
         labels.add("security")
         labels.add("supported_domain")
-    if any(k in q for k in ("raia", "asistentka", "bankovní identita", "bankovni identita", "rb klíč", "rb klic", "mobilní bankovnictví", "mobilni bankovnictvi", "internetové bankovnictví", "internetove bankovnictvi", "platba mobilem", "platba hodinkami", "platimpak", "platím pak", "platim pak", "odložená platba", "odlozena platba", "online služby", "online sluzby")):
+    if any(k in q for k in ("raia", "asistentka", "bankovní identita", "bankovni identita", "rb klíč", "rb klic", "mobilní bankovnictví", "mobilni bankovnictvi", "internetové bankovnictví", "internetove bankovnictvi", "platba mobilem", "platba hodinkami", "platímpak", "platimpak", "platím pak", "platim pak", "odložená platba", "odlozena platba", "online služby", "online sluzby")):
         labels.add("online_services")
         labels.add("supported_domain")
         # online_services přebíjí generické activation_flow/cards aby se zabránilo
         # falešné klasifikaci follow-up dotazů jako karty
         labels.discard("activation_flow")
         labels.discard("cards")
-    if any(k in q for k in ("platimpak", "platím pak", "platim pak", "odložená platba", "odlozena platba")):
+    if any(k in q for k in ("platímpak", "platimpak", "platím pak", "platim pak", "odložená platba", "odlozena platba")):
         labels.add("loans")
+        labels.add("online_services")
         labels.add("supported_domain")
     if any(k in q for k in FAQ_TERMS):
         labels.add("faq")
@@ -603,7 +604,7 @@ def expand_query(query: str, profile: QueryProfile | None = None) -> str:
             "Kreditní karta O2 RB",
         ])
     if "loans" in profile.labels and "online_services" in profile.labels:
-        terms.extend(["PlatímPak", "platím pak", "odložená platba", "platimpak", "odložená platba nákupy"])
+        terms.extend(["PlatímPak", "platímpak", "platím pak", "odložená platba", "platimpak", "odložená platba nákupy"])
     if "sepa_swift" in profile.labels:
         terms.extend(["SEPA", "SWIFT", "zahraniční platba", "EUR platba", "IBAN", "BIC"])
     if "investing" in profile.labels:
