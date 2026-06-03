@@ -11,6 +11,7 @@
 	import MessageActions from './MessageActions.svelte';
 	import { clarificationOptions, isGuidedFlow, isUnsupported, shouldShowEscalation } from '$lib/chat-ux';
 	import { emitChatEvent } from '$lib/monitoring';
+	import { isLoading } from '$lib/stores';
 	import { User, Bot, RotateCcw, AlertCircle } from '@lucide/svelte';
 	import { Button } from '$ui';
 
@@ -30,14 +31,34 @@
 	let isTyping = $state(false);
 	let typingComplete = $state(false);
 
-	// Typing animation for the latest assistant message
+	// Display logic for the latest assistant message.
+	//
+	// During SSE streaming ($isLoading = true): show tokens directly as they arrive.
+	// The interval-based animation must NOT run here — each new token triggers the
+	// $effect, which would reset displayContent = '' and restart the interval, causing
+	// the displayed text to flicker and reset instead of accumulating progressively.
+	//
+	// After streaming completes ($isLoading = false): run a one-shot typing animation
+	// on the finalised content (only for the latest message shown to the user).
 	$effect(() => {
 		if (!isLatest || message.role !== 'assistant' || message.error) {
+			// Historical messages and user messages: show content directly.
 			displayContent = message.content;
 			typingComplete = true;
+			isTyping = false;
 			return;
 		}
 
+		if ($isLoading) {
+			// Actively streaming: show tokens directly without animation.
+			// Each token already arrives as a progressive update from Chat.svelte.
+			displayContent = message.content;
+			isTyping = true;
+			typingComplete = false;
+			return;
+		}
+
+		// Streaming complete: run one-shot animation on the final content.
 		isTyping = true;
 		typingComplete = false;
 		displayContent = '';
