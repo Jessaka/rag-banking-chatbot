@@ -49,7 +49,13 @@ CRAWL_LOG = CRAWL_DIR / "crawl_log.jsonl"
 
 USER_AGENT = "Mozilla/5.0 (compatible; RAG-Banking-Enterprise-Crawler/1.0; rb.cz RAG dataset)"
 SKIP_EXTENSIONS = (".pdf", ".jpg", ".jpeg", ".png", ".gif", ".svg", ".zip", ".doc", ".docx", ".xls", ".xlsx")
-SKIP_PREFIXES = ("/en/", "/uk/", "/o-nas/kariera", "/attachments/kariera", "/promo/", "/test/")
+SKIP_PREFIXES = (
+    "/en/", "/uk/",
+    "/o-nas/kariera", "/attachments/kariera",
+    "/o-nas/media", "/o-nas/pro-media", "/o-nas/tiskove-zpravy",
+    "/o-nas/vyrocni-zpravy", "/o-nas/investor", "/o-nas/vedeni-banky",
+    "/promo/", "/test/",
+)
 PRICING_KEYWORDS = ("sazebník", "sazebnik", "ceník", "cenik", "fee", "price", "poplatek", "poplatky", "kč", "czk", "zdarma")
 
 
