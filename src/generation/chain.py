@@ -140,6 +140,7 @@ SOFT_GUIDANCE_FAQ_PATTERNS = (
     (re.compile(r"(co\s+)?je\s+(to\s+)?(kredit|debet|limit|disponibil|z[ůu]statek)", re.I), "card_what_is"),
     (re.compile(r"(jak\s+)?(m[ůu][žz]u|mohu|lze|jde)\s+(pou[žz][íi]t|platit|v[ýy]brat)", re.I), "card_usage_can_i"),
     (re.compile(r"(pot[řr]ebuju|potrebuju|chci|mus[íi]m).*(kart|platit|limit)", re.I), "card_need_help"),
+    (re.compile(r"poji[sš]t[eě]n[íi].*(vozidel|auto)|poji[sš]ten[ií].*(vozidel|auto)|povinné?\s+ru[čc]en|povinné?\s+ruceni|havarijní|havarijni\s+poji", re.I), "vehicle_insurance"),
 )
 
 
@@ -473,6 +474,16 @@ def _procedural_flow_answer(intent: str) -> str:
 # --- Priority 2: Soft guidance formatters ---
 
 SOFT_GUIDANCE_ANSWERS: dict[str, str] = {
+    "vehicle_insurance": (
+        "Pojištění vozidel nabízí Raiffeisenbank ve spolupráci s pojišťovnou UNIQA.\n\n"
+        "Dostupné produkty:\n"
+        "- Povinné ručení (POV) — zákonná povinnost každého provozovatele vozidla\n"
+        "- Havarijní pojištění — kryje škody na vlastním vozidle\n\n"
+        "Sjednání:\n"
+        "- Online nebo na pobočce Raiffeisenbank\n"
+        "- Zákaznická linka: 800 900 900\n\n"
+        "Více informací: https://www.rb.cz/osobni/pojisteni/pojisteni-vozidel"
+    ),
     "apple_google_pay": (
         "Apple Pay a Google Pay jsou služby pro bezkontaktní platby mobilem nebo hodinkami.\n\n"
         "Apple Pay (iPhone / Apple Watch):\n"

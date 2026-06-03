@@ -355,8 +355,20 @@ def classify_query(query: str) -> QueryProfile:
     if has_soft_guidance_candidate:
         labels.add("soft_guidance_candidate")
 
-    if any(k in q for k in ("hypot", "úvěr na bydlení", "uver na bydleni")):
+    if any(k in q for k in ("hypot", "úvěr na bydlení", "uver na bydleni",
+                             "anuita", "anuitní", "anuitni", "ltv", "loan.to.value",
+                             "pribor", "fixace hypotéky", "fixace hypotek",
+                             "jistina", "úmor", "umor", "zástavní", "zastavni",
+                             "bonita", "odhadce", "katastr", "katastr nemovitostí",
+                             "dlužník", "dluznik", "rpsn")):
         labels.add("mortgages")
+    if any(k in q for k in ("inkaso", "trvalý příkaz", "travy prikaz", "platební příkaz",
+                             "platebni prikaz", "swift", "sepa platba", "iban",
+                             "chargeback", "cashback", "autorizace platby",
+                             "3d secure", "3ds", "sca")):
+        labels.add("banking_terms")
+        labels.add("payments")
+        labels.add("supported_domain")
     if any(k in q for k in ("půjčk", "pujck", "úvěr", "uver", "kontokorent", "spotřebitelský", "spotrebitelsky", "refinancov", "rpsn")):
         labels.add("loans")
     if any(k in q for k in ("spoření", "sporeni", "spořicí", "sporici", "termínovaný vklad", "terminovany vklad", "stavební spoření", "stavebni sporeni", "úrok", "urok", "zhodnocení", "zhodnoceni", "vklad")):
