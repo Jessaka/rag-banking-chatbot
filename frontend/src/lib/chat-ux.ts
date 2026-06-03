@@ -32,7 +32,14 @@ export function isGuidedFlow(message: Message): boolean {
 
 export function isUnsupported(message: Message): boolean {
 	if (message.answer_strategy === 'overview_fallback') return false;
-	return Boolean(message.unsupported_reason) || message.answer_strategy === 'unsupported_direct' || message.answer_strategy === 'fallback_no_answer';
+	// "supported_but_missing_data" = domain IS supported, retrieval just found nothing.
+	// Show as plain Markdown (not amber warning card) — content is the fallback answer.
+	if (message.unsupported_reason === 'supported_but_missing_data') return false;
+	return (
+		Boolean(message.unsupported_reason) ||
+		message.answer_strategy === 'unsupported_direct' ||
+		message.answer_strategy === 'fallback_no_answer'
+	);
 }
 
 export function shouldShowEscalation(message: Message): boolean {

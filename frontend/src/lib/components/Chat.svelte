@@ -157,7 +157,12 @@
 
 			const streamRequestId = (startData?.request_id as string) || null;
 
-			// Finalize assistant message with timing info
+			// Finalize assistant message with timing info + sources/strategy from done event.
+			// The done event (chain.py LLM path) contains the final sources and actual
+			// answer_strategy — update message so UI renders with correct state.
+			const doneSources = (doneData?.sources as SourceDocument[]) || null;
+			const doneStrategy = (doneData?.answer_strategy as string) || null;
+			const doneConfidence = (doneData?.confidence_bucket as ConfidenceBucket) || null;
 			conversations.update((convos) =>
 				convos.map((c) => {
 					if (c.id !== sessionId) return c;
@@ -173,6 +178,10 @@
 										llm_latency_ms: (doneData?.llm_latency_ms as number) || null,
 										formatting_latency_ms: (doneData?.formatting_latency_ms as number) || null,
 										request_id: streamRequestId,
+										// Prefer done-event values when available (final state after streaming)
+										sources: doneSources ?? m.sources ?? [],
+										answer_strategy: doneStrategy ?? m.answer_strategy ?? null,
+										confidence_bucket: doneConfidence ?? m.confidence_bucket ?? null,
 									}
 								: m
 						)
