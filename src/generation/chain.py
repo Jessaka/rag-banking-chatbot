@@ -112,6 +112,7 @@ GUIDED_FLOW_PATTERNS = (
     (re.compile(r"(rb\s+klíč|rb\s+klic).*(aktiv|nefung|odblok|přen|pren|telefon|mobil)", re.I), "rb_key"),
     (re.compile(r"(jak\s+požádat|jak\s+pozadat|chci|vyřídit|vyridit).*(hypot[eé]k)", re.I), "mortgage"),
     (re.compile(r"bankomat\w*|pobočk\w*|pobocek|kde.*(bankomat|pobočk|pobock)|najít.*(bankomat|pobočk)|hledat.*(bankomat|pobočk)", re.I), "branch_atm"),
+    (re.compile(r"(jak\s+)?(zru[šs]it|zru[šs]en[íi]|uzav[řr][íi]t|uzav[řr]en[íi]|cancel|close).*(ú[čc]et|ucet|account)", re.I), "account_closure"),
 )
 
 # --- Priority 3: Procedural flow patterns ---
@@ -119,6 +120,7 @@ GUIDED_FLOW_PATTERNS = (
 PROCEDURAL_FLOW_PATTERNS = (
     (re.compile(r"(jak\s+)?(aktiv[uo]j|aktivovat|zapnout|zapni|zač[íi]t\s+pou[žz][íi]v[aá]t).*(kart\w*|plateb)", re.I), "activation_flow"),
     (re.compile(r"(jak\s+)?(zv[ýy][šs][íi][mtš]|zv[ýy][šs]it|nav[ýy][šs][íi][mtš]|nav[ýy][šs]it|sn[íi][žz][íi][mtš]|sn[íi][žz]it).*(limit|kart|v[ýy]b[eě]r)", re.I), "card_limit_flow"),
+    (re.compile(r"(jak\s+)?(zm[eě]n[íi]t|zm[eě]n[aá]|nastav[íi]t|nastavit).*(limit).*(kart\w*)?|(jak\s+)?limit.*(zm[eě]n[íi]t|nastavit)", re.I), "card_limit_flow"),
     (re.compile(r"(jak\s+)?(p[řr]idat|nahr[aá]t|m[íi]t).*(kart).*(mobil|apple|google|watch|hodink)", re.I), "mobile_wallet_flow"),
     (re.compile(r"(karta|kartou|kartu|pou[žz]it[íi]).*(zahrani[čc][íi]|cizina|usa|eu|sv[ěe]t)", re.I), "abroad_card_usage"),
     (re.compile(r"(karta|kartou|kartu|funguje).*(v\s+)?zahrani[čc]", re.I), "abroad_card_usage"),
@@ -133,6 +135,7 @@ PROCEDURAL_FLOW_PATTERNS = (
 # domain is supported and the risk is low.
 SOFT_GUIDANCE_FAQ_PATTERNS = (
     (re.compile(r"raia|asistentka\s+raia|co\s+(je|umí|umi|dělá|dela)\s+raia", re.I), "raia_info"),
+    (re.compile(r"(co\s+(je|to\s+je)|jak\s+funguje).*(apple\s*pay|google\s*pay|plac[eě]n[íi]\s+mobilem|plac[eě]n[íi]\s+hodinkami)", re.I), "apple_google_pay"),
     (re.compile(r"(jak\s+)?funguje\s+(plateb|kart|limit|v[ýy]b[eě]r|mobil)", re.I), "card_how_it_works"),
     (re.compile(r"(co\s+)?je\s+(to\s+)?(kredit|debet|limit|disponibil|z[ůu]statek)", re.I), "card_what_is"),
     (re.compile(r"(jak\s+)?(m[ůu][žz]u|mohu|lze|jde)\s+(pou[žz][íi]t|platit|v[ýy]brat)", re.I), "card_usage_can_i"),
@@ -388,6 +391,21 @@ def _guided_flow_answer(intent: str) -> str:
             "🏧 https://www.rb.cz/o-nas/kontakty/pobocky-a-bankomaty\n\n"
             "Vyhledávač umožňuje filtrovat podle města, otevírací doby a dostupných služeb."
         ),
+        "account_closure": (
+            "Postup pro zrušení účtu u Raiffeisenbank:\n\n"
+            "1. Vyrovnejte zůstatek — převeďte prostředky na jiný účet.\n"
+            "2. Zrušte vázané produkty:\n"
+            "   - Trvalé platební příkazy a inkasa\n"
+            "   - Debetní karty a povolené přečerpání (kontokorent)\n"
+            "   - Souhlasy s inkasem (SIPO, pojistné)\n"
+            "3. Podejte žádost o zrušení:\n"
+            "   - Osobně na pobočce Raiffeisenbank\n"
+            "   - Telefonicky: 800 900 900 (zdarma, nonstop)\n"
+            "   - Prostřednictvím internetového bankovnictví (u vybraných typů účtů)\n"
+            "4. Banka zpracuje žádost — lhůta zpravidla do 30 dnů.\n\n"
+            "Upozornění: Archivujte výpisy, oznamte nové číslo účtu plátcům.\n"
+            "Zrušení s nesplaceným záporným zůstatkem nebo exekucí není možné."
+        ),
     }
     return flows[intent]
 
@@ -455,6 +473,20 @@ def _procedural_flow_answer(intent: str) -> str:
 # --- Priority 2: Soft guidance formatters ---
 
 SOFT_GUIDANCE_ANSWERS: dict[str, str] = {
+    "apple_google_pay": (
+        "Apple Pay a Google Pay jsou služby pro bezkontaktní platby mobilem nebo hodinkami.\n\n"
+        "Apple Pay (iPhone / Apple Watch):\n"
+        "- Otevřete Peněženku (Wallet) → přidejte kartu RB\n"
+        "- Aktivaci potvrďte SMS kódem nebo v aplikaci RB\n"
+        "- Plaťte přiložením telefonu k terminálu\n\n"
+        "Google Pay (Android):\n"
+        "- Otevřete aplikaci Google Wallet → přidejte kartu RB\n"
+        "- Aktivaci potvrďte SMS nebo přes aplikaci RB\n"
+        "- Plaťte přiložením telefonu k terminálu\n\n"
+        "Oba systémy fungují na všech terminálech s bezkontaktní platbou (NFC).\n"
+        "Karta je chráněna — číslo karty se nesdílí s obchodníkem.\n\n"
+        "Více informací: rb.cz/osobni/karty/placeni-mobilem"
+    ),
     "raia_info": (
         "RAIA je AI asistentka Raiffeisenbank dostupná v mobilní aplikaci a na webu.\n\n"
         "Co RAIA umí:\n"
