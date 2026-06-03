@@ -147,6 +147,29 @@ SOFT_GUIDANCE_FAQ_PATTERNS = (
     (re.compile(r"jak[eé]\w*.{0,10}poji[sš]t|druh\w*.{0,10}poji[sš]t|typ\w*.{0,10}poji[sš]t|nab[íi]z[íi]\w*.{0,10}poji[sš]t", re.I), "catalog_pojisteni"),
     (re.compile(r"jak[eé]\w*.{0,10}hypot|druh\w*.{0,10}hypot|typ\w*.{0,10}hypot|nab[íi]z[íi]\w*.{0,10}hypot", re.I), "catalog_hypoteky"),
     (re.compile(r"jak[eé]\w*.{0,10}p[ůu]j[čc]k|druh\w*.{0,10}p[ůu]j[čc]|typ\w*.{0,10}p[ůu]j[čc]|nab[íi]z[íi]\w*.{0,10}p[ůu]j[čc]", re.I), "catalog_pujcky"),
+    # Konkrétní produkty — hypotéky
+    (re.compile(r"odpov[eě]dn[aá][\s\w]*hypot|hypot[\s\w]*ekologick", re.I), "hypoteka_odpovedna"),
+    (re.compile(r"americk[aá][\s\w]*hypot|hypot[\s\w]*(cokoliv|na\s+cokoliv)", re.I), "hypoteka_americka"),
+    (re.compile(r"hypot[\s\w]*pron[aá]jem|pron[aá]jem[\s\w]*hypot", re.I), "hypoteka_pronajem"),
+    (re.compile(r"rekop[ůu]j[čc]k|p[ůu]j[čc]k[\s\w]*rekonstrukc|rekonstrukc[\s\w]*p[ůu]j[čc]k", re.I), "hypoteka_rekopujcka"),
+    (re.compile(r"refinancov[\s\w]*hypot|hypot[\s\w]*refinancov", re.I), "hypoteka_refinancovani"),
+    # Konkrétní produkty — investice
+    (re.compile(r"pravidelné?\s*investic|investov[\s\w]*pravidelné?", re.I), "investice_pravidelne"),
+    (re.compile(r"podílov[éý][\s\w]*fond|fond[\s\w]*invest", re.I), "investice_fondy"),
+    (re.compile(r"\bdip\b|dlouhodob[\s\w]*investičn[\s\w]*produkt|investičn[\s\w]*produkt[\s\w]*dlouhodob", re.I), "investice_dip"),
+    # Konkrétní produkty — spoření
+    (re.compile(r"termínovan[ýéaý][\s\w]*vklad|vklad[\s\w]*termínovan", re.I), "sporeni_terminovany_vklad"),
+    (re.compile(r"stavební[\s\w]*spořen|spořen[\s\w]*stavební|stavební[\s\w]*sporitel", re.I), "sporeni_stavebni"),
+    (re.compile(r"bonusov[ýéaý][\s\w]*spořic|spořic[\s\w]*bonusov|bonusov[ýéaý][\s\w]*účet", re.I), "sporeni_bonusovy"),
+    # Konkrétní produkty — pojištění
+    (re.compile(r"pojist[\s\w]*naplno|naplno[\s\w]*pojist|cestovní[\s\w]*naplno", re.I), "pojisteni_naplno"),
+    (re.compile(r"úrazové?\s*pojist|pojist[\s\w]*úrazov|\bopora\b", re.I), "pojisteni_urazove"),
+    (re.compile(r"životní[\s\w]*pojist|pojist[\s\w]*život", re.I), "pojisteni_zivotni"),
+    (re.compile(r"majetkov[éé][\s\w]*pojist|pojist[\s\w]*majetek|pojist[\s\w]*majetkov", re.I), "pojisteni_majetkove"),
+    # Konkrétní produkty — účty
+    (re.compile(r"chytr[ýéaý][\s\w]*účet|bezn[ýéaý][\s\w]*účet[\s\w]*zdarma|účet[\s\w]*zdarma[\s\w]*bez\s*podmínek", re.I), "ucet_chytry"),
+    (re.compile(r"dětský[\s\w]*účet|účet[\s\w]*dět|účet[\s\w]*dítě", re.I), "ucet_detsky"),
+    (re.compile(r"studentský[\s\w]*účet|účet[\s\w]*student", re.I), "ucet_studentsky"),
 )
 
 
@@ -480,6 +503,142 @@ def _procedural_flow_answer(intent: str) -> str:
 # --- Priority 2: Soft guidance formatters ---
 
 SOFT_GUIDANCE_ANSWERS: dict[str, str] = {
+    # Hypotéky — konkrétní produkty
+    "hypoteka_odpovedna": (
+        "Odpovědná hypotéka je ekologická hypotéka Raiffeisenbank pro energeticky úsporné nemovitosti.\n\n"
+        "Výhoda: zvýhodněná úroková sazba při energeticky úsporné nemovitosti (energetický štítek A nebo B).\n"
+        "Vhodné pro: novostavby, rekonstrukce na nízkoenergetický standard.\n\n"
+        "Více informací: https://www.rb.cz/osobni/hypoteky/nabidka-hypotek/odpovedna-hypoteka"
+    ),
+    "hypoteka_americka": (
+        "Hypotéka na cokoliv (americká hypotéka) umožňuje čerpat peníze na libovolný účel se zástavou nemovitosti.\n\n"
+        "Výhody: volné použití peněz (auto, dovolená, investice...), nižší sazba než u spotřebitelského úvěru.\n"
+        "Podmínka: vlastnictví nemovitosti vhodné jako zástava.\n\n"
+        "Více informací: https://www.rb.cz/osobni/hypoteky/nabidka-hypotek/americka-hypoteka"
+    ),
+    "hypoteka_pronajem": (
+        "Hypotéka na pronájem je určena pro koupi nemovitosti k pronájmu.\n\n"
+        "Vhodné pro: investory kupující byt nebo dům za účelem pronájmu.\n"
+        "Příjem z pronájmu lze zahrnout do bonity při posuzování žádosti.\n\n"
+        "Více informací: https://www.rb.cz/osobni/hypoteky/nabidka-hypotek/hypoteka-na-pronajem"
+    ),
+    "hypoteka_rekopujcka": (
+        "RekoPůjčka je půjčka na rekonstrukci BEZ zástavy nemovitosti.\n\n"
+        "Výše: až 2 500 000 Kč\n"
+        "Výhoda: nepotřebujete zástavní právo — rychlejší sjednání, bez ocenění nemovitosti.\n"
+        "Vhodné pro: rekonstrukce, modernizace, vybavení.\n\n"
+        "Více informací: https://www.rb.cz/osobni/hypoteky/nabidka-hypotek/rekopujcka"
+    ),
+    "hypoteka_refinancovani": (
+        "Refinancování hypotéky umožňuje převést hypotéku od jiné banky k Raiffeisenbank za výhodnějších podmínek.\n\n"
+        "Výhody: nižší úroková sazba, lepší podmínky, možnost navýšení úvěru.\n"
+        "Doporučená doba: ke konci fixačního období u stávající banky.\n\n"
+        "Více informací: https://www.rb.cz/osobni/hypoteky/sluzby-k-hypotekam/refinancovani-hypoteky"
+    ),
+    # Investice — konkrétní produkty
+    "investice_pravidelne": (
+        "Pravidelné investice umožňují investovat od malých částek každý měsíc do podílových fondů.\n\n"
+        "Výhody: průměrování nákladů (dollar-cost averaging), začít lze i s malou částkou.\n"
+        "Sjednání: přes aplikaci Raiffeisen Investice nebo na pobočce.\n\n"
+        "Více informací: https://www.rb.cz/osobni/zhodnoceni-uspor/investice/pravidelne-investice"
+    ),
+    "investice_fondy": (
+        "Podílové fondy Raiffeisenbank nabízí různé investiční strategie:\n\n"
+        "- Konzervativní: nízké riziko, dluhopisy a peněžní trh\n"
+        "- Vyvážené: kombinace akcií a dluhopisů\n"
+        "- Dynamické: vyšší podíl akcií, vyšší potenciální výnos i riziko\n\n"
+        "Více informací: https://www.rb.cz/osobni/zhodnoceni-uspor/investice/podilove-fondy"
+    ),
+    "investice_dip": (
+        "Dlouhodobý investiční produkt (DIP) nabízí daňovou úlevu až 48 000 Kč ročně.\n\n"
+        "Podmínky daňové úlevy:\n"
+        "- Minimální spoření 10 let\n"
+        "- Výběr nejdříve v 60 letech věku\n"
+        "Výhoda oproti penzijnímu spoření: bez omezení výběru investičních nástrojů.\n\n"
+        "Více informací: https://www.rb.cz/osobni/zhodnoceni-uspor/investice/dip"
+    ),
+    # Spoření — konkrétní produkty
+    "sporeni_terminovany_vklad": (
+        "Termínovaný vklad nabízí pevnou úrokovou sazbu na dobu určitou.\n\n"
+        "Výhody: garantovaný výnos, bez rizika poklesu sazby.\n"
+        "Omezení: peníze jsou uloženy na pevnou dobu (nelze vybrat předčasně bez sankce).\n"
+        "Vhodné pro: konzervativní spoření s definovaným horizontem.\n\n"
+        "Více informací: https://www.rb.cz/osobni/zhodnoceni-uspor/sporeni/terminovany-vklad"
+    ),
+    "sporeni_stavebni": (
+        "Stavební spoření Raiffeisenbank (Raiffeisen stavební spořitelna):\n\n"
+        "- Garantovaná úroková sazba: 3,3 % p.a.\n"
+        "- Státní podpora: až 2 000 Kč ročně\n"
+        "- Zhodnocení vkladů: až 4,2 % p.a. po dobu šesti let\n"
+        "- Možnost stavebního úvěru po 6 letech spoření\n"
+        "- Sjednání: online nebo na pobočce, zdarma\n\n"
+        "Více informací: https://www.rb.cz/osobni/zhodnoceni-uspor/sporeni/stavebni-sporeni"
+    ),
+    "sporeni_bonusovy": (
+        "Bonusový spořicí účet Raiffeisenbank:\n\n"
+        "- Úroková sazba: až 4,2 % p.a.\n"
+        "- Vedení účtu: zdarma\n"
+        "- Likvidní: peníze jsou kdykoli dostupné\n"
+        "- Automatické spoření: nastavte si převody z běžného účtu\n\n"
+        "Více informací: https://www.rb.cz/osobni/ucty/sporici-ucty/bonusovy-ucet"
+    ),
+    # Pojištění — konkrétní produkty
+    "pojisteni_naplno": (
+        "Cestovní pojištění NAPLNO — pro držitele debetní karty Raiffeisenbank:\n\n"
+        "Limity pojistného krytí:\n"
+        "- Léčebné výlohy: až 8 000 000 Kč\n"
+        "- Pojištění odpovědnosti: až 5 000 000 Kč\n"
+        "- Storno poplatky: až 30 000 Kč\n\n"
+        "Výhody:\n"
+        "- Chrání i členy rodiny (i bez držitele karty)\n"
+        "- Cesta až 120 dní\n"
+        "- Kryje zimní sporty a turistiku do 3 500 m n.m.\n"
+        "- Asistenční linka Europ Assistance: +420 246 059 444 (24/7)\n\n"
+        "Více informací: https://www.rb.cz/osobni/pojisteni/cestovni-pojisteni/cestovni-pojisteni-naplno"
+    ),
+    "pojisteni_urazove": (
+        "Úrazové pojištění OPORA kryje úrazy a jejich následky.\n\n"
+        "Krytí zahrnuje: denní odškodné při pracovní neschopnosti, trvalé následky, smrt úrazem.\n"
+        "Sjednání: na pobočce Raiffeisenbank nebo přes zákaznickou linku 800 900 900.\n\n"
+        "Více informací: https://www.rb.cz/osobni/pojisteni/dalsi-pojisteni/urazove-pojisteni"
+    ),
+    "pojisteni_zivotni": (
+        "Životní pojištění Raiffeisenbank nabízí ochranu pro případ smrti a připojištění.\n\n"
+        "Zahrnuje: pojištění pro případ smrti, invalidity, vážných nemocí.\n"
+        "Poskytovatel: UNIQA pojišťovna ve spolupráci s Raiffeisenbank.\n"
+        "Sjednání: na pobočce s poradcem.\n\n"
+        "Více informací: https://www.rb.cz/osobni/pojisteni/dalsi-pojisteni/zivotni-pojisteni"
+    ),
+    "pojisteni_majetkove": (
+        "Majetkové pojištění Raiffeisenbank chrání váš majetek a odpovědnost.\n\n"
+        "Kryje: požár, záplavu, vichřici, krádež, vandalismus, odpovědnost za škodu.\n"
+        "Poskytovatel: UNIQA pojišťovna ve spolupráci s Raiffeisenbank.\n"
+        "Sjednání: online nebo na pobočce.\n\n"
+        "Více informací: https://www.rb.cz/osobni/pojisteni/dalsi-pojisteni/majetkove-pojisteni"
+    ),
+    # Účty — konkrétní produkty
+    "ucet_chytry": (
+        "CHYTRÝ účet Raiffeisenbank je bezpodmínečně zdarma:\n\n"
+        "- Vedení účtu: 0 Kč (zdarma napořád, bez podmínek)\n"
+        "- Výběry z bankomatů v ČR a v zahraničí: 0 Kč\n"
+        "- Příchozí i odchozí platby: 0 Kč\n"
+        "- Okamžité platby 24/7: zdarma\n\n"
+        "Akce pro nové klienty:\n"
+        "- Odměna 6× 500 Kč (při 10 platbách kartou měsíčně po 6 měsíců)\n\n"
+        "Více informací: https://www.rb.cz/osobni/ucty/bezne-ucty/chytry-ucet"
+    ),
+    "ucet_detsky": (
+        "Dětský účet Raiffeisenbank je určen pro klienty mladší 18 let.\n\n"
+        "Výhody: vedení zdarma, debetní karta, spoření pro děti.\n"
+        "Správa: zákonný zástupce spravuje účet, dítě může mít přístup.\n\n"
+        "Více informací: https://www.rb.cz/osobni/ucty/bezne-ucty/student/detsky-ucet"
+    ),
+    "ucet_studentsky": (
+        "Studentský účet Raiffeisenbank pro studenty 18+.\n\n"
+        "Výhody: vedení zdarma, výhodné podmínky pro studenty.\n"
+        "Podmínka: prokázání studia na střední nebo vysoké škole.\n\n"
+        "Více informací: https://www.rb.cz/osobni/ucty/bezne-ucty/student/studentsky-ucet"
+    ),
     "catalog_sporeni": (
         "Raiffeisenbank nabízí tyto spořicí produkty:\n\n"
         "- **Bonusový spořicí účet**: až 4,2 % p.a., bez poplatků\n"
