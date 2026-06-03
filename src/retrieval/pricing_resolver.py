@@ -530,35 +530,35 @@ def _is_primary_pricing_answer_row(row: dict) -> bool:
 
 
 def _verified_conditional_rows(query: str, canonical_product: str | None) -> list[tuple[dict, float, list[str]]]:
-    """Small deterministic overlay for verified current conditional tariff semantics.
+    """Small deterministic overlay for verified current account fee semantics.
 
-    This does not ingest or mutate indexes. It prevents the resolver from
-    flattening eKonto SMART's conditional free tier into an absolute-free claim.
+    Returns CHYTRÝ účet (new name since 2026, replaces eKonto SMART).
+    CHYTRÝ účet is unconditionally free — 0 Kč without any conditions.
 
-    Handles both explicit "eKonto" queries (ekonto_osobni) and generic
-    "běžný účet" queries (osobni_ucet) → maps to mainstream eKonto SMART.
+    Handles generic "běžný účet" / "vedení účtu" / "eKonto" queries.
     """
     q = _norm(query)
     if len(load_pricing_rows()) < 100:
         return []
     if canonical_product not in ("ekonto_osobni", "osobni_ucet") or not is_primary_account_fee_query(query):
         return []
-    if "ekont" not in q and "bezny ucet" not in q and "bezneho uctu" not in q and "bezneho" not in q:
+    if ("ekont" not in q and "bezny ucet" not in q and "bezneho uctu" not in q
+            and "bezneho" not in q and "chytry" not in q and "vedeni uctu" not in q):
         return []
     row = {
-        "product_name": "eKonto SMART",
+        "product_name": "CHYTRÝ účet",
         "fee_type": "Vedení účtu",
-        "fee_value": "99 Kč",
-        "base_price": 99,
-        "conditional_price": 0,
+        "fee_value": "0 Kč",
+        "base_price": 0,
+        "conditional_price": None,
         "currency": "CZK",
         "period": "měsíčně",
-        "condition_type": "active_usage",
-        "condition_text": "při aktivním využívání účtu",
-        "pricing_logic": "conditional_price_applies_when_active_usage_else_base_price",
-        "conditions": "zdarma při aktivním využívání účtu; pokud účet aktivně využíván není, 99 Kč měsíčně",
-        "raw_cells": ["eKonto SMART", "99 Kč měsíčně", "zdarma při aktivním využívání účtu"],
-        "canonical_product_groups": ["ekonto_osobni", "osobni_ucet"],
+        "condition_type": None,
+        "condition_text": None,
+        "pricing_logic": "unconditionally_free",
+        "conditions": "",
+        "raw_cells": ["CHYTRÝ účet", "0 Kč", "zdarma napořád, bez podmínek"],
+        "canonical_product_groups": ["ekonto_osobni", "osobni_ucet", "chytry_ucet"],
         "pricing_product_segment": "personal",
         "product_segment": "retail",
         "pricing_type": "account_fee",
@@ -567,15 +567,15 @@ def _verified_conditional_rows(query: str, canonical_product: str | None) -> lis
         "is_archived": False,
         "document_year": 2026,
         "mainstream_product": True,
-        "source_file": "ověřený aktuální ceník RB – eKonto SMART",
-        "source_url": "https://www.rb.cz",
-        "title": "Aktuální ceník Raiffeisenbank – eKonto SMART",
+        "source_file": "rb_chytry_ucet.txt",
+        "source_url": "https://www.rb.cz/osobni/ucty/bezne-ucty/chytry-ucet",
+        "title": "Aktuální ceník Raiffeisenbank – CHYTRÝ účet",
         "page": None,
         "table_index": 0,
         "row_index": 0,
-        "confidence": 0.98,
+        "confidence": 0.99,
     }
-    return [(row, 999.0, ["verified_conditional_pricing_overlay", "conditional_pricing", "active_usage_fee", "current_pricing_doc"])]
+    return [(row, 999.0, ["verified_pricing_overlay", "unconditionally_free", "current_product_2026"])]
 
 
 def _dedupe_pricing_rows(rows: list[tuple[dict, float, list[str]]]) -> list[tuple[dict, float, list[str]]]:
