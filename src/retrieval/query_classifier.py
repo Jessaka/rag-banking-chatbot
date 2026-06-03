@@ -732,7 +732,12 @@ def expand_query(query: str, profile: QueryProfile | None = None) -> str:
         terms.extend(["SEPA", "SWIFT", "zahraniční platba", "EUR platba", "IBAN", "BIC"])
     if "investing" in profile.labels:
         terms.extend(["investice", "fondy", "DIP", "rizika", "prodej investice", "cenné papíry"])
-    if "faq" in profile.labels:
+    if "stavebni_sporeni" in profile.labels:
+        terms.extend([
+            "stavební spoření", "stavebního spoření", "úroková sazba stavebního spoření",
+            "Raiffeisen stavební spořitelna", "státní podpora", "3,3%", "garantovaná sazba",
+        ])
+    if "faq" in profile.labels and "stavebni_sporeni" not in profile.labels:
         terms.extend(["návod", "postup", "často kladené dotazy", "FAQ", "jak postupovat"])
     if "activation_flow" in profile.labels:
         terms.extend(["aktivace karty", "aktivovat kartu", "zapnout kartu",
