@@ -141,7 +141,12 @@ SOFT_GUIDANCE_FAQ_PATTERNS = (
     (re.compile(r"(jak\s+)?(m[ůu][žz]u|mohu|lze|jde)\s+(pou[žz][íi]t|platit|v[ýy]brat)", re.I), "card_usage_can_i"),
     (re.compile(r"(pot[řr]ebuju|potrebuju|chci|mus[íi]m).*(kart|platit|limit)", re.I), "card_need_help"),
     (re.compile(r"poji[sš]t[eě]n[íi].*(vozidel|auto)|poji[sš]ten[ií].*(vozidel|auto)|povinné?\s+ru[čc]en|povinné?\s+ruceni|havarijní|havarijni\s+poji", re.I), "vehicle_insurance"),
-    # Catalog overview patterns
+    # Konkrétní produkty — investice (PŘED catalog, aby matchovaly dříve)
+    (re.compile(r"\bdip\b|dlouhodob[\s\w]*investičn|investičn[\s\w]*produkt[\s\w]*dlouhodob|jak[\s\w]*funguje[\s\w]*dip", re.I), "investice_dip"),
+    (re.compile(r"asset[\s.]*management|spr[aá]v[aá][\s\w]*portfolia|portfolio[\s.]*management|slu[žz]by[\s\w]*náro[čc]n|wealth[\s.]*management|privátní[\s\w]*bankovnictv|private[\s.]*banking", re.I), "investice_sluzby_narocne"),
+    (re.compile(r"pravidelné?\s*investic|investov[\s\w]*pravidelné?", re.I), "investice_pravidelne"),
+    (re.compile(r"podílov[éý][\s\w]*fond|fond[\s\w]*invest", re.I), "investice_fondy"),
+    # Catalog overview patterns (obecné dotazy na celé kategorie)
     (re.compile(r"druh\w*.{0,10}spo[rř]|jak[eé]\w*.{0,10}spo[rř]|spo[rř][íi]c[íi].{0,10}produkt|typ\w*.{0,10}spo[rř]", re.I), "catalog_sporeni"),
     (re.compile(r"jak[eé]\w*.{0,10}invest|druh\w*.{0,10}invest|investičn\w*.{0,10}produkt|co.*invest\w+", re.I), "catalog_investice"),
     (re.compile(r"jak[eé]\w*.{0,10}poji[sš]t|druh\w*.{0,10}poji[sš]t|typ\w*.{0,10}poji[sš]t|nab[íi]z[íi]\w*.{0,10}poji[sš]t", re.I), "catalog_pojisteni"),
@@ -153,10 +158,6 @@ SOFT_GUIDANCE_FAQ_PATTERNS = (
     (re.compile(r"hypot[\s\w]*pron[aá]jem|pron[aá]jem[\s\w]*hypot", re.I), "hypoteka_pronajem"),
     (re.compile(r"rekop[ůu]j[čc]k|p[ůu]j[čc]k[\s\w]*rekonstrukc|rekonstrukc[\s\w]*p[ůu]j[čc]k", re.I), "hypoteka_rekopujcka"),
     (re.compile(r"refinancov[\s\w]*hypot|hypot[\s\w]*refinancov", re.I), "hypoteka_refinancovani"),
-    # Konkrétní produkty — investice
-    (re.compile(r"pravidelné?\s*investic|investov[\s\w]*pravidelné?", re.I), "investice_pravidelne"),
-    (re.compile(r"podílov[éý][\s\w]*fond|fond[\s\w]*invest", re.I), "investice_fondy"),
-    (re.compile(r"\bdip\b|dlouhodob[\s\w]*investičn[\s\w]*produkt|investičn[\s\w]*produkt[\s\w]*dlouhodob", re.I), "investice_dip"),
     # Konkrétní produkty — spoření
     (re.compile(r"termínovan[ýéaý][\s\w]*vklad|vklad[\s\w]*termínovan", re.I), "sporeni_terminovany_vklad"),
     (re.compile(r"stavební[\s\w]*spořen|spořen[\s\w]*stavební|stavební[\s\w]*sporitel", re.I), "sporeni_stavebni"),
@@ -550,12 +551,30 @@ SOFT_GUIDANCE_ANSWERS: dict[str, str] = {
         "Více informací: https://www.rb.cz/osobni/zhodnoceni-uspor/investice/podilove-fondy"
     ),
     "investice_dip": (
-        "Dlouhodobý investiční produkt (DIP) nabízí daňovou úlevu až 48 000 Kč ročně.\n\n"
-        "Podmínky daňové úlevy:\n"
-        "- Minimální spoření 10 let\n"
-        "- Výběr nejdříve v 60 letech věku\n"
-        "Výhoda oproti penzijnímu spoření: bez omezení výběru investičních nástrojů.\n\n"
-        "Více informací: https://www.rb.cz/osobni/zhodnoceni-uspor/investice/dip"
+        "Dlouhodobý investiční produkt (DIP) je státem podporovaný způsob spoření na důchod.\n\n"
+        "Výhody DIP:\n"
+        "- Daňová úleva: odečtete až 48 000 Kč ročně ze základu daně\n"
+        "- Příspěvek zaměstnavatele: osvobozen od daně a odvodů\n"
+        "- Flexibilita: výběr fondů dle rizikového profilu\n"
+        "- Dlouhodobé zhodnocení: investice do podílových fondů\n\n"
+        "Podmínky:\n"
+        "- Minimální délka spoření: 10 let\n"
+        "- Výplata nejdříve v 60 letech věku\n"
+        "- Při nedodržení podmínek: vrácení daňových výhod\n\n"
+        "Více: https://www.rb.cz/osobni/zhodnoceni-uspor/investice/dip"
+    ),
+    "investice_sluzby_narocne": (
+        "Raiffeisenbank nabízí individuální investiční služby pro náročné klienty:\n\n"
+        "Služby pro náročné:\n"
+        "- Osobní investiční poradce\n"
+        "- Individuální správa portfolia (asset management)\n"
+        "- Přístup k zahraničním trhům a cenným papírům\n"
+        "- Analýzy a investiční doporučení\n\n"
+        "Privátní bankovnictví:\n"
+        "- Komplexní finanční plánování\n"
+        "- Prémiové podmínky produktů\n"
+        "- Dedikovaný vztahový manažer\n\n"
+        "Více: https://www.rb.cz/osobni/zhodnoceni-uspor/investice/sluzby-pro-narocne"
     ),
     # Spoření — konkrétní produkty
     "sporeni_terminovany_vklad": (
