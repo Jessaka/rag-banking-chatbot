@@ -1910,7 +1910,11 @@ class BankingRAGChain:
             chat_history=self.chat_history,
             question=question,
         )
-        rewritten = self._llm.invoke(messages)
+        # Bypass any streaming wrapper (_StreamingInvoker) — rewrite tokens must
+        # not be buffered into the SSE answer stream and must not fire llm_started
+        # prematurely (which would cause the rewrite text to appear as the answer).
+        _rewrite_llm = getattr(self._llm, "_real_llm", self._llm)
+        rewritten = _rewrite_llm.invoke(messages)
         # OllamaLLM vrátí str, AnthropicLLM také vrátí str
         rewritten_text = (rewritten if isinstance(rewritten, str) else str(rewritten)).strip()
 
@@ -2911,6 +2915,24 @@ class BankingRAGChain:
 
         # Save for downstream caching (SSE endpoint reads this after generator completes)
         self._last_stream_result = result  # type: ignore[attr-defined]
+
+        # Safety net: if ask() returned a direct (non-LLM) strategy but fell into
+        # the LLM streaming path (e.g. due to thread.join() timing), no answer token
+        # was ever sent. Send the actual answer now before the done event.
+        _DIRECT_STRATEGIES = frozenset({
+            "soft_guidance_direct", "identity_direct", "procedural_flow_direct",
+            "guided_flow_direct", "unsupported_direct", "clarification_direct",
+            "card_overview_direct", "account_overview_direct", "product_overview_direct",
+            "mortgage_overview_direct", "investment_overview_direct",
+            "rb_key_overview_direct", "payment_overview_direct",
+            "sepa_swift_overview_direct", "credit_card_catalog_direct",
+            "overview_fallback", "pricing_safe_fallback", "unsupported_domain_fallback",
+            "pricing_row_direct",
+        })
+        if result.get("answer_strategy") in _DIRECT_STRATEGIES and not token_buffer:
+            answer_text = result.get("answer", "")
+            if answer_text:
+                yield {"type": "token", "text": answer_text}
 
         timing = result.get("timing_ms", {}) or {}
         elapsed_total = (time.perf_counter() - t_start) * 1000
