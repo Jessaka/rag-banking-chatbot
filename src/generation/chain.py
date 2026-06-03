@@ -141,6 +141,12 @@ SOFT_GUIDANCE_FAQ_PATTERNS = (
     (re.compile(r"(jak\s+)?(m[ůu][žz]u|mohu|lze|jde)\s+(pou[žz][íi]t|platit|v[ýy]brat)", re.I), "card_usage_can_i"),
     (re.compile(r"(pot[řr]ebuju|potrebuju|chci|mus[íi]m).*(kart|platit|limit)", re.I), "card_need_help"),
     (re.compile(r"poji[sš]t[eě]n[íi].*(vozidel|auto)|poji[sš]ten[ií].*(vozidel|auto)|povinné?\s+ru[čc]en|povinné?\s+ruceni|havarijní|havarijni\s+poji", re.I), "vehicle_insurance"),
+    # Catalog overview patterns
+    (re.compile(r"druh\w*.{0,10}spo[rř]|jak[eé]\w*.{0,10}spo[rř]|spo[rř][íi]c[íi].{0,10}produkt|typ\w*.{0,10}spo[rř]", re.I), "catalog_sporeni"),
+    (re.compile(r"jak[eé]\w*.{0,10}invest|druh\w*.{0,10}invest|investičn\w*.{0,10}produkt|co.*invest\w+", re.I), "catalog_investice"),
+    (re.compile(r"jak[eé]\w*.{0,10}poji[sš]t|druh\w*.{0,10}poji[sš]t|typ\w*.{0,10}poji[sš]t|nab[íi]z[íi]\w*.{0,10}poji[sš]t", re.I), "catalog_pojisteni"),
+    (re.compile(r"jak[eé]\w*.{0,10}hypot|druh\w*.{0,10}hypot|typ\w*.{0,10}hypot|nab[íi]z[íi]\w*.{0,10}hypot", re.I), "catalog_hypoteky"),
+    (re.compile(r"jak[eé]\w*.{0,10}p[ůu]j[čc]k|druh\w*.{0,10}p[ůu]j[čc]|typ\w*.{0,10}p[ůu]j[čc]|nab[íi]z[íi]\w*.{0,10}p[ůu]j[čc]", re.I), "catalog_pujcky"),
 )
 
 
@@ -474,6 +480,65 @@ def _procedural_flow_answer(intent: str) -> str:
 # --- Priority 2: Soft guidance formatters ---
 
 SOFT_GUIDANCE_ANSWERS: dict[str, str] = {
+    "catalog_sporeni": (
+        "Raiffeisenbank nabízí tyto spořicí produkty:\n\n"
+        "- **Bonusový spořicí účet**: až 4,2 % p.a., bez poplatků\n"
+        "  → rb.cz/osobni/ucty/sporici-ucty/bonusovy-ucet\n"
+        "- **Termínovaný vklad**: pevná sazba na dobu určitou\n"
+        "  → rb.cz/osobni/zhodnoceni-uspor/sporeni/terminovany-vklad\n"
+        "- **Stavební spoření**: 3,3 % p.a. garantovaně, státní podpora až 2 000 Kč/rok\n"
+        "  → rb.cz/osobni/zhodnoceni-uspor/sporeni/stavebni-sporeni\n"
+        "- **Drobné spoření**: zaokrouhlení plateb na spořicí účet\n"
+        "- **Pravidelné spoření**: automatické měsíční převody zdarma"
+    ),
+    "catalog_investice": (
+        "Raiffeisenbank nabízí tyto investiční produkty:\n\n"
+        "- **Pravidelné investice**: od malých částek každý měsíc\n"
+        "  → rb.cz/osobni/zhodnoceni-uspor/investice/pravidelne-investice\n"
+        "- **Podílové fondy**: konzervativní, vyvážené i dynamické\n"
+        "  → rb.cz/osobni/zhodnoceni-uspor/investice/podilove-fondy\n"
+        "- **DIP (Dlouhodobý investiční produkt)**: daňová úleva až 48 000 Kč/rok\n"
+        "  → rb.cz/osobni/zhodnoceni-uspor/investice/dip\n"
+        "- **Mobilní aplikace Raiffeisen Investice**: správa portfolia v mobilu\n"
+        "- **Služby pro náročné**: individuální investiční poradenství\n"
+        "  → rb.cz/osobni/zhodnoceni-uspor/investice/sluzby-pro-narocne"
+    ),
+    "catalog_pojisteni": (
+        "Raiffeisenbank nabízí tato pojištění:\n\n"
+        "**Pojištění k produktům:**\n"
+        "- Pojištění ke kreditním kartám (Osobní strážce)\n"
+        "- Pojištění schopnosti splácet hypotéku\n"
+        "- Pojištění schopnosti splácet půjčku\n\n"
+        "**Cestovní pojištění:**\n"
+        "- Cestovní pojištění NAPLNO: léčebné výlohy až 8 000 000 Kč\n\n"
+        "**Ostatní pojištění:**\n"
+        "- Úrazové pojištění OPORA\n"
+        "- Životní pojištění\n"
+        "- Majetkové pojištění\n"
+        "- Pojištění vozidel (ve spolupráci s UNIQA)\n\n"
+        "Více informací: rb.cz/osobni/pojisteni"
+    ),
+    "catalog_hypoteky": (
+        "Raiffeisenbank nabízí tyto hypoteční produkty:\n\n"
+        "- **Hypotéka na bydlení**: koupi nemovitosti nebo výstavbu\n"
+        "- **Odpovědná hypotéka**: zvýhodněná pro ekologické bydlení\n"
+        "- **Hypotéka na cokoliv (americká)**: bez určení účelu\n"
+        "- **Hypotéka na pronájem**: financování investiční nemovitosti\n"
+        "- **RekoPůjčka (bez zástavy)**: rekonstrukce bez zástavního práva\n"
+        "- **Refinancování hypotéky**: převod z jiné banky za výhodnějších podmínek\n\n"
+        "Hypoteční kalkulačka: rb.cz/osobni/hypoteky/hypotecni-kalkulacka\n"
+        "Více informací: rb.cz/osobni/hypoteky"
+    ),
+    "catalog_pujcky": (
+        "Raiffeisenbank nabízí tyto půjčky a úvěry:\n\n"
+        "- **Minutová půjčka**: až 1 200 000 Kč, od 4,9 % p.a., online, 0 Kč poplatků\n"
+        "- **Kontokorent (přečerpání účtu)**: flexibilní rezerva na běžném účtu\n"
+        "- **Půjčka na auto**: online sjednání bez poplatků za vedení\n"
+        "- **Půjčka na rekonstrukci**: bez zástavy nemovitostí\n"
+        "- **Sloučení půjček (RePůjčka)**: nižší splátky, vše pod jednou střechou\n"
+        "- **PlatímPak**: odložená platba — nakoupíte nyní, zaplatíte později\n\n"
+        "Kalkulačka: rb.cz/osobni/pujcky"
+    ),
     "vehicle_insurance": (
         "Pojištění vozidel nabízí Raiffeisenbank ve spolupráci s pojišťovnou UNIQA.\n\n"
         "Dostupné produkty:\n"
@@ -2130,6 +2195,25 @@ class BankingRAGChain:
                 **ux,
                 "timing_ms": {"retrieval": 0, "total": round(total_ms), "llm": 0},
             }
+        elif (catalog_intent := _soft_guidance_intent(question)) and catalog_intent.startswith("catalog_") and _soft_guidance_answer(catalog_intent):
+            catalog_answer = _soft_guidance_answer(catalog_intent)
+            total_ms = (time.perf_counter() - t_ask) * 1000
+            ux = _ux_meta("medium", f"catalog soft guidance for {catalog_intent}", confidence_factors={"soft_guidance_used": True})
+            logger.info(f"Answer strategy: soft_guidance_direct ({catalog_intent}, pre-retrieval catalog)")
+            return {
+                "answer": catalog_answer,
+                "sources": [],
+                "rewritten_query": question,
+                "retrieval_debug": _debug_with_ux([{
+                    "retrieval_route": "soft_guidance",
+                    "retrieval_skipped": True,
+                    "soft_guidance_intent": catalog_intent,
+                }], ux),
+                "answer_strategy": "soft_guidance_direct",
+                "answer_confidence": "medium",
+                **ux,
+                "timing_ms": {"retrieval": 0, "total": round(total_ms), "llm": 0},
+            }
         elif (raw_guided_intent := _guided_flow_intent(question)):
             answer = _guided_flow_answer(raw_guided_intent)
             total_ms = (time.perf_counter() - t_ask) * 1000
@@ -2275,6 +2359,29 @@ class BankingRAGChain:
                 **ux,
                 "timing_ms": {"retrieval": 0, "total": round(total_ms), "llm": 0},
             }
+
+        # Catalog soft guidance: fire before retrieval for product listing queries.
+        catalog_intent_main = _soft_guidance_intent(question)
+        if catalog_intent_main and catalog_intent_main.startswith("catalog_"):
+            catalog_answer_main = _soft_guidance_answer(catalog_intent_main)
+            if catalog_answer_main:
+                total_ms = (time.perf_counter() - t_ask) * 1000
+                ux = _ux_meta("medium", f"catalog soft guidance for {catalog_intent_main}", confidence_factors={"soft_guidance_used": True})
+                logger.info(f"Answer strategy: soft_guidance_direct ({catalog_intent_main}, pre-retrieval catalog main)")
+                return {
+                    "answer": catalog_answer_main,
+                    "sources": [],
+                    "rewritten_query": retrieval_query,
+                    "retrieval_debug": _debug_with_ux([{
+                        "retrieval_route": "soft_guidance",
+                        "retrieval_skipped": True,
+                        "soft_guidance_intent": catalog_intent_main,
+                    }], ux),
+                    "answer_strategy": "soft_guidance_direct",
+                    "answer_confidence": "medium",
+                    **ux,
+                    "timing_ms": {"retrieval": 0, "total": round(total_ms), "llm": 0},
+                }
 
         guided_intent = _guided_flow_intent(retrieval_query)
         if guided_intent:
@@ -2587,6 +2694,15 @@ class BankingRAGChain:
                     "timing_ms": {"retrieval": round(retrieval_ms), "total": round(total_ms), "llm": 0},
                 }
         if "mortgage_overview" in query_profile.labels:
+            # Prefer catalog soft_guidance over generic overview for explicit listing queries
+            _mg_catalog = _soft_guidance_intent(question)
+            if _mg_catalog and _mg_catalog.startswith("catalog_"):
+                _mg_ans = _soft_guidance_answer(_mg_catalog)
+                if _mg_ans:
+                    total_ms = (time.perf_counter() - t_ask) * 1000
+                    ux = _ux_meta("medium", f"catalog soft guidance override ({_mg_catalog})", confidence_factors={"soft_guidance_used": True})
+                    logger.info(f"Answer strategy: soft_guidance_direct ({_mg_catalog}, overrides mortgage_overview_direct)")
+                    return {"answer": _mg_ans, "sources": [], "rewritten_query": retrieval_query, "answer_strategy": "soft_guidance_direct", "answer_confidence": "medium", "retrieval_debug": _debug_with_ux([{"retrieval_route": "soft_guidance", "retrieval_skipped": False, "soft_guidance_intent": _mg_catalog}], ux), **ux, "timing_ms": {"retrieval": round(retrieval_ms), "total": round(total_ms), "llm": 0}}
             overview_answer = _format_mortgage_overview_answer(source_docs)
             if overview_answer:
                 total_ms = (time.perf_counter() - t_ask) * 1000
@@ -2603,6 +2719,15 @@ class BankingRAGChain:
                     "timing_ms": {"retrieval": round(retrieval_ms), "total": round(total_ms), "llm": 0},
                 }
         if "investment_overview" in query_profile.labels:
+            # Prefer catalog soft_guidance over generic overview for explicit listing queries
+            _iv_catalog = _soft_guidance_intent(question)
+            if _iv_catalog and _iv_catalog.startswith("catalog_"):
+                _iv_ans = _soft_guidance_answer(_iv_catalog)
+                if _iv_ans:
+                    total_ms = (time.perf_counter() - t_ask) * 1000
+                    ux = _ux_meta("medium", f"catalog soft guidance override ({_iv_catalog})", confidence_factors={"soft_guidance_used": True})
+                    logger.info(f"Answer strategy: soft_guidance_direct ({_iv_catalog}, overrides investment_overview_direct)")
+                    return {"answer": _iv_ans, "sources": [], "rewritten_query": retrieval_query, "answer_strategy": "soft_guidance_direct", "answer_confidence": "medium", "retrieval_debug": _debug_with_ux([{"retrieval_route": "soft_guidance", "retrieval_skipped": False, "soft_guidance_intent": _iv_catalog}], ux), **ux, "timing_ms": {"retrieval": round(retrieval_ms), "total": round(total_ms), "llm": 0}}
             overview_answer = _format_investment_overview_answer(source_docs)
             if overview_answer:
                 total_ms = (time.perf_counter() - t_ask) * 1000
