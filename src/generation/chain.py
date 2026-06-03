@@ -2306,7 +2306,11 @@ class BankingRAGChain:
                     }
             # Priority 2: Soft guidance — for common FAQ/procedural queries with
             # weak retrieval, still provide a safe answer instead of unsupported.
-            soft_intent = _soft_guidance_intent(retrieval_query)
+            # Use original `question`, not `retrieval_query` — LLM rewrites can
+            # introduce topic drift (e.g. rewrites of "Co je Platím pak?" in RAIA
+            # context may contain "raia"), causing the wrong soft-guidance answer
+            # to be returned and cached under the original question's cache key.
+            soft_intent = _soft_guidance_intent(question)
             if soft_intent:
                 soft_answer = _soft_guidance_answer(soft_intent)
                 if soft_answer:
@@ -2550,7 +2554,8 @@ class BankingRAGChain:
         # Priority 2: Soft guidance route — if the query matches a known
         # FAQ/low-risk pattern, use a safe deterministic answer instead of
         # relying on weak retrieval + LLM generation.
-        soft_intent = _soft_guidance_intent(retrieval_query)
+        # Use original `question`, not `retrieval_query` — see note above.
+        soft_intent = _soft_guidance_intent(question)
         if soft_intent and "pricing" not in query_profile.labels:
             soft_answer = _soft_guidance_answer(soft_intent)
             if soft_answer:
