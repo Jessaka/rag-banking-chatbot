@@ -163,6 +163,7 @@ SOFT_GUIDANCE_FAQ_PATTERNS = (
     (re.compile(r"stavební[\s\w]*spořen|spořen[\s\w]*stavební|stavební[\s\w]*sporitel", re.I), "sporeni_stavebni"),
     (re.compile(r"bonusov[ýéaý][\s\w]*spořic|spořic[\s\w]*bonusov|bonusov[ýéaý][\s\w]*účet", re.I), "sporeni_bonusovy"),
     # Konkrétní produkty — pojištění
+    (re.compile(r"osobní[\s\w]*strážce|osobni[\s\w]*strazce|strážce[\s\w]*poji|strazce[\s\w]*pojist|poji[sš]t[\s\w]*strážce|pojisten[\s\w]*strazce", re.I), "pojisteni_osobni_strazce"),
     (re.compile(r"pojist[\s\w]*naplno|naplno[\s\w]*pojist|cestovní[\s\w]*naplno", re.I), "pojisteni_naplno"),
     (re.compile(r"úrazové?\s*pojist|pojist[\s\w]*úrazov|\bopora\b", re.I), "pojisteni_urazove"),
     (re.compile(r"životní[\s\w]*pojist|pojist[\s\w]*život", re.I), "pojisteni_zivotni"),
@@ -602,6 +603,17 @@ SOFT_GUIDANCE_ANSWERS: dict[str, str] = {
         "Více informací: https://www.rb.cz/osobni/ucty/sporici-ucty/bonusovy-ucet"
     ),
     # Pojištění — konkrétní produkty
+    "pojisteni_osobni_strazce": (
+        "Pojištění Osobní strážce — 89 Kč měsíčně\n\n"
+        "Kryje:\n"
+        "- Neoprávněné transakce: zneužití ztracené/odcizené karty, zneužití mobilního/internetového bankovnictví\n"
+        "- Ztráta nebo odcizení: platební karty, doklady, klíče, peněženka, příruční zavazadlo\n"
+        "- Odcizení: mobilní telefon, notebook, tablet, brýle\n"
+        "- Kybernetická asistence: právní a IT pomoc, pojištění nákupu zboží online\n\n"
+        "Nekryje:\n"
+        "- Hrubou nedbalost (poskytnutí PIN, kliknutí na podvodný odkaz)\n\n"
+        "Více: https://www.rb.cz/osobni/pojisteni/pojisteni-k-produktum/osobni-strazce"
+    ),
     "pojisteni_naplno": (
         "Cestovní pojištění NAPLNO — pro držitele debetní karty Raiffeisenbank:\n\n"
         "Limity pojistného krytí:\n"
