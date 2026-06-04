@@ -605,13 +605,16 @@ SOFT_GUIDANCE_ANSWERS: dict[str, str] = {
     # Pojištění — konkrétní produkty
     "pojisteni_osobni_strazce": (
         "Pojištění Osobní strážce — 89 Kč měsíčně\n\n"
+        "Pro klienty s běžným účtem nebo kreditní kartou RB.\n\n"
         "Kryje:\n"
-        "- Neoprávněné transakce: zneužití ztracené/odcizené karty, zneužití mobilního/internetového bankovnictví\n"
-        "- Ztráta nebo odcizení: platební karty, doklady, klíče, peněženka, příruční zavazadlo\n"
+        "- Neoprávněné transakce: zneužití ztracené/odcizené karty (s PIN i bez), zneužití karty v mobilní peněžence, zneužití mobilního/internetového bankovnictví\n"
+        "- Ztráta nebo odcizení: platební karty, doklady, klíče od bytu/domu/auta, peněženka, příruční zavazadlo\n"
         "- Odcizení: mobilní telefon, notebook, tablet, brýle\n"
-        "- Kybernetická asistence: právní a IT pomoc, pojištění nákupu zboží online\n\n"
+        "- Kybernetická asistence: právní pomoc (neoprávněná transakce, poškození pověsti, zneužití osobních údajů), IT asistence (napadení počítače/mobilu), pojištění nákupu online (nedodání nebo poškozené zboží)\n\n"
         "Nekryje:\n"
-        "- Hrubou nedbalost (poskytnutí PIN, kliknutí na podvodný odkaz)\n\n"
+        "- Věci, které nejsou v pojištění zahrnuty\n"
+        "- Věci pojištěné pouze na odcizení (ne ztrátu)\n"
+        "- Hrubou nedbalost (poskytnutí PIN, hesel, kliknutí na podvodný odkaz)\n\n"
         "Více: https://www.rb.cz/osobni/pojisteni/pojisteni-k-produktum/osobni-strazce"
     ),
     "pojisteni_naplno": (
