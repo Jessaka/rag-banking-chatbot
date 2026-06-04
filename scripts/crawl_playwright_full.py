@@ -30,19 +30,35 @@ MAX_PAGES = 500
 OUT_DIR = pathlib.Path('/app/data/raw')
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
+BROWSER_ARGS = [
+    '--no-sandbox',
+    '--disable-dev-shm-usage',
+    '--disable-gpu',
+    '--disable-extensions',
+    '--disable-background-networking',
+    '--memory-pressure-off',
+    '--single-process',
+]
+RESTART_EVERY = 30  # Restart browser every N pages to avoid memory leaks
+
+
+def make_browser_and_page(p):
+    browser = p.chromium.launch(headless=True, args=BROWSER_ARGS)
+    ctx = browser.new_context(
+        user_agent='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
+        locale='cs-CZ',
+    )
+    ctx.add_cookies([{'name': 'cookieConsent', 'value': 'true', 'domain': '.rb.cz', 'path': '/'}])
+    return browser, ctx.new_page()
+
+
 visited = set()
 queue = list(SEED_URLS)
 saved = 0
 
 with sync_playwright() as p:
-    browser = p.chromium.launch(headless=True)
-    ctx = browser.new_context(
-        user_agent='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
-        locale='cs-CZ',
-    )
-    # Accept cookies silently
-    ctx.add_cookies([{'name': 'cookieConsent', 'value': 'true', 'domain': '.rb.cz', 'path': '/'}])
-    page = ctx.new_page()
+    browser, page = make_browser_and_page(p)
+    pages_since_restart = 0
 
     while queue and saved < MAX_PAGES:
         url = queue.pop(0)
@@ -56,9 +72,19 @@ with sync_playwright() as p:
         if parsed.netloc not in ('rb.cz', 'www.rb.cz'):
             continue
 
+        # Periodic browser restart to free memory
+        if pages_since_restart >= RESTART_EVERY:
+            try:
+                browser.close()
+            except Exception:
+                pass
+            browser, page = make_browser_and_page(p)
+            pages_since_restart = 0
+            print(f'  [browser restart at {saved} pages]', flush=True)
+
         try:
-            page.goto(url, wait_until='networkidle', timeout=30000)
-            page.wait_for_timeout(1500)
+            page.goto(url, wait_until='domcontentloaded', timeout=15000)
+            page.wait_for_timeout(800)
             text = page.inner_text('body')
 
             if len(text) < 500:
@@ -72,6 +98,7 @@ with sync_playwright() as p:
                 encoding='utf-8'
             )
             saved += 1
+            pages_since_restart += 1
             print(f'OK ({saved}/{MAX_PAGES}): {url[-70:]}', flush=True)
 
             # Najdi všechny interní linky
@@ -90,7 +117,17 @@ with sync_playwright() as p:
             time.sleep(0.5)
 
         except Exception as e:
-            print(f'ERR: {url[-60:]}: {e}', flush=True)
+            err_msg = str(e).split('\n')[0][:80]
+            print(f'ERR: {url[-60:]}: {err_msg}', flush=True)
+            # Restart browser on crash
+            if 'crashed' in str(e).lower() or 'Target closed' in str(e):
+                try:
+                    browser.close()
+                except Exception:
+                    pass
+                browser, page = make_browser_and_page(p)
+                pages_since_restart = 0
+                print('  [browser restarted after crash]', flush=True)
 
     browser.close()
 
