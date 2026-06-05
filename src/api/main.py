@@ -524,6 +524,13 @@ async def _get_or_create_session(
     return session_id, _sessions[session_id][0], _session_locks[session_id]
 
 
+def _build_url(metadata: dict) -> str | None:
+    url = metadata.get("url") or metadata.get("source_url") or metadata.get("display_url") or ""
+    if url and not url.startswith("http"):
+        url = "https://" + url
+    return url or None
+
+
 def _serialize_sources(raw_sources: list[Any]) -> list[SourceDocument]:
     sources: list[SourceDocument] = []
     for doc in raw_sources:
@@ -544,11 +551,7 @@ def _serialize_sources(raw_sources: list[Any]) -> list[SourceDocument]:
                 rerank_score=round(rerank_score, 4) if rerank_score is not None else None,
                 preview=page_content[:500],
                 # Priority 2: Source UX metadata
-                url=metadata.get("url") or metadata.get("source_url") or (
-                    ("https://" + metadata["display_url"])
-                    if metadata.get("display_url") and not str(metadata["display_url"]).startswith("http")
-                    else metadata.get("display_url")
-                ) or None,
+                url=_build_url(metadata),
                 human_title=metadata.get("human_title"),
                 display_url=metadata.get("display_url"),
                 source_year=metadata.get("source_year"),
