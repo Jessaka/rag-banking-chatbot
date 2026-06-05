@@ -142,6 +142,7 @@ SOFT_GUIDANCE_FAQ_PATTERNS = (
     (re.compile(r"(pot[řr]ebuju|potrebuju|chci|mus[íi]m).*(kart|platit|limit)", re.I), "card_need_help"),
     (re.compile(r"poji[sš]t[eě]n[íi].*(vozidel|auto)|poji[sš]ten[ií].*(vozidel|auto)|povinné?\s+ru[čc]en|povinné?\s+ruceni|havarijní|havarijni\s+poji", re.I), "vehicle_insurance"),
     # Konkrétní produkty — investice (PŘED catalog, aby matchovaly dříve)
+    (re.compile(r"raiffeisen\s*(dynamick|konzervativn|balancovan|progresivn|fond)|dynamick\w*[\s\w]*fond|popis[\s\w]*fond|fond[\s\w]*popis", re.I), "investice_fondy_detail"),
     (re.compile(r"\bdip\b|dlouhodob[\s\w]*investičn|investičn[\s\w]*produkt[\s\w]*dlouhodob|jak[\s\w]*funguje[\s\w]*dip", re.I), "investice_dip"),
     (re.compile(r"asset[\s.]*management|spr[aá]v[aá][\s\w]*portfolia|portfolio[\s.]*management|slu[žz]by[\s\w]*náro[čc]n|wealth[\s.]*management|privátní[\s\w]*bankovnictv|private[\s.]*banking", re.I), "investice_sluzby_narocne"),
     (re.compile(r"pravidelné?\s*investic|investov[\s\w]*pravidelné?", re.I), "investice_pravidelne"),
@@ -550,6 +551,20 @@ SOFT_GUIDANCE_ANSWERS: dict[str, str] = {
         "- Vyvážené: kombinace akcií a dluhopisů\n"
         "- Dynamické: vyšší podíl akcií, vyšší potenciální výnos i riziko\n\n"
         "Více informací: https://www.rb.cz/osobni/zhodnoceni-uspor/investice/podilove-fondy"
+    ),
+    "investice_fondy_detail": (
+        "Raiffeisenbank nabízí tyto podílové fondy:\n\n"
+        "**Raiffeisen Konzervativní**\n"
+        "- Pro investory zaměřené na uchování hodnoty\n"
+        "- Nízké riziko, dluhopisy a peněžní trh\n\n"
+        "**Raiffeisen Balancovaný**\n"
+        "- Kombinace akcií a dluhopisů, střední riziko\n\n"
+        "**Raiffeisen Progresivní**\n"
+        "- Vyšší podíl akcií, zaměřený na výnos a růst\n\n"
+        "**Raiffeisen Dynamický**\n"
+        "- Alespoň 85 % v akciích, sleduje MSCI AC World Index\n"
+        "- Minimální horizont: 5 let, pro investory s nízkou averzí k riziku\n\n"
+        "Více: https://www.rb.cz/osobni/zhodnoceni-uspor/investice/podilove-fondy"
     ),
     "investice_dip": (
         "Dlouhodobý investiční produkt (DIP) je státem podporovaný způsob spoření na důchod.\n\n"
