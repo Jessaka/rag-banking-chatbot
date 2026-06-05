@@ -111,7 +111,8 @@ GUIDED_FLOW_PATTERNS = (
     (re.compile(r"(jak\s+zadat|údaje|udaje|iban|bic).*(sepa|swift|zahraničn|zahranicn)", re.I), "sepa_swift"),
     (re.compile(r"(rb\s+klíč|rb\s+klic).*(aktiv|nefung|odblok|přen|pren|telefon|mobil)", re.I), "rb_key"),
     (re.compile(r"(jak\s+požádat|jak\s+pozadat|chci|vyřídit|vyridit).*(hypot[eé]k)", re.I), "mortgage"),
-    (re.compile(r"bankomat\w*|pobočk\w*|pobocek|kde.*(bankomat|pobočk|pobock)|najít.*(bankomat|pobočk)|hledat.*(bankomat|pobočk)", re.I), "branch_atm"),
+    (re.compile(r"poplatek.*výběr|poplatky.*výběr|výběr.*bankomat.*poplatek|kolik.*výběr|cena.*výběr", re.I), "atm_fees"),
+    (re.compile(r"kde.*(bankomat|pobočk|pobock)|najít.*(bankomat|pobočk)|hledat.*(bankomat|pobočk)|pobočk\w*|pobocek|^bankomat", re.I), "branch_atm"),
     (re.compile(r"(jak\s+)?(zru[šs]it|zru[šs]en[íi]|uzav[řr][íi]t|uzav[řr]en[íi]|cancel|close).*(ú[čc]et|ucet|account)", re.I), "account_closure"),
 )
 
@@ -426,6 +427,13 @@ def _guided_flow_answer(intent: str) -> str:
             "Pro vyhledání bankomatů a poboček Raiffeisenbank použijte oficiální vyhledávač:\n"
             "🏧 https://www.rb.cz/o-nas/kontakty/pobocky-a-bankomaty\n\n"
             "Vyhledávač umožňuje filtrovat podle města, otevírací doby a dostupných služeb."
+        ),
+        "atm_fees": (
+            "Poplatky za výběr z bankomatu:\n\n"
+            "- CHYTRÝ účet: výběry z bankomatů RB zdarma, z cizích bankomatů 39 Kč\n"
+            "- AKTIVNÍ účet: výběry z bankomatů RB zdarma, z cizích bankomatů zdarma (2× měsíčně)\n"
+            "- EXKLUZIVNÍ účet: výběry ze všech bankomatů v ČR i zahraničí zdarma\n\n"
+            "Přesné poplatky: https://www.rb.cz/osobni/ceniky"
         ),
         "account_closure": (
             "Postup pro zrušení účtu u Raiffeisenbank:\n\n"
