@@ -830,6 +830,9 @@ def source_priority(doc: Document, profile: QueryProfile) -> tuple[float, list[s
         if needle in url or needle in title:
             score -= 0.060; reasons.append(f"penalized {needle}")
 
+    if any(seg in url for seg in ("/pro-media/", "/tiskove-zpravy/", "/aktuality/", "/esg/novinky/", "/informacni-servis/pro-media")):
+        score -= 3.0; reasons.append("press/news URL penalty")
+
     if "retail_banking" in profile.labels:
         if re.search(r"\b(aktivní účet|aktivni ucet|běžný účet|bezny ucet|ekonto|osobní účet|osobni ucet)\b", content + " " + title):
             score += 0.040; reasons.append("retail account terms")
