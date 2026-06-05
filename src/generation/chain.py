@@ -163,6 +163,7 @@ SOFT_GUIDANCE_FAQ_PATTERNS = (
     (re.compile(r"termínovan[ýéaý][\s\w]*vklad|vklad[\s\w]*termínovan", re.I), "sporeni_terminovany_vklad"),
     (re.compile(r"stavební[\s\w]*spořen|spořen[\s\w]*stavební|stavební[\s\w]*sporitel", re.I), "sporeni_stavebni"),
     (re.compile(r"bonusov[ýéaý][\s\w]*spořic|spořic[\s\w]*bonusov|bonusov[ýéaý][\s\w]*účet", re.I), "sporeni_bonusovy"),
+    (re.compile(r"spořic[íi][\s\w]{0,20}(?:účet|ucet|sazb|úrok|urok)|(?:sazb|úrok|urok)[\s\w]{0,20}spořic[íi]", re.I), "sporeni_bonusovy"),
     # Konkrétní produkty — pojištění
     (re.compile(r"osobní[\s\w]*strážce|osobni[\s\w]*strazce|strážce[\s\w]*poji|strazce[\s\w]*pojist|poji[sš]t[\s\w]*strážce|pojisten[\s\w]*strazce", re.I), "pojisteni_osobni_strazce"),
     (re.compile(r"pojist[\s\w]*naplno|naplno[\s\w]*pojist|cestovní[\s\w]*naplno", re.I), "pojisteni_naplno"),
@@ -611,11 +612,12 @@ SOFT_GUIDANCE_ANSWERS: dict[str, str] = {
     ),
     "sporeni_bonusovy": (
         "Bonusový spořicí účet Raiffeisenbank:\n\n"
-        "- Úroková sazba: až 4,2 % p.a.\n"
-        "- Vedení účtu: zdarma\n"
-        "- Likvidní: peníze jsou kdykoli dostupné\n"
-        "- Automatické spoření: nastavte si převody z běžného účtu\n\n"
-        "Více informací: https://www.rb.cz/osobni/ucty/sporici-ucty/bonusovy-ucet"
+        "- Základní sazba: 0,1 % p.a.\n"
+        "- Bonus za 10 plateb kartou měsíčně: +3,9 % p.a.\n"
+        "- Bonus za investice: +0,2 % p.a.\n"
+        "- Celková maximální sazba: až 4,2 % p.a. (do 500 000 Kč)\n"
+        "- Zřízení a vedení účtu: zdarma\n\n"
+        "Více: https://www.rb.cz/osobni/sporeni/bonusovy-sporici-ucet"
     ),
     # Pojištění — konkrétní produkty
     "pojisteni_osobni_strazce": (
