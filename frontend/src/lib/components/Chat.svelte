@@ -340,9 +340,9 @@
 				<div class="mt-8 grid w-full max-w-md grid-cols-1 gap-2 sm:grid-cols-2">
 					{#each [
 						'Jaký je poplatek za vedení běžného účtu?',
-						'Kolik stojí vedení eKonta?',
+						'Jaké účty nabízíte?',
 						'Co mám dělat při podezření na phishing?',
-						'Jaké typy platebních karet nabízíte?'
+						'Jaké typy kreditních karet nabízíte?'
 					] as suggestion}
 						<button
 							onclick={() => handleSubmit(suggestion)}
