@@ -286,6 +286,7 @@ class SourceDocument(BaseModel):
     preview: str = Field(description="Prvních 300 znaků textu chunku.")
 
     # Priority 2: Source UX metadata
+    url: str | None = Field(None, description="Plná URL zdrojové stránky nebo dokumentu.")
     human_title: str | None = Field(None, description="Human-readable source title for UI display.")
     display_url: str | None = Field(None, description="Shortened display URL.")
     source_year: int | None = Field(None, description="Extracted document year.")
@@ -543,6 +544,11 @@ def _serialize_sources(raw_sources: list[Any]) -> list[SourceDocument]:
                 rerank_score=round(rerank_score, 4) if rerank_score is not None else None,
                 preview=page_content[:500],
                 # Priority 2: Source UX metadata
+                url=metadata.get("url") or metadata.get("source_url") or (
+                    ("https://" + metadata["display_url"])
+                    if metadata.get("display_url") and not str(metadata["display_url"]).startswith("http")
+                    else metadata.get("display_url")
+                ) or None,
                 human_title=metadata.get("human_title"),
                 display_url=metadata.get("display_url"),
                 source_year=metadata.get("source_year"),
