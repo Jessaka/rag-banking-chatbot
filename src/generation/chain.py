@@ -1320,18 +1320,12 @@ def _format_account_overview_answer(docs: list[Document]) -> str | None:
         source = "rb.cz"
 
     return (
-        "Raiffeisenbank nabízí tyto osobní běžné účty:\n\n"
-        "**CHYTRÝ účet** — 0 Kč (bezpodmínečně zdarma napořád)\n"
-        "- Výběry z bankomatů v ČR i zahraničí zdarma\n"
-        "- Okamžité platby 24/7 zdarma\n"
-        "- Akce: odměna 6× 500 Kč pro nové klienty\n\n"
-        "**AKTIVNÍ účet** — 49 Kč/měsíc\n"
-        "- Základní běžný účet s kartou a všemi standardními službami\n\n"
-        "**EXKLUZIVNÍ účet** — 299 Kč/měsíc\n"
-        "- Prémiový účet s prioritním servisem a dalšími výhodami\n\n"
-        "**Účet pro studenty a děti** — zdarma do 26 let\n"
-        "- Studentský účet a dětský účet bez měsíčního poplatku\n\n"
-        "Sjednání online do 10 minut: rb.cz/osobni/ucty/bezne-ucty\n\n"
+        "Raiffeisenbank nabízí tyto osobní běžné účty:\n"
+        "- CHYTRÝ účet: 0 Kč měsíčně — vedení, výběry, platby zdarma\n"
+        "- AKTIVNÍ účet: 49 Kč měsíčně — dvě karty, Multiměna, povolený debet\n"
+        "- EXKLUZIVNÍ účet: 299 Kč měsíčně — zlaté karty, cestovní pojištění 10M Kč, letištní salonky\n"
+        "- Studentský/dětský účet: zdarma do 26 let\n\n"
+        "Více: https://www.rb.cz/osobni/ucty/bezne-ucty\n\n"
         f"Zdroj: {source}"
     )
 
