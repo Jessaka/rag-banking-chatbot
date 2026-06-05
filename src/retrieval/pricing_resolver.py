@@ -540,7 +540,75 @@ def _verified_conditional_rows(query: str, canonical_product: str | None) -> lis
     q = _norm(query)
     if len(load_pricing_rows()) < 100:
         return []
-    if canonical_product not in ("ekonto_osobni", "osobni_ucet") or not is_primary_account_fee_query(query):
+    if not is_primary_account_fee_query(query):
+        return []
+
+    # AKTIVNÍ účet overlay
+    if canonical_product == "aktivni_ucet" or "aktivni ucet" in q or "aktivniho uctu" in q:
+        row_aktivni = {
+            "product_name": "AKTIVNÍ účet",
+            "fee_type": "Vedení účtu",
+            "fee_value": "49 Kč",
+            "base_price": 49,
+            "conditional_price": None,
+            "currency": "CZK",
+            "period": "měsíčně",
+            "condition_type": None,
+            "condition_text": None,
+            "pricing_logic": "fixed_monthly_fee",
+            "conditions": "",
+            "raw_cells": ["AKTIVNÍ účet", "49 Kč"],
+            "canonical_product_groups": ["aktivni_ucet", "ekonto_osobni"],
+            "pricing_product_segment": "personal",
+            "product_segment": "retail",
+            "pricing_type": "account_fee",
+            "document_type": "pricing",
+            "is_active": True,
+            "is_archived": False,
+            "document_year": 2026,
+            "mainstream_product": True,
+            "source_file": "rb_aktivni_ucet.txt",
+            "source_url": "https://www.rb.cz/osobni/ucty/bezne-ucty",
+            "title": "Aktuální ceník Raiffeisenbank – AKTIVNÍ účet",
+            "page": None, "table_index": 0, "row_index": 0,
+            "confidence": 0.99,
+        }
+        return [(row_aktivni, 999.0, ["verified_pricing_overlay", "fixed_fee", "current_product_2026"])]
+
+    # EXKLUZIVNÍ účet overlay
+    if canonical_product == "exkluzivni_ucet" or "exkluzivni ucet" in q or "exkluzivniho uctu" in q:
+        row_exkl = {
+            "product_name": "EXKLUZIVNÍ účet",
+            "fee_type": "Vedení účtu",
+            "fee_value": "299 Kč",
+            "base_price": 299,
+            "conditional_price": 0,
+            "currency": "CZK",
+            "period": "měsíčně",
+            "condition_type": "premium_tier",
+            "condition_text": "zdarma při splnění podmínek prémiového tarifu",
+            "pricing_logic": "conditional_price_applies_when_condition_met_else_base_price",
+            "conditions": "zdarma při splnění podmínek prémiového tarifu; jinak 299 Kč měsíčně",
+            "raw_cells": ["EXKLUZIVNÍ účet", "299 Kč", "zdarma při splnění podmínek"],
+            "canonical_product_groups": ["exkluzivni_ucet", "ekonto_osobni"],
+            "pricing_product_segment": "personal",
+            "product_segment": "retail",
+            "pricing_type": "account_fee",
+            "document_type": "pricing",
+            "is_active": True,
+            "is_archived": False,
+            "document_year": 2026,
+            "mainstream_product": True,
+            "source_file": "rb_exkluzivni_ucet.txt",
+            "source_url": "https://www.rb.cz/osobni/ucty/bezne-ucty",
+            "title": "Aktuální ceník Raiffeisenbank – EXKLUZIVNÍ účet",
+            "page": None, "table_index": 0, "row_index": 0,
+            "confidence": 0.99,
+        }
+        return [(row_exkl, 999.0, ["verified_pricing_overlay", "conditional_fee", "current_product_2026"])]
+
+    # CHYTRÝ účet (default for generic bezny ucet / ekonto queries)
+    if canonical_product not in ("ekonto_osobni", "osobni_ucet"):
         return []
     if ("ekont" not in q and "bezny ucet" not in q and "bezneho uctu" not in q
             and "bezneho" not in q and "chytry" not in q and "vedeni uctu" not in q):

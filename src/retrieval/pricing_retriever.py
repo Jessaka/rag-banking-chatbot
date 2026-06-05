@@ -130,6 +130,8 @@ _QUERY_PRODUCT_SYNONYMS: dict[str, tuple[str, ...]] = {
     "sepa_swift": ("sepa", "swift", "zahranicni platba", "zahranicni platby", "eur platba"),
     "apple_google_pay": ("apple pay", "google pay", "mobilni platby", "placeni mobilem"),
     "osobni_ucet": ("bezny ucet", "bezneho uctu", "bezneho ucetu", "osobni ucet", "soukromy ucet", "ucet pro osobni pouziti"),
+    "aktivni_ucet": ("aktivni ucet", "aktivniho uctu", "aktivni bezny ucet", "aktivniho bezneho uctu"),
+    "exkluzivni_ucet": ("exkluzivni ucet", "exkluzivniho uctu", "exkluzivni bezny ucet", "exkluzivni konto"),
     "basic_payment_account": ("zakladni platebni ucet", "zakladniho platebniho uctu", "social ucet", "chraneny ucet"),
 }
 
