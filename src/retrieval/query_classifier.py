@@ -640,6 +640,10 @@ def classify_query(query: str) -> QueryProfile:
             rerank_min_score = -6.0
             hybrid_top_k = 20
     # Loans/investing/savings/security/online_services threshold mimo catalog_intent blok
+    if "mortgages" in labels and rerank_min_score > -3.0:
+        rerank_min_score = -3.0
+        if hybrid_top_k < 20:
+            hybrid_top_k = 20
     if "online_services" in labels and rerank_min_score > -6.0:
         rerank_min_score = -6.0
         if hybrid_top_k < 20:
