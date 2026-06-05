@@ -48,6 +48,14 @@ ACCOUNT_OVERVIEW_TERMS = (
     "typy účtů", "typy uctu", "druhy účtů", "druhy uctu",
     "jaký typ účtu", "jaky typ uctu",
 )
+ACCOUNT_FEE_TERMS = (
+    "poplatek za vedení účtu", "poplatek za vedeni uctu",
+    "poplatky za vedení účtu", "poplatky za vedeni uctu",
+    "poplatek za vedení běžného", "poplatek za vedeni bezneho",
+    "kolik stojí vedení účtu", "kolik stoji vedeni uctu",
+    "kolik stojí běžný účet", "kolik stoji bezny ucet",
+    "cena vedení účtu", "cena vedeni uctu",
+)
 MORTGAGE_OVERVIEW_TERMS = (
     "jaké hypotéky", "jake hypoteky", "jaké máte hypotéky", "jake mate hypoteky",
     "jaké jsou hypotéky", "jake jsou hypoteky", "hypotéky nabízíte", "hypoteky nabizite",
@@ -263,7 +271,7 @@ def classify_query(query: str) -> QueryProfile:
         labels.discard("card_overview")    # credit_card_catalog má vyšší prioritu v chain.py
 
     # --- General supported product overview detection ---
-    has_account_overview = has_catalog_intent and any(k in q for k in ACCOUNT_OVERVIEW_TERMS)
+    has_account_overview = (has_catalog_intent and any(k in q for k in ACCOUNT_OVERVIEW_TERMS)) or any(k in q for k in ACCOUNT_FEE_TERMS)
     has_mortgage_overview = has_catalog_intent and any(k in q for k in MORTGAGE_OVERVIEW_TERMS)
     has_investment_overview = has_catalog_intent and any(k in q for k in INVESTMENT_OVERVIEW_TERMS)
     has_payment_overview = has_catalog_intent and any(k in q for k in PAYMENT_OVERVIEW_TERMS)
