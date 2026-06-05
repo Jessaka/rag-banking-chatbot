@@ -160,6 +160,7 @@ SOFT_GUIDANCE_FAQ_PATTERNS = (
     (re.compile(r"hypot[\s\w]*pron[aá]jem|pron[aá]jem[\s\w]*hypot", re.I), "hypoteka_pronajem"),
     (re.compile(r"rekop[ůu]j[čc]k|p[ůu]j[čc]k[\s\w]*rekonstrukc|rekonstrukc[\s\w]*p[ůu]j[čc]k", re.I), "hypoteka_rekopujcka"),
     (re.compile(r"refinancov[\s\w]*hypot|hypot[\s\w]*refinancov", re.I), "hypoteka_refinancovani"),
+    (re.compile(r"[úu]rokov[aá][\s\w]{0,15}sazba[\s\w]{0,15}hypot|sazba[\s\w]{0,15}hypot|hypot[\s\w]{0,15}sazba|hypote[čc]n[íi][\s\w]{0,15}sazb|[úu]rok[\s\w]{0,15}hypot", re.I), "hypoteka_sazby"),
     # Konkrétní produkty — spoření
     (re.compile(r"termínovan[ýéaý][\s\w]*vklad|vklad[\s\w]*termínovan", re.I), "sporeni_terminovany_vklad"),
     (re.compile(r"stavební[\s\w]*spořen|spořen[\s\w]*stavební|stavební[\s\w]*sporitel", re.I), "sporeni_stavebni"),
@@ -548,6 +549,14 @@ SOFT_GUIDANCE_ANSWERS: dict[str, str] = {
         "Výhody: nižší úroková sazba, lepší podmínky, možnost navýšení úvěru.\n"
         "Doporučená doba: ke konci fixačního období u stávající banky.\n\n"
         "Více informací: https://www.rb.cz/osobni/hypoteky/sluzby-k-hypotekam/refinancovani-hypoteky"
+    ),
+    "hypoteka_sazby": (
+        "Úrokové sazby hypoték Raiffeisenbank závisí na typu hypotéky, výši úvěru a době fixace.\n\n"
+        "Aktuální sazby zjistíte:\n"
+        "- Online kalkulačka: https://www.rb.cz/osobni/hypoteky/hypotecni-kalkulacka\n"
+        "- Telefonicky: 800 900 900\n"
+        "- Na pobočce: https://www.rb.cz/o-nas/kontakty/pobocky-a-bankomaty\n\n"
+        "Orientačně: sazby se odvíjí od sazby PRIBOR + marže banky."
     ),
     # Investice — konkrétní produkty
     "investice_pravidelne": (
