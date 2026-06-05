@@ -595,11 +595,13 @@ SOFT_GUIDANCE_ANSWERS: dict[str, str] = {
     ),
     # Spoření — konkrétní produkty
     "sporeni_terminovany_vklad": (
-        "Termínovaný vklad nabízí pevnou úrokovou sazbu na dobu určitou.\n\n"
-        "Výhody: garantovaný výnos, bez rizika poklesu sazby.\n"
-        "Omezení: peníze jsou uloženy na pevnou dobu (nelze vybrat předčasně bez sankce).\n"
-        "Vhodné pro: konzervativní spoření s definovaným horizontem.\n\n"
-        "Více informací: https://www.rb.cz/osobni/zhodnoceni-uspor/sporeni/terminovany-vklad"
+        "Termínovaný vklad Raiffeisenbank:\n\n"
+        "- Sazba až 2,15 % p.a. (na 1 měsíc, do 30 mil. Kč)\n"
+        "- Minimální vklad: 10 000 Kč\n"
+        "- Měny: CZK, EUR, USD\n"
+        "- Výběr až 20 % vkladu zdarma před splatností\n"
+        "- Pevná sazba po celou dobu vkladu\n\n"
+        "Více: https://www.rb.cz/osobni/zhodnoceni-uspor/sporeni/terminovany-vklad"
     ),
     "sporeni_stavebni": (
         "Stavební spoření Raiffeisenbank (Raiffeisen stavební spořitelna):\n\n"
