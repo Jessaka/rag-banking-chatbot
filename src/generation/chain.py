@@ -136,6 +136,7 @@ PROCEDURAL_FLOW_PATTERNS = (
 # domain is supported and the risk is low.
 SOFT_GUIDANCE_FAQ_PATTERNS = (
     (re.compile(r"raia|asistentka\s+raia|co\s+(je|umí|umi|dělá|dela)\s+raia", re.I), "raia_info"),
+    (re.compile(r"mobiln[íi][\s\w]{0,15}aplikac|aplikac[\s\w]{0,10}rb\b|mobiln[íi][\s\w]{0,15}bankovnictv|sta[žz]en[íi][\s\w]{0,15}aplikac|ekonto[\s\w]{0,10}mobil|rb[\s\w]{0,5}appk|jak[\s\w]{0,15}aplikac[ei]", re.I), "mobilni_aplikace"),
     (re.compile(r"(co\s+(je|to\s+je)|jak\s+funguje).*(apple\s*pay|google\s*pay|plac[eě]n[íi]\s+mobilem|plac[eě]n[íi]\s+hodinkami)", re.I), "apple_google_pay"),
     (re.compile(r"(jak\s+)?funguje\s+(plateb|kart|limit|v[ýy]b[eě]r|mobil)", re.I), "card_how_it_works"),
     (re.compile(r"(co\s+)?je\s+(to\s+)?(kredit|debet|limit|disponibil|z[ůu]statek)", re.I), "card_what_is"),
@@ -557,6 +558,16 @@ SOFT_GUIDANCE_ANSWERS: dict[str, str] = {
         "- Telefonicky: 800 900 900\n"
         "- Na pobočce: https://www.rb.cz/o-nas/kontakty/pobocky-a-bankomaty\n\n"
         "Orientačně: sazby se odvíjí od sazby PRIBOR + marže banky."
+    ),
+    "mobilni_aplikace": (
+        "Mobilní aplikace Raiffeisenbank:\n"
+        "- Dostupná pro iOS (App Store) a Android (Google Play)\n"
+        "- Funkce: správa účtů, platby, převody, dobíjení, investice\n"
+        "- Přihlášení: PIN, otisk prstu nebo Face ID\n"
+        "- Notifikace o transakcích v reálném čase\n"
+        "- Správa karet: blokace, limity, Apple Pay / Google Pay\n"
+        "- Sjednání produktů přímo v aplikaci\n\n"
+        "Stažení: https://www.rb.cz/osobni/ucty/sluzby-k-uctum/mobilni-bankovnictvi"
     ),
     # Investice — konkrétní produkty
     "investice_pravidelne": (
