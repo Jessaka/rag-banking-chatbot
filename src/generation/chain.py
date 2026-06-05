@@ -174,6 +174,8 @@ SOFT_GUIDANCE_FAQ_PATTERNS = (
     (re.compile(r"chytr[ýéaý][\s\w]*účet|bezn[ýéaý][\s\w]*účet[\s\w]*zdarma|účet[\s\w]*zdarma[\s\w]*bez\s*podmínek", re.I), "ucet_chytry"),
     (re.compile(r"dětský[\s\w]*účet|účet[\s\w]*dět|účet[\s\w]*dítě", re.I), "ucet_detsky"),
     (re.compile(r"studentský[\s\w]*účet|účet[\s\w]*student", re.I), "ucet_studentsky"),
+    # Založení účtu online
+    (re.compile(r"jak[\s\w]{0,15}založ\w*[\s\w]{0,10}(?:účet|ucet)|založ\w*[\s\w]{0,10}(?:účet|ucet)|zalo[žz]\w*[\s\w]{0,10}(?:účet|ucet)|otevř\w*[\s\w]{0,10}(?:účet|ucet)|zřídit[\s\w]{0,10}(?:účet|ucet)|chci[\s\w]{0,10}(?:si\s+)?(?:nový\s+)?(?:účet|ucet)", re.I), "ucet_zalozeni_online"),
 )
 
 
@@ -691,6 +693,16 @@ SOFT_GUIDANCE_ANSWERS: dict[str, str] = {
         "Výhody: vedení zdarma, výhodné podmínky pro studenty.\n"
         "Podmínka: prokázání studia na střední nebo vysoké škole.\n\n"
         "Více informací: https://www.rb.cz/osobni/ucty/bezne-ucty/student/studentsky-ucet"
+    ),
+    "ucet_zalozeni_online": (
+        "Účet Raiffeisenbank lze založit online za několik minut:\n\n"
+        "1. Jděte na https://www.rb.cz/osobni/ucty/bezne-ucty\n"
+        "2. Vyberte účet (CHYTRÝ, AKTIVNÍ nebo EXKLUZIVNÍ)\n"
+        "3. Klikněte na 'Založit online'\n"
+        "4. Vyplňte osobní údaje a nahrajte doklad totožnosti\n"
+        "5. Podepište smlouvu elektronicky\n\n"
+        "Účet je aktivní obvykle do 24 hodin.\n"
+        "Více: https://www.rb.cz/osobni/ucty/bezne-ucty"
     ),
     "catalog_sporeni": (
         "Raiffeisenbank nabízí tyto spořicí produkty:\n\n"
