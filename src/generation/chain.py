@@ -2944,9 +2944,18 @@ class BankingRAGChain:
                 total_ms = (time.perf_counter() - t_ask) * 1000
                 ux = _ux_meta("medium", "supported account overview route with safe overview")
                 logger.info("Answer strategy: account_overview_direct (LLM skipped)")
+                _account_overview_source = Document(
+                    page_content="",
+                    metadata={
+                        "source_url": "https://www.rb.cz/osobni/ucty/bezne-ucty",
+                        "title": "Běžné účty Raiffeisenbank",
+                        "human_title": "Běžné účty Raiffeisenbank",
+                        "document_type": "product_page",
+                    },
+                )
                 return {
                     "answer": overview_answer,
-                    "sources": source_docs,
+                    "sources": [_account_overview_source],
                     "rewritten_query": retrieval_query,
                     "answer_strategy": "account_overview_direct",
                     "answer_confidence": "medium",
