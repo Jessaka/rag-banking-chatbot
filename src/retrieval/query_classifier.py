@@ -656,6 +656,10 @@ def classify_query(query: str) -> QueryProfile:
         rerank_min_score = -4.0
         if hybrid_top_k < 20:
             hybrid_top_k = 20
+    if ("personal_retail_account" in labels or "retail_banking" in labels) and rerank_min_score > -3.0:
+        rerank_min_score = -3.0
+        if hybrid_top_k < 20:
+            hybrid_top_k = 20
     # ---------------------------------------------------------------------
     # Vytvoření a vrácení QueryProfile (původní chování)
     # ---------------------------------------------------------------------
