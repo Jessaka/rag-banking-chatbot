@@ -177,6 +177,8 @@ SOFT_GUIDANCE_FAQ_PATTERNS = (
     (re.compile(r"chytr[ýéaý][\s\w]*účet|bezn[ýéaý][\s\w]*účet[\s\w]*zdarma|účet[\s\w]*zdarma[\s\w]*bez\s*podmínek", re.I), "ucet_chytry"),
     (re.compile(r"dětský[\s\w]*účet|účet[\s\w]*dět|účet[\s\w]*dítě", re.I), "ucet_detsky"),
     (re.compile(r"studentský[\s\w]*účet|účet[\s\w]*student", re.I), "ucet_studentsky"),
+    # Odměna / akce za založení účtu
+    (re.compile(r"odměn[au]\b[\s\w]{0,20}\b[uú][cč]\w+|\bbonus\b[\s\w]{0,15}\b[uú][cč]\w+|akc[ei]\b[\s\w]{0,15}\b[uú][cč]\w+|cashback[\s\w]{0,15}\b[uú][cč]\w+|\b500[\s\w]{0,10}(?:kč|korun)[\s\w]{0,10}\b[uú][cč]\w+|\b[uú][cč]\w+[\s\w]{0,15}odměn|\b[uú][cč]\w+[\s\w]{0,10}\bbonus\w*", re.I), "ucet_odmena_akce"),
     # Založení účtu online
     (re.compile(r"jak[\s\w]{0,15}založ\w*[\s\w]{0,10}(?:účet|ucet)|založ\w*[\s\w]{0,10}(?:účet|ucet)|zalo[žz]\w*[\s\w]{0,10}(?:účet|ucet)|otevř\w*[\s\w]{0,10}(?:účet|ucet)|zřídit[\s\w]{0,10}(?:účet|ucet)|chci[\s\w]{0,10}(?:si\s+)?(?:nový\s+)?(?:účet|ucet)", re.I), "ucet_zalozeni_online"),
 )
@@ -721,6 +723,13 @@ SOFT_GUIDANCE_ANSWERS: dict[str, str] = {
         "Výhody: vedení zdarma, výhodné podmínky pro studenty.\n"
         "Podmínka: prokázání studia na střední nebo vysoké škole.\n\n"
         "Více informací: https://www.rb.cz/osobni/ucty/bezne-ucty/student/studentsky-ucet"
+    ),
+    "ucet_odmena_akce": (
+        "Aktuální akce Raiffeisenbank pro nové klienty:\n"
+        "- Odměna 6× 500 Kč (celkem 3 000 Kč) při založení osobního účtu\n"
+        "- Podmínka: aktivní využívání účtu po dobu 6 měsíců\n"
+        "- Navíc soutěž o iPhone 17 Pro nebo Samsung Galaxy S26 Ultra\n\n"
+        "Více: https://www.rb.cz/osobni/ucty/bezne-ucty"
     ),
     "ucet_zalozeni_online": (
         "Účet Raiffeisenbank lze založit online za několik minut:\n\n"
