@@ -39,8 +39,9 @@ SEED_BATCHES = [
     ['https://www.rb.cz/osobni/hypoteky'],
     # 3: Účty - všechny typy
     ['https://www.rb.cz/osobni/ucty'],
-    # 4: Kreditní karty
-    ['https://www.rb.cz/osobni/kreditni-karty'],
+    # 4: Kreditní karty + debetní karty
+    ['https://www.rb.cz/osobni/kreditni-karty',
+     'https://www.rb.cz/osobni/ucty/sluzby-k-uctum/platebni-karty'],
     # 5: Půjčky
     ['https://www.rb.cz/osobni/pujcky'],
     # 6: Online služby
@@ -67,7 +68,8 @@ SKIP = [
     'aktuality-201', 'aktuality-202',
 ]
 
-OUT_DIR = pathlib.Path('/app/data/raw')
+import os
+OUT_DIR = pathlib.Path(os.environ.get('OUT_DIR', str(pathlib.Path(__file__).parent.parent / 'data' / 'raw')))
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # No page limit — crawl all pages in the batch
