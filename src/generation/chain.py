@@ -119,7 +119,7 @@ GUIDED_FLOW_PATTERNS = (
 # --- Priority 3: Procedural flow patterns ---
 # These run before retrieval (like guided flows) for deterministic how-to answers.
 PROCEDURAL_FLOW_PATTERNS = (
-    (re.compile(r"(jak\s+)?(aktiv[uo]j|aktivovat|zapnout|zapni|zač[íi]t\s+pou[žz][íi]v[aá]t).*(kart\w*|plateb)", re.I), "activation_flow"),
+    (re.compile(r"(jak\s+)?(aktiv[uo]j|aktivovat|aktivac[ei]\w*|zapnout|zapni|zač[íi]t\s+pou[žz][íi]v[aá]t).*(kart\w*|plateb)|(kart\w*|plateb)[\s\w]{0,20}aktivac[ei]\w*", re.I), "activation_flow"),
     (re.compile(r"(jak\s+)?(zv[ýy][šs][íi][mtš]|zv[ýy][šs]it|nav[ýy][šs][íi][mtš]|nav[ýy][šs]it|sn[íi][žz][íi][mtš]|sn[íi][žz]it).*(limit|kart|v[ýy]b[eě]r)", re.I), "card_limit_flow"),
     (re.compile(r"(jak\s+)?(zm[eě]n[íi]t|zm[eě]n[aá]|nastav[íi]t|nastavit).*(limit).*(kart\w*)?|(jak\s+)?limit.*(zm[eě]n[íi]t|nastavit)", re.I), "card_limit_flow"),
     (re.compile(r"(jak\s+)?(p[řr]idat|nahr[aá]t|m[íi]t).*(kart).*(mobil|apple|google|watch|hodink)", re.I), "mobile_wallet_flow"),
