@@ -254,7 +254,7 @@ def classify_query(query: str) -> QueryProfile:
     has_credit_card_term = any(k in q for k in CREDIT_CARD_TERMS)
     has_card_overview_term = any(k in q for k in CARD_OVERVIEW_TERMS)
 
-    if any(k in q for k in ("karta", "karty", "karet", "kartou", "kartě", "kartám", "platební", "platebni", "limit karty", "kreditní", "kreditni", "kreditka", "kreditku", "kreditky", "kreditek", "debetní", "debetni", "výběr", "bankomat", "credit card")):
+    if any(k in q for k in ("karta", "karty", "karet", "kartou", "kartě", "kartám", "kartu", "kartě", "pin", "platební", "platebni", "limit karty", "kreditní", "kreditni", "kreditka", "kreditku", "kreditky", "kreditek", "debetní", "debetni", "výběr", "bankomat", "credit card", "zablok", "blokac", "blokova")):
         labels.add("cards")
     if has_credit_card_term:
         labels.add("credit_card")
@@ -445,7 +445,7 @@ def classify_query(query: str) -> QueryProfile:
     preferred_doc_types: list[str] = []
     bm25_weight = 0.4
     vector_weight = 0.6
-    rerank_min_score = 0.0
+    rerank_min_score = -2.0
     hybrid_top_k = 0
 
     if "pricing" in labels:
@@ -453,18 +453,16 @@ def classify_query(query: str) -> QueryProfile:
         vector_weight = 0.35
         preferred_doc_types.append("pricing")
         preferred_chunk_types.extend(["pricing_row", "pricing", "table", "pdf_table"])
-        rerank_min_score = 0.0
+        rerank_min_score = -2.0
     if "support" in labels and "pricing" not in labels:
         bm25_weight = 0.3
         vector_weight = 0.7
         preferred_chunk_types.append("faq")
-        rerank_min_score = -1.0
     if "faq" in labels and "pricing" not in labels:
         bm25_weight = min(bm25_weight, 0.35)
         vector_weight = max(vector_weight, 0.65)
         preferred_chunk_types.extend(["faq", "html", "text"])
         preferred_categories.extend(["faq", "support"])
-        rerank_min_score = -1.0
     if "complaints" in labels:
         preferred_urls.extend(["reklamace", "stiznosti", "formulare"])
         preferred_categories.extend(["support", "complaints"])
@@ -657,6 +655,10 @@ def classify_query(query: str) -> QueryProfile:
         if hybrid_top_k < 20:
             hybrid_top_k = 20
     if ("personal_retail_account" in labels or "retail_banking" in labels) and rerank_min_score > -3.0:
+        rerank_min_score = -3.0
+        if hybrid_top_k < 20:
+            hybrid_top_k = 20
+    if any(label in labels for label in ("cards", "credit_card", "wallets", "complaints", "sepa_swift", "rb_key")) and rerank_min_score > -3.0:
         rerank_min_score = -3.0
         if hybrid_top_k < 20:
             hybrid_top_k = 20
