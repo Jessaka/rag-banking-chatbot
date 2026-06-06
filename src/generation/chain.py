@@ -2456,19 +2456,19 @@ class BankingRAGChain:
                 **ux,
                 "timing_ms": {"retrieval": 0, "total": round(total_ms), "llm": 0},
             }
-        elif (catalog_intent := _soft_guidance_intent(question)) and catalog_intent.startswith("catalog_") and _soft_guidance_answer(catalog_intent):
-            catalog_answer = _soft_guidance_answer(catalog_intent)
+        elif (soft_intent_pre := _soft_guidance_intent(question)) and _soft_guidance_answer(soft_intent_pre):
+            soft_answer_pre = _soft_guidance_answer(soft_intent_pre)
             total_ms = (time.perf_counter() - t_ask) * 1000
-            ux = _ux_meta("medium", f"catalog soft guidance for {catalog_intent}", confidence_factors={"soft_guidance_used": True})
-            logger.info(f"Answer strategy: soft_guidance_direct ({catalog_intent}, pre-retrieval catalog)")
+            ux = _ux_meta("medium", f"soft guidance for {soft_intent_pre}", confidence_factors={"soft_guidance_used": True})
+            logger.info(f"Answer strategy: soft_guidance_direct ({soft_intent_pre}, pre-retrieval)")
             return {
-                "answer": catalog_answer,
+                "answer": soft_answer_pre,
                 "sources": [],
                 "rewritten_query": question,
                 "retrieval_debug": _debug_with_ux([{
                     "retrieval_route": "soft_guidance",
                     "retrieval_skipped": True,
-                    "soft_guidance_intent": catalog_intent,
+                    "soft_guidance_intent": soft_intent_pre,
                 }], ux),
                 "answer_strategy": "soft_guidance_direct",
                 "answer_confidence": "medium",
