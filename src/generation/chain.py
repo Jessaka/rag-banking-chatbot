@@ -175,6 +175,7 @@ SOFT_GUIDANCE_FAQ_PATTERNS = (
     (re.compile(r"životní[\s\w]*pojist|pojist[\s\w]*život", re.I), "pojisteni_zivotni"),
     (re.compile(r"majetkov[éé][\s\w]*pojist|pojist[\s\w]*majetek|pojist[\s\w]*majetkov", re.I), "pojisteni_majetkove"),
     # Konkrétní produkty — účty
+    (re.compile(r"rozd[íi]l[\s\w]{0,20}\b[uú][cč](?:et|t)\w*|porovn\w*[\s\w]{0,15}\b[uú][cč](?:et|t)\w*|kter[ýýaé]\w*[\s\w]{0,20}\b[uú][cč](?:et|t)\w*[\s\w]{0,20}(?:vybrat|vhodn|lep[sš]|doporu[cč])|jak[ýé]\w*[\s\w]{0,15}\b[uú][cč](?:et|t)\w*[\s\w]{0,15}(?:vybrat|vhodn|doporu[cč]|zvolit)|chytr[ýéaů]\w*[\s\w]{0,15}aktiv[ní]\w*|aktiv[ní]\w*[\s\w]{0,15}chytr[ýéaů]\w*|chytr[ýéaů]\w*[\s\w]{0,15}exkluziv|lep[sš][íi]\w*[\s\w]{0,20}\b[uú][cč](?:et|t)\w*|\bdoporu[cč]\w*[\s\w]{0,20}\b[uú][cč](?:et|t)\w*|\b[uú][cč](?:et|t)\w*[\s\w]{0,20}doporu[cč]", re.I), "ucet_srovnani"),
     (re.compile(r"chytr[ýéaý][\s\w]*účet|bezn[ýéaý][\s\w]*účet[\s\w]*zdarma|účet[\s\w]*zdarma[\s\w]*bez\s*podmínek", re.I), "ucet_chytry"),
     (re.compile(r"dětský[\s\w]*účet|účet[\s\w]*dět|účet[\s\w]*dítě", re.I), "ucet_detsky"),
     (re.compile(r"studentský[\s\w]*účet|účet[\s\w]*student", re.I), "ucet_studentsky"),
@@ -740,6 +741,22 @@ SOFT_GUIDANCE_ANSWERS: dict[str, str] = {
         "4. Vyplňte osobní údaje a nahrajte doklad totožnosti\n"
         "5. Podepište smlouvu elektronicky\n\n"
         "Účet je aktivní obvykle do 24 hodin.\n"
+        "Více: https://www.rb.cz/osobni/ucty/bezne-ucty"
+    ),
+    "ucet_srovnani": (
+        "Srovnání osobních účtů Raiffeisenbank:\n\n"
+        "**CHYTRÝ účet** (0 Kč/měsíc):\n"
+        "- Vedení účtu, výběry z bankomatů RB, platby zdarma\n"
+        "- Jedna debetní karta zdarma\n"
+        "- Ideální pro: jednoduché digitální bankovnictví\n\n"
+        "**AKTIVNÍ účet** (49 Kč/měsíc):\n"
+        "- Dvě karty, Multiměna, povolený debet\n"
+        "- Výběry z cizích bankomatů 2× měsíčně zdarma\n"
+        "- Ideální pro: cestování, více výhod\n\n"
+        "**EXKLUZIVNÍ účet** (299 Kč/měsíc):\n"
+        "- Zlaté karty, cestovní pojištění 10M Kč, letištní salonky\n"
+        "- Výběry ze všech bankomatů zdarma\n"
+        "- Ideální pro: prémiové služby, časté cestování\n\n"
         "Více: https://www.rb.cz/osobni/ucty/bezne-ucty"
     ),
     "catalog_sporeni": (
