@@ -138,6 +138,7 @@ SOFT_GUIDANCE_FAQ_PATTERNS = (
     (re.compile(r"raia|asistentka\s+raia|co\s+(je|umí|umi|dělá|dela)\s+raia", re.I), "raia_info"),
     (re.compile(r"mobiln[íi][\s\w]{0,15}aplikac|aplikac[\s\w]{0,10}rb\b|mobiln[íi][\s\w]{0,15}bankovnictv|sta[žz]en[íi][\s\w]{0,15}aplikac|ekonto[\s\w]{0,10}mobil|rb[\s\w]{0,5}appk|jak[\s\w]{0,15}aplikac[ei]", re.I), "mobilni_aplikace"),
     (re.compile(r"(co\s+(je|to\s+je)|jak\s+funguje).*(apple\s*pay|google\s*pay|plac[eě]n[íi]\s+mobilem|plac[eě]n[íi]\s+hodinkami)", re.I), "apple_google_pay"),
+    (re.compile(r"limit\w*\s+(?:karet|kar[taeoůám]\w*)|limit\w*[\s\w]{0,20}(?:platb\w*|v[ýy]b[eě]r)|(?:jak[éý]\w*|jak\s+vysoké?\w*|kolik|výše?)[\s\w]{0,15}limit\w*[\s\w]{0,15}kar\w+|limit\w*[\s\w]{0,10}(?:debetní|kreditní|platební)", re.I), "karta_limity_info"),
     (re.compile(r"(jak\s+)?funguje\s+(plateb|kart|limit|v[ýy]b[eě]r|mobil)", re.I), "card_how_it_works"),
     (re.compile(r"(co\s+)?je\s+(to\s+)?(kredit|debet|limit|disponibil|z[ůu]statek)", re.I), "card_what_is"),
     (re.compile(r"(jak\s+)?(m[ůu][žz]u|mohu|lze|jde)\s+(pou[žz][íi]t|platit|v[ýy]brat)", re.I), "card_usage_can_i"),
@@ -834,6 +835,16 @@ SOFT_GUIDANCE_ANSWERS: dict[str, str] = {
         "- Zobrazovat osobní údaje nebo zustatky (napr. 'za co jste mi strhli 19 Kc')\n"
         "- Zpracovat více dotazů najednou nebo příliš dlouhé otázky\n\n"
         "Více informací: https://www.rb.cz/informacni-servis/asistentka-raia"
+    ),
+    "karta_limity_info": (
+        "Platební limity karet Raiffeisenbank:\n\n"
+        "- **Debetní karta**: výchozí limity jsou nastaveny individuálně podle typu účtu.\n"
+        "- **Kreditní karta**: limit čerpání je stanoven při schválení karty (úvěrový rámec).\n"
+        "- Existují **oddělené limity** pro bezhotovostní platby a výběry z bankomatů.\n"
+        "- Aktuální limit vidíte v internetovém nebo mobilním bankovnictví.\n"
+        "- Limit lze změnit přímo v bankovnictví nebo na pobočce.\n\n"
+        "Přesné výchozí limity najdete v Sazebníku nebo Smlouvě o kartě: "
+        "https://www.rb.cz/osobni/karty"
     ),
     "card_how_it_works": (
         "Platební karta funguje tak, že umožňuje bezhotovostní platby "

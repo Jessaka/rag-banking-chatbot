@@ -254,7 +254,7 @@ def classify_query(query: str) -> QueryProfile:
     has_credit_card_term = any(k in q for k in CREDIT_CARD_TERMS)
     has_card_overview_term = any(k in q for k in CARD_OVERVIEW_TERMS)
 
-    if any(k in q for k in ("karta", "karty", "karet", "platební", "platebni", "limit karty", "kreditní", "kreditni", "kreditka", "kreditku", "kreditky", "kreditek", "debetní", "debetni", "výběr", "bankomat", "credit card")):
+    if any(k in q for k in ("karta", "karty", "karet", "kartou", "kartě", "kartám", "platební", "platebni", "limit karty", "kreditní", "kreditni", "kreditka", "kreditku", "kreditky", "kreditek", "debetní", "debetni", "výběr", "bankomat", "credit card")):
         labels.add("cards")
     if has_credit_card_term:
         labels.add("credit_card")
