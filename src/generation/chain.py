@@ -119,7 +119,7 @@ GUIDED_FLOW_PATTERNS = (
 # --- Priority 3: Procedural flow patterns ---
 # These run before retrieval (like guided flows) for deterministic how-to answers.
 PROCEDURAL_FLOW_PATTERNS = (
-    (re.compile(r"(jak\s+)?(aktiv[uo]j|aktivovat|aktivac[ei]\w*|zapnout|zapni|zač[íi]t\s+pou[žz][íi]v[aá]t).*(kart\w*|plateb)|(kart\w*|plateb)[\s\w]{0,20}aktivac[ei]\w*", re.I), "activation_flow"),
+    (re.compile(r"(jak\s+)?(aktiv[uo]j|aktivovat|aktivac[ei]\w*|zapnout|zapni|zač[íi]t\s+pou[žz][íi]v[aá]t).*(kart\w*|plateb)|(kart\w*|plateb)[\s\w]{0,20}aktivac[ei]\w*|před[\s\w]{0,20}pou[žz]i\w*[\s\w]{0,10}kart|prvn[íi]\w*[\s\w]{0,10}pou[žz]i\w*|co[\s\w]{0,20}ud[eě]lat[\s\w]{0,20}kart|nová\s+karta\s+co|p[řr]i[šs]la[\s\w]{0,10}kart|dostal\w*[\s\w]{0,15}kart", re.I), "activation_flow"),
     (re.compile(r"(jak\s+)?(zv[ýy][šs][íi][mtš]|zv[ýy][šs]it|nav[ýy][šs][íi][mtš]|nav[ýy][šs]it|sn[íi][žz][íi][mtš]|sn[íi][žz]it).*(limit|kart|v[ýy]b[eě]r)", re.I), "card_limit_flow"),
     (re.compile(r"(jak\s+)?(zm[eě]n[íi]t|zm[eě]n[aá]|nastav[íi]t|nastavit).*(limit).*(kart\w*)?|(jak\s+)?limit.*(zm[eě]n[íi]t|nastavit)", re.I), "card_limit_flow"),
     (re.compile(r"(jak\s+)?(p[řr]idat|nahr[aá]t|m[íi]t).*(kart).*(mobil|apple|google|watch|hodink)", re.I), "mobile_wallet_flow"),
@@ -2467,6 +2467,24 @@ class BankingRAGChain:
                 **ux,
                 "timing_ms": {"retrieval": 0, "total": round(total_ms), "llm": 0},
             }
+        elif (raw_procedural_intent := _procedural_flow_intent(question)):
+            answer = _procedural_flow_answer(raw_procedural_intent)
+            total_ms = (time.perf_counter() - t_ask) * 1000
+            ux = _ux_meta("medium", f"deterministic procedural flow for {raw_procedural_intent}", confidence_factors={"authority_boost_used": True, "soft_guidance_used": True})
+            return {
+                "answer": answer,
+                "sources": [],
+                "rewritten_query": question,
+                "retrieval_debug": _debug_with_ux([{
+                    "retrieval_route": "procedural_flow",
+                    "retrieval_skipped": True,
+                    "procedural_flow": raw_procedural_intent,
+                }], ux),
+                "answer_strategy": "procedural_flow_direct",
+                "answer_confidence": "medium",
+                **ux,
+                "timing_ms": {"retrieval": 0, "total": round(total_ms), "llm": 0},
+            }
         elif (soft_intent_pre := _soft_guidance_intent(question)) and _soft_guidance_answer(soft_intent_pre):
             soft_answer_pre = _soft_guidance_answer(soft_intent_pre)
             total_ms = (time.perf_counter() - t_ask) * 1000
@@ -2500,24 +2518,6 @@ class BankingRAGChain:
                     "guided_flow": raw_guided_intent,
                 }], ux),
                 "answer_strategy": "guided_flow_direct",
-                "answer_confidence": "medium",
-                **ux,
-                "timing_ms": {"retrieval": 0, "total": round(total_ms), "llm": 0},
-            }
-        elif (raw_procedural_intent := _procedural_flow_intent(question)):
-            answer = _procedural_flow_answer(raw_procedural_intent)
-            total_ms = (time.perf_counter() - t_ask) * 1000
-            ux = _ux_meta("medium", f"deterministic procedural flow for {raw_procedural_intent}", confidence_factors={"authority_boost_used": True, "soft_guidance_used": True})
-            return {
-                "answer": answer,
-                "sources": [],
-                "rewritten_query": question,
-                "retrieval_debug": _debug_with_ux([{
-                    "retrieval_route": "procedural_flow",
-                    "retrieval_skipped": True,
-                    "procedural_flow": raw_procedural_intent,
-                }], ux),
-                "answer_strategy": "procedural_flow_direct",
                 "answer_confidence": "medium",
                 **ux,
                 "timing_ms": {"retrieval": 0, "total": round(total_ms), "llm": 0},
