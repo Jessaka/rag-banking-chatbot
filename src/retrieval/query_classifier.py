@@ -3,9 +3,43 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass, field
 
 from langchain_core.documents import Document
+
+
+_NORMALIZE_REPLACEMENTS: tuple[tuple[str, str], ...] = (
+    # Typo / anglické varianty → správná česká forma
+    ("ekskluziv", "exkluzivní"),
+    ("exclusive", "exkluzivní"),
+    ("exklusive", "exkluzivní"),
+    ("exkluzivni", "exkluzivní"),
+    ("aktivni", "aktivní"),
+    ("chytry", "chytrý"),
+    # Slovesné formy půjčit bez diakritiky → s diakritikou
+    ("pujcit", "půjčit"),
+    ("pujcka", "půjčka"),
+    ("pujcku", "půjčku"),
+    ("pujcim", "půjčím"),
+    # Další časté formy
+    ("hypoteka", "hypotéka"),
+    ("hypoteky", "hypotéky"),
+    ("sporeni", "spoření"),
+    ("sporic", "spořicí"),
+    ("pojisteni", "pojištění"),
+    ("reklamace", "reklamace"),
+    ("ucet", "účet"),
+)
+
+
+def normalize_query(text: str) -> str:
+    """Lowercase, strip a oprav časté varianty bez diakritiky."""
+    text = text.lower().strip()
+    for wrong, right in _NORMALIZE_REPLACEMENTS:
+        if wrong in text:
+            text = text.replace(wrong, right)
+    return text
 
 BUSINESS_ACCOUNT_TERMS = (
     "podnikatelské", "podnikatelský", "podnikatele", "podnikatel",
@@ -229,7 +263,7 @@ class QueryProfile:
 
 
 def classify_query(query: str) -> QueryProfile:
-    q = query.lower()
+    q = normalize_query(query)
     labels: set[str] = set()
     has_business_account_term = any(k in q for k in BUSINESS_ACCOUNT_TERMS)
 
