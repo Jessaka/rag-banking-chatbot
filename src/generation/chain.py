@@ -129,6 +129,7 @@ PROCEDURAL_FLOW_PATTERNS = (
     # Additional patterns for short/noisy queries
     (re.compile(r"karta\s+v\s+mobilu", re.I), "mobile_wallet_flow"),
     (re.compile(r"kart[au]\s+v\s+mobilu", re.I), "mobile_wallet_flow"),
+    (re.compile(r"(jak\s+)?(zobraz[íi][mt]?|zjist[íi][mt]?|na[íi]?d[ůu]?[mt]?|zapomn[eě]l\w*|zm[eě]n[íi][mt]?|nastav[íi][mt]?|reset\w*)[\s\w]{0,10}pin\b|pin\b[\s\w]{0,20}(zobraz|zjist|zm[eě]n|nastav|zapomn|reset)|\bpin\s+(ke\s+)?kart|kart\w*[\s\w]{0,10}\bpin\b", re.I), "pin_flow"),
 )
 
 # --- Priority 2: Soft guidance patterns ---
@@ -503,6 +504,21 @@ PROCEDURAL_FLOW_ANSWERS: dict[str, str] = {
         "- Virtuální karty a mobilní platby využívají stejnou značku.\n\n"
         "Obě značky jsou celosvětově akceptovány — Mastercard i Visa fungují "
         "v ČR i v zahraničí."
+    ),
+    "pin_flow": (
+        "PIN ke kartě Raiffeisenbank:\n\n"
+        "**Zobrazení PIN** (pokud ho neznáte nebo zapomenete):\n"
+        "- V mobilní aplikaci: Karty → Detaily ke kartě → PIN karty\n"
+        "- V internetovém bankovnictví: Karty → Zobrazit PIN\n\n"
+        "**Změna PIN:**\n"
+        "- PIN lze změnit na bankomatu Raiffeisenbank\n"
+        "- Zadejte starý PIN, poté zvolte nový\n\n"
+        "**Upozornění:**\n"
+        "- Nová karta má PIN přidělený automaticky — zobrazíte ho v aplikaci\n"
+        "- Obnovená karta zachovává původní PIN\n"
+        "- PIN nikdy nesdělujte nikomu, ani zaměstnancům banky\n"
+        "- Po 3 chybných zadáních PIN se karta zablokuje (obnoví se o půlnoci)\n\n"
+        "Zdroj: https://www.rb.cz/podpora/platebni-karty/pin-ke-karte"
     ),
 }
 
