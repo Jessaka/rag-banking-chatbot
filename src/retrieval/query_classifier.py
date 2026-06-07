@@ -377,7 +377,7 @@ def classify_query(query: str) -> QueryProfile:
         labels.add("banking_terms")
         labels.add("payments")
         labels.add("supported_domain")
-    if any(k in q for k in ("půjčk", "pujck", "úvěr", "uver", "kontokorent", "spotřebitelský", "spotrebitelsky", "refinancov", "rpsn")):
+    if any(k in q for k in ("půjčk", "pujck", "půjčit", "pujcit", "půjčím", "pujcim", "půjčí", "pujci", "si půjč", "si pujc", "úvěr", "uver", "kontokorent", "spotřebitelský", "spotrebitelsky", "refinancov", "rpsn")):
         labels.add("loans")
     if any(k in q for k in ("spoření", "sporeni", "spořicí", "sporici", "termínovaný vklad", "terminovany vklad", "stavební spoření", "stavebni sporeni", "úrok", "urok", "zhodnocení", "zhodnoceni", "vklad")):
         labels.add("savings")
