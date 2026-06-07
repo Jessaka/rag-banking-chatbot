@@ -183,7 +183,7 @@ SOFT_GUIDANCE_FAQ_PATTERNS = (
     # Odměna / akce za založení účtu
     (re.compile(r"odměn[au]\b[\s\w]{0,20}\b[uú][cč]\w+|\bbonus\b[\s\w]{0,15}\b[uú][cč]\w+|akc[ei]\b[\s\w]{0,15}\b[uú][cč]\w+|cashback[\s\w]{0,15}\b[uú][cč]\w+|\b500[\s\w]{0,10}(?:kč|korun)[\s\w]{0,10}\b[uú][cč]\w+|\b[uú][cč]\w+[\s\w]{0,15}odměn|\b[uú][cč]\w+[\s\w]{0,10}\bbonus\w*", re.I), "ucet_odmena_akce"),
     # Založení účtu online
-    (re.compile(r"jak[\s\w]{0,15}založ\w*[\s\w]{0,10}(?:účet|ucet)|založ\w*[\s\w]{0,10}(?:účet|ucet)|zalo[žz]\w*[\s\w]{0,10}(?:účet|ucet)|otevř\w*[\s\w]{0,10}(?:účet|ucet)|zřídit[\s\w]{0,10}(?:účet|ucet)|chci[\s\w]{0,10}(?:si\s+)?(?:nový\s+)?(?:účet|ucet)", re.I), "ucet_zalozeni_online"),
+    (re.compile(r"jak[\s\w]{0,15}založ\w*[\s\w]{0,10}(?:účet|ucet)|založ\w*[\s\w]{0,10}(?:účet|ucet)|zalo[žz]\w*[\s\w]{0,10}(?:účet|ucet)|otevř\w*[\s\w]{0,10}(?:účet|ucet)|zřídit[\s\w]{0,10}(?:účet|ucet)|chci[\s\w]{0,10}(?:si\s+)?(?:nový\s+)?(?:účet|ucet)|podmínk\w*[\s\w]{0,20}(?:účtu|uctu|účet|ucet)|co[\s\w]{0,10}pot[řr]ebuji[\s\w]{0,15}(?:účet|ucet|k\s+otev[řr])|jak\s+si\s+otev[řr]\w*|jak\s+si\s+z[řr][íi]d[íi][mt]?\w*[\s\w]{0,10}(?:účet|ucet)|dokument\w*[\s\w]{0,10}(?:účet|ucet)|co[\s\w]{0,10}mus[íi][mt]?[\s\w]{0,10}(?:účet|ucet)|po[žz]adavk\w*[\s\w]{0,10}(?:účet|ucet)|co[\s\w]{0,5}k[\s\w]{0,10}(?:účtu|uctu)|pot[řr]ebuji[\s\w]{0,5}k[\s\w]{0,10}(?:účtu|uctu)|doklad\w*[\s\w]{0,10}(?:účet|ucet)", re.I), "ucet_zalozeni_online"),
     (re.compile(r"lep[sš][íi]\w*[\s\w]{0,15}banka|výhod\w*[\s\w]{0,15}(?:rb|raiffeisen)|(?:rb|raiffeisen)[\s\w]{0,15}výhod|pro[čc][\s\w]{0,15}(?:rb|raiffeisen)|[čc][íi]m[\s\w]{0,15}(?:rb|raiffeisen)|výhod\w*[\s\w]{0,15}oproti|oproti[\s\w]{0,15}(?:jiné|ostatní|konkurenc|jinýmh?)\w*[\s\w]{0,10}bank", re.I), "rb_vyhody"),
 )
 
@@ -751,13 +751,17 @@ SOFT_GUIDANCE_ANSWERS: dict[str, str] = {
         "Více: https://www.rb.cz/osobni/ucty/bezne-ucty"
     ),
     "ucet_zalozeni_online": (
-        "Účet Raiffeisenbank lze založit online za několik minut:\n\n"
-        "1. Jděte na https://www.rb.cz/osobni/ucty/bezne-ucty\n"
-        "2. Vyberte účet (CHYTRÝ, AKTIVNÍ nebo EXKLUZIVNÍ)\n"
-        "3. Klikněte na 'Založit online'\n"
-        "4. Vyplňte osobní údaje a nahrajte doklad totožnosti\n"
-        "5. Podepište smlouvu elektronicky\n\n"
-        "Účet je aktivní obvykle do 24 hodin.\n"
+        "Jak si otevřít účet u Raiffeisenbank:\n\n"
+        "**Podmínky:**\n"
+        "- Věk 18+ (studentský účet od 15 let)\n"
+        "- Platný doklad totožnosti (občanský průkaz nebo pas)\n\n"
+        "**Online postup (5 minut):**\n"
+        "1. Jděte na rb.cz/osobni/ucty/bezne-ucty\n"
+        "2. Vyberte typ účtu (CHYTRÝ, AKTIVNÍ nebo EXKLUZIVNÍ)\n"
+        "3. Klikněte Založit online\n"
+        "4. Vyplňte osobní údaje a nahrajte foto dokladu\n"
+        "5. Podepište smlouvu elektronicky — účet aktivní do 24 hodin\n\n"
+        "Nebo na pobočce: https://www.rb.cz/o-nas/kontakty/pobocky-a-bankomaty\n"
         "Více: https://www.rb.cz/osobni/ucty/bezne-ucty"
     ),
     "ucet_srovnani": (
