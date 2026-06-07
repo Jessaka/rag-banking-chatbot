@@ -143,7 +143,7 @@ def _is_pricing_table_text(*parts: str) -> bool:
 
 def _is_bad_table_row(text: str) -> bool:
     from src.retrieval.query_classifier import detect_chunk_quality
-    if detect_chunk_quality(text) == "bad_pdf_extraction":
+    if detect_chunk_quality(text) in ("bad_pdf_extraction", "navigation_boilerplate"):
         return True
     tokens = re.findall(r"\S+", text[:1200])
     if len(tokens) < 6:

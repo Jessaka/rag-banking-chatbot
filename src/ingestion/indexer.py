@@ -640,12 +640,16 @@ def filter_new_chunks(
     Returns:
         (new_chunks, skipped_count)
     """
+    _BAD_QUALITY = {"navigation_boilerplate", "bad_pdf_extraction", "bad_table_row"}
+
     new_chunks = []
     skipped = 0
 
     for chunk in chunks:
         cid = chunk.metadata.get("chunk_id")
         if cid and cid in existing_ids:
+            skipped += 1
+        elif chunk.metadata.get("chunk_quality") in _BAD_QUALITY:
             skipped += 1
         else:
             new_chunks.append(chunk)

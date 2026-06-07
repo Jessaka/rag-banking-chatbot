@@ -961,7 +961,18 @@ def is_archived_doc(doc: Document) -> bool:
     return any(term in hay for term in ("již nenabízené", "jiz nenabizene", "discontinued", "archived", "staré produkty", "stare produkty"))
 
 
+_NAV_BOILERPLATE_TERMS = frozenset({
+    'účty a karty', 'půjčky', 'spoření a investice',
+    'osobní finance', 'privátní bankovnictví',
+})
+
+
 def detect_chunk_quality(text: str) -> str:
+    text_lower = text.lower()
+    nav_matches = sum(1 for t in _NAV_BOILERPLATE_TERMS if t in text_lower)
+    if nav_matches >= 3 and len(text) < 500:
+        return "navigation_boilerplate"
+
     sample = text[:2500]
     tokens = re.findall(r"\S+", sample)
     if len(tokens) < 20:
