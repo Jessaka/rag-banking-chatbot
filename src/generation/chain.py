@@ -185,6 +185,7 @@ SOFT_GUIDANCE_FAQ_PATTERNS = (
     # Založení účtu online
     (re.compile(r"jak[\s\w]{0,15}založ\w*[\s\w]{0,10}(?:účet|ucet)|založ\w*[\s\w]{0,10}(?:účet|ucet)|zalo[žz]\w*[\s\w]{0,10}(?:účet|ucet)|otevř\w*[\s\w]{0,10}(?:účet|ucet)|zřídit[\s\w]{0,10}(?:účet|ucet)|chci[\s\w]{0,10}(?:si\s+)?(?:nový\s+)?(?:účet|ucet)|podmínk\w*[\s\w]{0,20}(?:účtu|uctu|účet|ucet)|co[\s\w]{0,10}pot[řr]ebuji[\s\w]{0,15}(?:účet|ucet|k\s+otev[řr])|jak\s+si\s+otev[řr]\w*|jak\s+si\s+z[řr][íi]d[íi][mt]?\w*[\s\w]{0,10}(?:účet|ucet)|dokument\w*[\s\w]{0,10}(?:účet|ucet)|co[\s\w]{0,10}mus[íi][mt]?[\s\w]{0,10}(?:účet|ucet)|po[žz]adavk\w*[\s\w]{0,10}(?:účet|ucet)|co[\s\w]{0,5}k[\s\w]{0,10}(?:účtu|uctu)|pot[řr]ebuji[\s\w]{0,5}k[\s\w]{0,10}(?:účtu|uctu)|doklad\w*[\s\w]{0,10}(?:účet|ucet)", re.I), "ucet_zalozeni_online"),
     (re.compile(r"lep[sš][íi]\w*[\s\w]{0,15}banka|výhod\w*[\s\w]{0,15}(?:rb|raiffeisen)|(?:rb|raiffeisen)[\s\w]{0,15}výhod|pro[čc][\s\w]{0,15}(?:rb|raiffeisen)|[čc][íi]m[\s\w]{0,15}(?:rb|raiffeisen)|výhod\w*[\s\w]{0,15}oproti|oproti[\s\w]{0,15}(?:jiné|ostatní|konkurenc|jinýmh?)\w*[\s\w]{0,10}bank", re.I), "rb_vyhody"),
+    (re.compile(r"kdo\s+jste|co\s+jste\s+za\s+bank|o\s+raiffeisen(?:bank)?|kdy\s+byla\s+zalo[žz]ena|rok\s+zalo[žz]en[íi]|histori\w*[\s\w]{0,10}bank|kdo\s+je\s+raiffeisen", re.I), "rb_o_bance"),
 )
 
 
@@ -862,6 +863,14 @@ SOFT_GUIDANCE_ANSWERS: dict[str, str] = {
         "Oba systémy fungují na všech terminálech s bezkontaktní platbou (NFC).\n"
         "Karta je chráněna — číslo karty se nesdílí s obchodníkem.\n\n"
         "Více informací: rb.cz/osobni/karty/placeni-mobilem"
+    ),
+    "rb_o_bance": (
+        "Raiffeisenbank a.s. je univerzální banka v České republice:\n"
+        "- Působí v ČR od roku 1993\n"
+        "- Součást skupiny Raiffeisen Bank International (RBI) se sídlem ve Vídni\n"
+        "- Více než 130 poboček po celé ČR\n"
+        "- Zákaznická linka: 412 440 000 (Po-Ne 7-22 hod)\n\n"
+        "Více: https://www.rb.cz/o-nas"
     ),
     "rb_vyhody": (
         "Raiffeisenbank nabízí tyto klíčové výhody:\n"
