@@ -74,6 +74,24 @@ def _hash(text: str) -> str:
     return hashlib.sha256(_clean(text).encode("utf-8")).hexdigest()
 
 
+def _structured_sections(page: dict, title: str, path: Path) -> list[dict]:
+    sections = page.get("sections") or []
+    if sections:
+        return sections
+
+    content = _clean(page.get("content", ""))
+    if not content:
+        return []
+
+    logger.info(
+        "synthetic_section_created=true path=%s title=%s content_length=%s",
+        path,
+        title,
+        len(content),
+    )
+    return [{"heading": title, "title": title, "content": content, "synthetic": True, "order": 0}]
+
+
 def pricing_detected(*parts: str) -> bool:
     hay = " ".join(parts).lower()
     return any(term in hay for term in PRICING_TERMS)
@@ -490,9 +508,10 @@ def load_structured_pages(structured_dir: Path = STRUCTURED_DIR, chunk_size: int
         meta = page.get("metadata", {}) or {}
         category = classify_business_category(url, title, fallback=meta.get("category") or "unknown")
         document_type = meta.get("document_type") or classify_document_type(url, title, fallback="product_page")
+        sections = _structured_sections(page, title, path)
 
         idx = 0
-        for section in page.get("sections", []):
+        for section in sections:
             section_title = section.get("heading") or title
             for part in _split_text(section.get("content", ""), chunk_size, overlap):
                 docs.append(_make_doc(part, _base_metadata(url, title, section_title, "web", document_type, None, category, "section_text", path), idx))
@@ -601,8 +620,9 @@ def _iter_structured_documents(structured_dir: Path = STRUCTURED_DIR, chunk_size
         meta = page.get("metadata", {}) or {}
         category = classify_business_category(url, title, fallback=meta.get("category") or "unknown")
         document_type = meta.get("document_type") or classify_document_type(url, title, fallback="product_page")
+        sections = _structured_sections(page, title, path)
         idx = 0
-        for section in page.get("sections", []):
+        for section in sections:
             section_title = section.get("heading") or title
             for part in _split_text(section.get("content", ""), chunk_size, overlap):
                 yield _make_doc(part, _base_metadata(url, title, section_title, "web", document_type, None, category, "section_text", path), idx)
