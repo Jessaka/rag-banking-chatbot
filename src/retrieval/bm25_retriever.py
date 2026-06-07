@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import pickle
 import time
+import unicodedata
 from functools import lru_cache
 from collections import Counter
 
@@ -45,6 +46,13 @@ def _load_documents() -> list[Document]:
         )
     with open(config.DOCS_STORE_PATH, "rb") as f:
         return pickle.load(f)
+
+
+def _strip_diacritics(text: str) -> str:
+    return ''.join(
+        c for c in unicodedata.normalize('NFD', text)
+        if unicodedata.category(c) != 'Mn'
+    )
 
 
 def _tokenize(text: str) -> list[str]:
@@ -129,7 +137,12 @@ def bm25_search(
     bm25 = _load_bm25_index()
     documents = _load_documents()
 
-    tokenized_query = _tokenize(query)
+    # Přidej verzi bez diakritiky — pokryje dotazy psané bez háčků/čárek.
+    # Duplikátní tokeny nevadí (BM25 je váhuje stejně).
+    stripped = _strip_diacritics(query)
+    query_expanded = query if stripped == query else f"{query} {stripped}"
+
+    tokenized_query = _tokenize(query_expanded)
     if max_query_tokens and len(tokenized_query) > max_query_tokens:
         tokenized_query = sorted(
             tokenized_query,
