@@ -15,6 +15,7 @@ theme.subscribe((value) => {
 
 // --- Sidebar ---
 export const sidebarOpen = writable(false);
+export const sidebarCollapsed = writable(false);
 
 // --- Debug panel ---
 export const debugPanelOpen = writable(false);

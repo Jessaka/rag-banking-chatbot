@@ -20,9 +20,9 @@
 	import TypingIndicator from './TypingIndicator.svelte';
 	import { emitChatEvent } from '$lib/monitoring';
 	import { Button } from '$ui';
-	import { Sparkles } from '@lucide/svelte';
 
 	let messagesContainer: HTMLDivElement | null = $state(null);
+	let logoError = $state(false);
 	let abortController: AbortController | null = $state(null);
 
 	// Auto-scroll when messages change
@@ -328,8 +328,19 @@
 		{#if $messages.length === 0}
 			<!-- Empty state -->
 			<div class="flex h-full flex-col items-center justify-center text-center">
-				<div class="mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-rb-100 dark:bg-rb-900/20">
-					<Sparkles class="h-8 w-8 text-rb-500" />
+				<div class="mb-6">
+					{#if !logoError}
+						<img
+							src="/rb-logo.png"
+							alt="Raiffeisenbank"
+							class="mx-auto h-16 w-auto"
+							onerror={() => (logoError = true)}
+						/>
+					{:else}
+						<div class="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-rb-400 shadow-md">
+							<span class="text-2xl font-bold text-black">RB</span>
+						</div>
+					{/if}
 				</div>
 				<h1 class="text-xl font-semibold text-gray-900 dark:text-dark-text">
 					AI Bankovní Asistent
@@ -347,7 +358,7 @@
 						<button
 							onclick={() => handleSubmit(suggestion)}
 							disabled={$isLoading}
-							class="rounded-xl border bg-white p-3 text-left text-xs text-gray-600 shadow-sm transition-colors hover:bg-surface-hover disabled:opacity-50 dark:bg-dark-surface dark:border-dark-border dark:text-gray-300 dark:hover:bg-dark-hover"
+							class="rounded-xl border border-gray-200 bg-white p-3 text-left text-xs text-gray-600 shadow-sm transition-all hover:shadow-md hover:bg-gray-50 disabled:opacity-50 dark:bg-dark-surface dark:border-dark-border dark:text-gray-300 dark:hover:bg-dark-hover"
 						>
 							{suggestion}
 						</button>

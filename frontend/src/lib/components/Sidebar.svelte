@@ -1,16 +1,11 @@
 <script lang="ts">
-	import { sidebarOpen, conversations, currentSessionId, deleteConversation } from '$lib/stores';
+	import { sidebarOpen, sidebarCollapsed, conversations, currentSessionId, deleteConversation } from '$lib/stores';
 	import { fade } from 'svelte/transition';
-	import { X, Plus, Trash2, MessageSquare, RotateCcw } from '@lucide/svelte';
+	import { X, Trash2, MessageSquare } from '@lucide/svelte';
 	import { Button } from '$ui';
 
 	function selectConversation(id: string) {
 		currentSessionId.set(id);
-		sidebarOpen.set(false);
-	}
-
-	function newChat() {
-		currentSessionId.set(null);
 		sidebarOpen.set(false);
 	}
 
@@ -24,7 +19,7 @@
 	}
 </script>
 
-	<!-- Overlay for mobile -->
+<!-- Mobile overlay -->
 {#if $sidebarOpen}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<!-- svelte-ignore a11y_interactive_supports_focus -->
@@ -41,21 +36,20 @@
 
 <!-- Sidebar -->
 <aside
-	class="fixed inset-y-0 left-0 z-50 flex w-72 flex-col border-r bg-white dark:bg-dark-surface dark:border-dark-border transition-transform duration-300 lg:relative lg:translate-x-0"
+	class="fixed inset-y-0 left-0 z-50 flex w-72 flex-col border-r border-gray-200
+	       bg-[#eeeeee]/95 backdrop-blur-sm
+	       dark:bg-dark-surface/95 dark:border-dark-border
+	       transition-all duration-300
+	       lg:relative lg:translate-x-0 {$sidebarCollapsed ? 'lg:w-0 lg:overflow-hidden' : 'lg:w-72'}"
 	class:translate-x-0={$sidebarOpen}
 	class:-translate-x-full={!$sidebarOpen}
 >
 	<!-- Header -->
-	<div class="flex h-14 items-center justify-between border-b px-4 dark:border-dark-border">
-		<span class="text-sm font-semibold text-gray-900 dark:text-dark-text">Historie</span>
-		<div class="flex items-center gap-1">
-			<Button variant="ghost" size="icon" onclick={newChat}>
-				<Plus class="h-4 w-4" />
-			</Button>
-			<Button variant="ghost" size="icon" onclick={() => sidebarOpen.set(false)} class="lg:hidden">
-				<X class="h-4 w-4" />
-			</Button>
-		</div>
+	<div class="flex h-14 shrink-0 items-center justify-between border-b border-gray-200 px-4 dark:border-dark-border">
+		<span class="text-sm font-semibold text-gray-800 dark:text-dark-text">Historie</span>
+		<Button variant="ghost" size="icon" onclick={() => sidebarOpen.set(false)} class="lg:hidden">
+			<X class="h-4 w-4" />
+		</Button>
 	</div>
 
 	<!-- Conversation list -->
@@ -73,9 +67,8 @@
 					onkeydown={(e) => e.key === 'Enter' && selectConversation(conv.id)}
 					role="button"
 					tabindex="0"
-					class="group relative w-full cursor-pointer rounded-xl px-3 py-2.5 text-left text-sm transition-colors hover:bg-surface-hover dark:hover:bg-dark-hover"
-					class:bg-surface-alt!={$currentSessionId === conv.id}
-					class:dark:bg-dark-elevated!={$currentSessionId === conv.id}
+					class="group relative w-full cursor-pointer rounded-xl px-3 py-2.5 text-left text-sm transition-colors hover:bg-white/70 dark:hover:bg-dark-hover
+					       {$currentSessionId === conv.id ? 'bg-white shadow-sm dark:bg-dark-elevated' : ''}"
 				>
 					<div class="flex items-start gap-2.5">
 						<MessageSquare class="mt-0.5 h-3.5 w-3.5 shrink-0 text-gray-400 dark:text-gray-500" />
@@ -96,7 +89,7 @@
 	</div>
 
 	<!-- Footer -->
-	<div class="border-t p-3 dark:border-dark-border">
+	<div class="shrink-0 border-t border-gray-200 p-3 dark:border-dark-border">
 		<p class="text-center text-xs text-gray-400 dark:text-gray-600">
 			Raiffeisenbank AI Asistent
 		</p>
