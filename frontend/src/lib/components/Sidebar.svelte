@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { sidebarOpen, sidebarCollapsed, conversations, currentSessionId, deleteConversation } from '$lib/stores';
 	import { fade } from 'svelte/transition';
-	import { X, Trash2, MessageSquare } from '@lucide/svelte';
+	import { X, Trash2 } from '@lucide/svelte';
 	import { Button } from '$ui';
 
 	function selectConversation(id: string) {
@@ -44,53 +44,59 @@
 	class:translate-x-0={$sidebarOpen}
 	class:-translate-x-full={!$sidebarOpen}
 >
-	<!-- Header -->
-	<div class="flex h-14 shrink-0 items-center justify-between border-b border-gray-200 px-4 dark:border-dark-border">
-		<span class="text-sm font-semibold text-gray-800 dark:text-dark-text">Historie</span>
+	<!-- Header — minimální, jen X pro mobile -->
+	<div class="flex h-12 shrink-0 items-center justify-between px-4 dark:border-dark-border">
+		<span class="text-[10px] font-medium uppercase tracking-widest text-gray-400 dark:text-gray-600">
+			Rozhovory
+		</span>
 		<Button variant="ghost" size="icon" onclick={() => sidebarOpen.set(false)} class="lg:hidden">
 			<X class="h-4 w-4" />
 		</Button>
 	</div>
 
 	<!-- Conversation list -->
-	<div class="flex-1 overflow-y-auto p-2">
+	<div class="flex-1 overflow-y-auto px-2 pb-2">
 		{#if $conversations.length === 0}
 			<div class="flex flex-col items-center justify-center py-16 text-center">
-				<MessageSquare class="mb-3 h-8 w-8 text-gray-300 dark:text-gray-600" />
-				<p class="text-sm text-gray-400 dark:text-gray-500">Zatím žádné rozhovory</p>
+				<p class="text-xs text-gray-400 dark:text-gray-500">Zatím žádné rozhovory</p>
 			</div>
 		{:else}
-			{#each $conversations as conv (conv.id)}
-				<!-- svelte-ignore a11y_no_static_element_interactions -->
-				<div
-					onclick={() => selectConversation(conv.id)}
-					onkeydown={(e) => e.key === 'Enter' && selectConversation(conv.id)}
-					role="button"
-					tabindex="0"
-					class="group relative w-full cursor-pointer rounded-xl px-3 py-2.5 text-left text-sm transition-colors hover:bg-white/70 dark:hover:bg-dark-hover
-					       {$currentSessionId === conv.id ? 'bg-white shadow-sm dark:bg-dark-elevated' : ''}"
-				>
-					<div class="flex items-start gap-2.5">
-						<MessageSquare class="mt-0.5 h-3.5 w-3.5 shrink-0 text-gray-400 dark:text-gray-500" />
-						<div class="min-w-0 flex-1">
-							<p class="truncate text-gray-900 dark:text-dark-text">{conv.title}</p>
-							<p class="mt-0.5 text-xs text-gray-400 dark:text-gray-500">{formatDate(conv.updatedAt)} · {conv.messages.length} zpráv</p>
-						</div>
-					</div>
-					<button
-						onclick={(e) => { e.stopPropagation(); deleteConversation(conv.id); }}
-						class="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-1.5 text-gray-400 opacity-0 transition-opacity hover:bg-red-50 hover:text-red-500 group-hover:opacity-100 dark:hover:bg-red-900/20 dark:hover:text-red-400"
+			<div class="space-y-px">
+				{#each $conversations as conv (conv.id)}
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
+					<div
+						onclick={() => selectConversation(conv.id)}
+						onkeydown={(e) => e.key === 'Enter' && selectConversation(conv.id)}
+						role="button"
+						tabindex="0"
+						class="group relative w-full cursor-pointer rounded-lg px-3 py-2 text-left transition-colors
+						       {$currentSessionId === conv.id
+								? 'bg-white dark:bg-dark-elevated'
+								: 'hover:bg-black/5 dark:hover:bg-white/5'}"
 					>
-						<Trash2 class="h-3.5 w-3.5" />
-					</button>
-				</div>
-			{/each}
+						<div class="flex items-baseline justify-between gap-2">
+							<p class="truncate text-sm text-gray-800 dark:text-dark-text leading-snug">
+								{conv.title}
+							</p>
+							<span class="shrink-0 text-[10px] text-gray-400 dark:text-gray-600">
+								{formatDate(conv.updatedAt)}
+							</span>
+						</div>
+						<button
+							onclick={(e) => { e.stopPropagation(); deleteConversation(conv.id); }}
+							class="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-1 text-gray-300 opacity-0 transition-opacity hover:text-red-500 group-hover:opacity-100 dark:text-gray-600 dark:hover:text-red-400"
+						>
+							<Trash2 class="h-3 w-3" />
+						</button>
+					</div>
+				{/each}
+			</div>
 		{/if}
 	</div>
 
 	<!-- Footer -->
-	<div class="shrink-0 border-t border-gray-200 p-3 dark:border-dark-border">
-		<p class="text-center text-xs text-gray-400 dark:text-gray-600">
+	<div class="shrink-0 border-t border-gray-200/60 p-3 dark:border-dark-border">
+		<p class="text-center text-[10px] text-gray-300 dark:text-gray-700">
 			Raiffeisenbank AI Asistent
 		</p>
 	</div>

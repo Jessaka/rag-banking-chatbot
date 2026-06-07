@@ -331,14 +331,14 @@
 				<div class="mb-6">
 					{#if !logoError}
 						<img
-							src="/rb-logo.png"
+							src="/rb-logo.jpg"
 							alt="Raiffeisenbank"
-							class="mx-auto h-16 w-auto"
+							class="mx-auto w-24 h-24 object-contain rounded-2xl shadow-lg"
 							onerror={() => (logoError = true)}
 						/>
 					{:else}
-						<div class="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-rb-400 shadow-md">
-							<span class="text-2xl font-bold text-black">RB</span>
+						<div class="mx-auto flex h-24 w-24 items-center justify-center rounded-2xl bg-rb-400 shadow-lg">
+							<span class="text-3xl font-bold text-black">RB</span>
 						</div>
 					{/if}
 				</div>
