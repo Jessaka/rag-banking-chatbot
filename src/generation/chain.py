@@ -127,6 +127,7 @@ GUIDED_FLOW_PATTERNS = (
 # --- Priority 3: Procedural flow patterns ---
 # These run before retrieval (like guided flows) for deterministic how-to answers.
 PROCEDURAL_FLOW_PATTERNS = (
+    (re.compile(r"apple\s*pay|google\s*pay|garmin\s*pay|fitbit\s*pay|mobiln[íi]\s+pla[ct]|platit\s+telefonem|hodinkami\s+plat|platba\s+hodinkami|jak\s+aktiv\w+\s+(?:apple|google|garmin)", re.I), "mobilni_platby"),
     (re.compile(r"(jak\s+)?(aktiv[uo]j|aktivovat|aktivac[ei]\w*|zapnout|zapni|zač[íi]t\s+pou[žz][íi]v[aá]t).*(kart\w*|plateb)|(kart\w*|plateb)[\s\w]{0,20}aktivac[ei]\w*|před[\s\w]{0,20}pou[žz]i\w*[\s\w]{0,10}kart|prvn[íi]\w*[\s\w]{0,10}pou[žz]i\w*|co[\s\w]{0,20}ud[eě]lat[\s\w]{0,20}kart|nová\s+karta\s+co|p[řr]i[šs]la[\s\w]{0,10}kart|dostal\w*[\s\w]{0,15}kart", re.I), "activation_flow"),
     (re.compile(r"(jak\s+)?(zv[ýy][šs][íi][mtš]|zv[ýy][šs]it|nav[ýy][šs][íi][mtš]|nav[ýy][šs]it|sn[íi][žz][íi][mtš]|sn[íi][žz]it).*(limit|kart|v[ýy]b[eě]r)", re.I), "card_limit_flow"),
     (re.compile(r"(jak\s+)?(zm[eě]n[íi]t|zm[eě]n[aá]|nastav[íi]t|nastavit).*(limit).*(kart\w*)?|(jak\s+)?limit.*(zm[eě]n[íi]t|nastavit)", re.I), "card_limit_flow"),
@@ -176,7 +177,8 @@ SOFT_GUIDANCE_FAQ_PATTERNS = (
     (re.compile(r"termínovan[ýéaý][\s\w]*vklad|vklad[\s\w]*termínovan", re.I), "sporeni_terminovany_vklad"),
     (re.compile(r"stavební[\s\w]*spořen|spořen[\s\w]*stavební|stavební[\s\w]*sporitel", re.I), "sporeni_stavebni"),
     (re.compile(r"bonusov[ýéaý][\s\w]*spořic|spořic[\s\w]*bonusov|bonusov[ýéaý][\s\w]*účet", re.I), "sporeni_bonusovy"),
-    (re.compile(r"spořic[íi][\s\w]{0,20}(?:účet|ucet|sazb|úrok|urok)|(?:sazb|úrok|urok)[\s\w]{0,20}spořic[íi]", re.I), "sporeni_bonusovy"),
+    (re.compile(r"spořic[íi]\w*[\s\w]{0,20}(?:účet|ucet|účtu|uctu|sazb|úrok|urok)|(?:sazb|úrok|urok)[\s\w]{0,20}spořic[íi]", re.I), "sporeni_bonusovy"),
+    (re.compile(r"4[,.]2.{0,40}(?:spor|bonus)|(?:podmínk\w*|splnit|maximum|abych\s+dostal).{0,60}(?:spořic|sporici|bonus\w*\s+spor)", re.I), "sporeni_bonusovy"),
     # Konkrétní produkty — pojištění
     (re.compile(r"osobní[\s\w]*strážce|osobni[\s\w]*strazce|strážce[\s\w]*poji|strazce[\s\w]*pojist|poji[sš]t[\s\w]*strážce|pojisten[\s\w]*strazce", re.I), "pojisteni_osobni_strazce"),
     (re.compile(r"pojist[\s\w]*naplno|naplno[\s\w]*pojist|cestovní[\s\w]*naplno", re.I), "pojisteni_naplno"),
@@ -185,6 +187,7 @@ SOFT_GUIDANCE_FAQ_PATTERNS = (
     (re.compile(r"majetkov[éé][\s\w]*pojist|pojist[\s\w]*majetek|pojist[\s\w]*majetkov", re.I), "pojisteni_majetkove"),
     # Konkrétní produkty — účty
     (re.compile(r"rozd[íi]l[\s\w]{0,20}\b[uú][cč](?:et|t)\w*|porovn\w*[\s\w]{0,15}\b[uú][cč](?:et|t)\w*|kter[ýýaé]\w*[\s\w]{0,20}\b[uú][cč](?:et|t)\w*[\s\w]{0,20}(?:vybrat|vhodn|lep[sš]|doporu[cč])|jak[ýé]\w*[\s\w]{0,15}\b[uú][cč](?:et|t)\w*[\s\w]{0,15}(?:vybrat|vhodn|doporu[cč]|zvolit)|chytr[ýéaů]\w*[\s\w]{0,15}aktiv[ní]\w*|aktiv[ní]\w*[\s\w]{0,15}chytr[ýéaů]\w*|chytr[ýéaů]\w*[\s\w]{0,15}exkluziv|lep[sš][íi]\w*[\s\w]{0,20}\b[uú][cč](?:et|t)\w*|\bdoporu[cč]\w*[\s\w]{0,20}\b[uú][cč](?:et|t)\w*|\b[uú][cč](?:et|t)\w*[\s\w]{0,20}doporu[cč]", re.I), "ucet_srovnani"),
+    (re.compile(r"p[řr]ejít[\s\w]{0,10}na[\s\w]{0,5}aktivn|upgrade\w*[\s\w]{0,10}(?:účet|ucet)|zm[eě]nit[\s\w]{0,10}(?:účet|ucet)[\s\w]{0,5}na|chci[\s\w]{0,10}aktivn[íi][\s\w]{0,10}m[íi]sto|p[řr]epnout[\s\w]{0,10}(?:účet|ucet)|zm[eě]na[\s\w]{0,5}(?:účtu|uctu|účet|ucet)", re.I), "ucet_upgrade"),
     (re.compile(r"chytr[ýéaý][\s\w]*účet|bezn[ýéaý][\s\w]*účet[\s\w]*zdarma|účet[\s\w]*zdarma[\s\w]*bez\s*podmínek", re.I), "ucet_chytry"),
     (re.compile(r"exkluzivn[íi][\s\w]*(?:účet|ucet)|(?:účet|ucet)[\s\w]*exkluzivn[íi]|kolik[\s\w]{0,15}exkluzivn[íi]", re.I), "ucet_exkluzivni"),
     (re.compile(r"dětský[\s\w]*účet|účet[\s\w]*dět|účet[\s\w]*dítě", re.I), "ucet_detsky"),
@@ -201,6 +204,9 @@ SOFT_GUIDANCE_FAQ_PATTERNS = (
     # Karta — odblokování, zrušení, rozdíl debet/kredit
     (re.compile(r"odblok\w+[\s\w]{0,15}kart|kart\w*[\s\w]{0,10}odblok|jak[\s\w]{0,10}odblok\w+", re.I), "karta_odblok"),
     (re.compile(r"zru[šs]it[\s\w]{0,15}(?:platební\s+)?kart|kart\w*[\s\w]{0,10}zru[šs]it|jak[\s\w]{0,10}zru[šs][íi][mt]?\w*[\s\w]{0,10}kart|ukončit[\s\w]{0,10}kart", re.I), "karta_zrusit"),
+    (re.compile(r"easy\w*[\s\w]{0,15}style|style\w*[\s\w]{0,15}easy|rozd[íi]l[\s\w]{0,15}kreditn[íi]\s+kart|srovn[aá]n[íi][\s\w]{0,15}kreditn[íi]", re.I), "kreditni_karty_srovnani"),
+    (re.compile(r"\brb\s+premium\b|premium\s+kart\w*|\bprémiová\s+kreditn|\brb\s+prémium\b", re.I), "rb_premium_karta"),
+    (re.compile(r"priority\s+pass|letištn[íi]\s+salon\w*|lounge[\s\w]{0,15}letiš|letiš[\s\w]{0,15}lounge", re.I), "priority_pass"),
     (re.compile(r"rozd[íi]l[\s\w]{0,20}(?:debetní|kreditní|debet|kredit)|(?:debetní|kreditní)[\s\w]{0,20}(?:vs\.?|versus|nebo|oproti)[\s\w]{0,20}(?:debetní|kreditní|debet|kredit)", re.I), "debet_kredit_rozdil"),
 )
 
@@ -533,6 +539,18 @@ PROCEDURAL_FLOW_ANSWERS: dict[str, str] = {
         "- Virtuální karty a mobilní platby využívají stejnou značku.\n\n"
         "Obě značky jsou celosvětově akceptovány — Mastercard i Visa fungují "
         "v ČR i v zahraničí."
+    ),
+    "mobilni_platby": (
+        "Mobilní platby Raiffeisenbank:\n\n"
+        "**Apple Pay** (iPhone / Apple Watch):\n"
+        "- Peněženka (Wallet) → + → vyberte kartu RB → ověřte SMS nebo v aplikaci RB\n\n"
+        "**Google Pay** (Android):\n"
+        "- Google Peněženka → Přidat kartu → vyberte kartu RB → ověřte SMS nebo v aplikaci RB\n\n"
+        "**Garmin Pay / Fitbit Pay:**\n"
+        "- V příslušné aplikaci hodinek přidejte kartu RB dle pokynů\n\n"
+        "Platby přiložením telefonu/hodinek fungují na všech terminálech s bezkontaktní platbou.\n"
+        "Karta je chráněna — číslo karty se nesdílí s obchodníkem.\n\n"
+        "Více: https://www.rb.cz/osobni/karty/mobilni-platby"
     ),
     "pin_flow": (
         "PIN ke kartě Raiffeisenbank:\n\n"
@@ -1023,6 +1041,41 @@ SOFT_GUIDANCE_ANSWERS: dict[str, str] = {
         "- Při nesplacení: účtují se úroky\n"
         "- Výhody: cashback, pojištění, nákupy na splátky\n\n"
         "Více o kreditních kartách: https://www.rb.cz/osobni/karty/kreditni-karty"
+    ),
+    "ucet_upgrade": (
+        "Změna účtu na vyšší typ u Raiffeisenbank:\n\n"
+        "- **Online**: přihlaste se do internetového bankovnictví → Účty → Změna typu účtu\n"
+        "- **Na pobočce** nebo na zákaznické lince: 800 900 900\n\n"
+        "Přechod z CHYTRÉHO na AKTIVNÍ nebo EXKLUZIVNÍ je možný kdykoliv.\n"
+        "Nové výhody jsou dostupné okamžitě po změně.\n\n"
+        "Více: https://www.rb.cz/osobni/ucty/bezne-ucty"
+    ),
+    "kreditni_karty_srovnani": (
+        "Srovnání kreditních karet Raiffeisenbank:\n\n"
+        "- **EASY**: zdarma, základní kreditní karta, úvěrový rámec dle bonity\n"
+        "- **STYLE**: cashback a odměny za platby, prémiové výhody\n"
+        "- **RB PREMIUM**: 199 Kč/měsíc, Priority Pass (letištní salonky), cestovní pojištění\n\n"
+        "Všechny kreditní karty mají bezúročné období (typicky 45 dní).\n\n"
+        "Více: https://www.rb.cz/osobni/karty/kreditni-karty"
+    ),
+    "rb_premium_karta": (
+        "Kreditní karta RB PREMIUM — 199 Kč/měsíc (zdarma při EXKLUZIVNÍM účtu):\n\n"
+        "- **Priority Pass**: přístup do 1 300+ letištních salonků ve 148 zemích světa\n"
+        "- **Cestovní pojištění**: až 10 000 000 Kč\n"
+        "- Cashback a prémiové výhody při platbách\n"
+        "- Mastercard World Elite\n\n"
+        "Tip: Při EXKLUZIVNÍM účtu dostanete RB PREMIUM kartu zdarma.\n\n"
+        "Více: https://www.rb.cz/osobni/karty/kreditni-karty/rb-premium"
+    ),
+    "priority_pass": (
+        "Priority Pass — přístup do letištních salonků:\n\n"
+        "- Síť **1 300+ salonků** ve 148 zemích světa\n"
+        "- Komfortní čekání na let: Wi-Fi, jídlo, nápoje, sprchy\n"
+        "- 1 vstup = 1 osoba (včetně hostů)\n\n"
+        "**Jak získat Priority Pass u RB:**\n"
+        "- **EXKLUZIVNÍ účet** → Priority Pass je součástí účtu\n"
+        "- **Kreditní karta RB PREMIUM** → Priority Pass v ceně karty\n\n"
+        "Více: https://www.rb.cz/osobni/ucty/bezne-ucty/exkluzivni-ucet"
     ),
 }
 
