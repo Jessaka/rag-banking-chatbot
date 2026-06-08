@@ -80,11 +80,17 @@ CATALOG_TERMS = (
     "druhy", "typy", "jakou", "jaké jsou", "jake jsou", "můžu založit", "muzu zalozit", "založit", "zalozit",
 )
 
+NEWS_QUERY_TERMS = (
+    "novinky", "novinka", "aktuality", "aktualita", "tiskové zprávy", "tiskove zpravy",
+    "tisková zpráva", "tiskova zprava", "pro média", "pro media", "media",
+)
+
 ACCOUNT_OVERVIEW_TERMS = (
     "jaké účty", "jake ucty", "jaké máte účty", "jake mate ucty",
     "jaké jsou účty", "jake jsou ucty", "účty nabízíte", "ucty nabizite",
     "typy účtů", "typy uctu", "druhy účtů", "druhy uctu",
     "jaký typ účtu", "jaky typ uctu",
+    "běžné účty", "bezne ucty", "běžný účet", "bezny ucet",
 )
 ACCOUNT_FEE_TERMS = (
     "poplatek za vedení účtu", "poplatek za vedeni uctu",
@@ -98,6 +104,7 @@ MORTGAGE_OVERVIEW_TERMS = (
     "jaké hypotéky", "jake hypoteky", "jaké máte hypotéky", "jake mate hypoteky",
     "jaké jsou hypotéky", "jake jsou hypoteky", "hypotéky nabízíte", "hypoteky nabizite",
     "typy hypoték", "typy hypotek", "druhy hypoték", "druhy hypotek",
+    "podmínky hypotéky", "podminky hypoteky", "podmínky pro hypotéku", "podminky pro hypoteku",
 )
 INVESTMENT_OVERVIEW_TERMS = (
     "jaké investice", "jake investice", "jaké máte investice", "jake mate investice",
@@ -289,6 +296,7 @@ def classify_query(query: str) -> QueryProfile:
         if any(k in q for k in ("podnikatel", "podnikatelsk", "osvč", "osvc", "živnostník", "zivnostnik")):
             labels.add("entrepreneur_account")
     has_catalog_intent = any(k in q for k in CATALOG_TERMS)
+    has_news_intent = any(k in q for k in NEWS_QUERY_TERMS)
     has_credit_card_term = any(k in q for k in CREDIT_CARD_TERMS)
     has_card_overview_term = any(k in q for k in CARD_OVERVIEW_TERMS)
 
@@ -299,6 +307,8 @@ def classify_query(query: str) -> QueryProfile:
         labels.add("cards")
     if has_catalog_intent:
         labels.add("catalog_intent")
+    if has_news_intent:
+        labels.add("news_intent")
     if has_catalog_intent and (has_card_overview_term or ("cards" in labels and "plateb" in q)):
         labels.add("card_overview")
         labels.add("product_overview")
@@ -554,28 +564,41 @@ def classify_query(query: str) -> QueryProfile:
         preferred_urls.append("/karty")
     if "card_overview" in labels:
         preferred_categories.extend(["cards", "payments", "digital"])
-        preferred_urls.extend(["karty", "platebni-karty", "debetni-karty", "kreditni-karty", "virtualni-karta"])
+        preferred_urls.extend([
+            "/osobni/kreditni-karty/",
+            "kreditni-karty",
+            "platebni-karty",
+            "debetni-karty",
+            "virtualni-karta",
+        ])
         preferred_chunk_types.extend(["section_text", "html", "faq", "pricing", "pdf_text"])
         bm25_weight = max(bm25_weight, 0.50)
         vector_weight = min(vector_weight, 0.50)
         rerank_min_score = -10.0
     if "account_overview" in labels:
         preferred_categories.extend(["retail", "accounts", "retail_banking"])
-        preferred_urls.extend(["osobni", "ucty", "ekonto", "bezny-ucet", "podnikatele", "firmy"])
+        preferred_urls.extend([
+            "/osobni/ucty/",
+            "/podnikatele/ucty/",
+            "ekonto",
+            "bezny-ucet",
+            "aktivni-ucet",
+            "chytry-ucet",
+        ])
         preferred_chunk_types.extend(["section_text", "html", "faq", "pdf_text"])
         bm25_weight = max(bm25_weight, 0.50)
         vector_weight = min(vector_weight, 0.50)
         rerank_min_score = -10.0
     if "mortgage_overview" in labels:
         preferred_categories.extend(["mortgages", "hypoteky"])
-        preferred_urls.extend(["hypoteky", "hypoteka"])
+        preferred_urls.extend(["/osobni/hypoteky/", "hypoteky", "hypoteka"])
         preferred_chunk_types.extend(["section_text", "html", "faq", "pdf_text"])
         bm25_weight = max(bm25_weight, 0.50)
         vector_weight = min(vector_weight, 0.50)
         rerank_min_score = -10.0
     if "investment_overview" in labels:
         preferred_categories.extend(["investments", "investice"])
-        preferred_urls.extend(["investice", "fondy", "dip"])
+        preferred_urls.extend(["/osobni/investice/", "investice", "fondy", "dip"])
         preferred_chunk_types.extend(["section_text", "html", "faq", "pdf_text"])
         bm25_weight = max(bm25_weight, 0.50)
         vector_weight = min(vector_weight, 0.50)
@@ -589,14 +612,25 @@ def classify_query(query: str) -> QueryProfile:
         rerank_min_score = -10.0
     if "rb_key_overview" in labels:
         preferred_categories.extend(["security", "digital", "support"])
-        preferred_urls.extend(["rb-klic", "rb-klíč", "mobilni", "bezpecnost"])
+        preferred_urls.extend([
+            "rb-klic",
+            "rb-klíč",
+            "mobilni-bankovnictvi",
+            "internetove-bankovnictvi",
+            "bezpecnost",
+        ])
         preferred_chunk_types.extend(["section_text", "html", "faq", "pdf_text"])
         bm25_weight = max(bm25_weight, 0.50)
         vector_weight = min(vector_weight, 0.50)
         rerank_min_score = -10.0
     if "credit_card" in labels:
         preferred_categories.extend(["cards", "credit_cards", "kreditni_karty"])
-        preferred_urls.extend(["kreditni-karty", "kreditni-karta", "kreditni", "credit-card", "/karty"])
+        preferred_urls.extend([
+            "/osobni/kreditni-karty/",
+            "kreditni-karty",
+            "kreditni-karta",
+            "credit-card",
+        ])
         bm25_weight = max(bm25_weight, 0.45)
         vector_weight = min(vector_weight, 0.55)
     if "credit_card_catalog" in labels:
@@ -607,13 +641,13 @@ def classify_query(query: str) -> QueryProfile:
         preferred_urls.append("/hypotek")
     if "loans" in labels:
         preferred_categories.extend(["loans", "pujcky"])
-        preferred_urls.extend(["/pujcky", "/uvery", "pujcka"])
+        preferred_urls.extend(["/osobni/pujcky/", "/podnikatele/financovani/", "/pujcky", "/uvery", "pujcka"])
     if "investing" in labels:
         preferred_categories.append("investments")
         preferred_urls.extend(["investice", "fondy", "dip"])
     if "savings" in labels:
         preferred_categories.extend(["savings", "sporeni"])
-        preferred_urls.extend(["/sporeni", "/sporici", "vklad", "zhodnoceni"])
+        preferred_urls.extend(["/osobni/sporeni/", "/sporeni", "/sporici", "vklad", "zhodnoceni"])
     if "insurance" in labels:
         preferred_categories.extend(["insurance", "pojisteni"])
         preferred_urls.extend(["pojisteni", "pojistka", "uniqa", "pojisteni-k-produktum"])
@@ -639,6 +673,26 @@ def classify_query(query: str) -> QueryProfile:
     if "loans" in labels and "online_services" in labels:
         preferred_urls.extend(["pujcky", "osobni/pujcky", "platimpak"])
         preferred_categories.extend(["loans", "pujcky"])
+
+    product_url_penalties = [
+        "/informacni-servis/pro-media/",
+        "/informacni-servis/aktuality/",
+        "/o-nas/",
+        "/external",
+        "/prohlaseni-o-pristupnosti",
+        "/bezpecna-aplikace/",
+        "/repackaging",
+        "/odmena-za-doporuceni",
+    ]
+    if "news_intent" not in labels and any(
+        label in labels
+        for label in (
+            "product_overview", "account_overview", "card_overview", "credit_card_catalog",
+            "mortgage_overview", "investment_overview", "rb_key_overview", "loans",
+            "savings", "investing", "cards", "mortgages", "retail_banking",
+        )
+    ):
+        penalized_urls.extend(product_url_penalties)
 
     # ---------------------------------------------------------------------
     # 1️⃣  Fix: pokud jsou současně přítomny labely "catalog_intent" a "product_overview",
@@ -829,6 +883,14 @@ def source_priority(doc: Document, profile: QueryProfile) -> tuple[float, list[s
     hay = " ".join([url, title, filename, metadata_terms.lower(), content])
     score = 0.0
     reasons: list[str] = []
+    is_product_like_query = any(
+        label in profile.labels
+        for label in (
+            "product_overview", "account_overview", "card_overview", "credit_card_catalog",
+            "mortgage_overview", "investment_overview", "rb_key_overview", "loans",
+            "savings", "investing", "cards", "mortgages", "retail_banking",
+        )
+    ) and "news_intent" not in profile.labels
 
     if document_type in profile.preferred_document_types:
         score += 0.035; reasons.append(f"document_type={document_type}")
@@ -873,10 +935,16 @@ def source_priority(doc: Document, profile: QueryProfile) -> tuple[float, list[s
     reasons.extend(freshness_reasons)
     for needle in profile.preferred_url_contains:
         if needle in url:
-            score += 0.045; reasons.append(f"url contains {needle}")
+            boost = 0.045
+            if is_product_like_query:
+                boost = 0.18 if needle.startswith("/") else 0.08
+            score += boost; reasons.append(f"url contains {needle} boost={boost:+.3f}")
     for needle in profile.penalized_url_contains:
         if needle in url or needle in title:
-            score -= 0.060; reasons.append(f"penalized {needle}")
+            penalty = 0.060
+            if is_product_like_query:
+                penalty = 0.75 if needle.startswith("/") else 0.18
+            score -= penalty; reasons.append(f"penalized {needle} penalty=-{penalty:.3f}")
 
     if "/tiskove-zpravy/" in url or "/o-nas/ruzne/odeslano" in url:
         score -= 4.0; reasons.append("press release/form URL penalty -4.0")
@@ -884,6 +952,14 @@ def source_priority(doc: Document, profile: QueryProfile) -> tuple[float, list[s
         score -= 3.5; reasons.append("aktuality URL penalty -3.5")
     elif any(seg in url for seg in ("/pro-media/", "/aktuality/", "/esg/novinky/", "/informacni-servis/pro-media", "/informacni-servis/esg/")):
         score -= 3.0; reasons.append("press/news URL penalty -3.0")
+
+    if is_product_like_query:
+        if any(seg in url for seg in ("/external", "/prohlaseni-o-pristupnosti", "/bezpecna-aplikace/", "/repackaging", "/odmena-za-doporuceni")):
+            score -= 2.5; reasons.append("non-product utility/promotional URL penalty -2.5")
+        if "/o-nas/" in url:
+            score -= 1.5; reasons.append("about-us URL penalty -1.5")
+        if "/informacni-servis/" in url and not any(seg in url for seg in ("/reklamace", "/dulezite-informace/")):
+            score -= 1.5; reasons.append("informacni-servis product-query penalty -1.5")
 
     if any(seg in url for seg in ("/podnikatele/", "/private-banking/", "/firmy/", "/korporace/")):
         score -= 0.5; reasons.append("non-retail URL global penalty")
@@ -941,6 +1017,8 @@ def source_priority(doc: Document, profile: QueryProfile) -> tuple[float, list[s
         rb_key_terms = ("rb klíč", "rb klic", "rb-klic", "rb-klíč", "mobilní klíč", "mobilni klic", "mobilní aplikace", "mobilni aplikace", "autorizace", "přihlášení", "prihlaseni")
         if any(k in hay for k in rb_key_terms):
             score += 0.240; reasons.append("rb_key overview metadata/content boost")
+        if "3d secure" in hay and not any(k in hay for k in ("rb klíč", "rb klic", "rb-klic", "rb-klíč")):
+            score -= 0.300; reasons.append("3d-secure side-topic penalty for rb_key overview")
     if "credit_card" in profile.labels:
         credit_terms = ("kreditni-karty", "kreditní karta", "kreditni karta", "kreditní karty", "kreditka", "mastercard", "visa", "o2 rb", "rb premium", "style", "easy")
         if any(k in hay for k in credit_terms):

@@ -32,6 +32,45 @@ logger = get_logger(__name__)
 # BlueChipBond s cosine ≈ 0.72) zaplnil celý výsledkový seznam.
 MAX_CHUNKS_PER_SOURCE: int = 2
 
+_STRONG_BAD_PRODUCT_URL_SEGMENTS = (
+    "/informacni-servis/",
+    "/external",
+    "/prohlaseni-o-pristupnosti",
+    "/bezpecna-aplikace/",
+    "/repackaging",
+    "/odmena-za-doporuceni",
+    "/404",
+)
+
+
+def _doc_url(doc: Document) -> str:
+    return str(doc.metadata.get("source_url") or doc.metadata.get("url") or "").lower()
+
+
+def _is_product_like_query(profile: QueryProfile) -> bool:
+    return any(
+        label in profile.labels
+        for label in (
+            "product_overview", "account_overview", "card_overview", "credit_card_catalog",
+            "mortgage_overview", "investment_overview", "rb_key_overview", "loans",
+            "savings", "investing", "cards", "mortgages", "retail_banking",
+        )
+    ) and "news_intent" not in profile.labels and "pricing" not in profile.labels
+
+
+def _matches_preferred_url(doc: Document, profile: QueryProfile) -> bool:
+    url = _doc_url(doc)
+    return any(needle in url for needle in profile.preferred_url_contains)
+
+
+def _is_strong_bad_product_url(doc: Document) -> bool:
+    url = _doc_url(doc)
+    if not url:
+        return False
+    if url.rstrip("/") == "https://www.rb.cz":
+        return True
+    return any(seg in url for seg in _STRONG_BAD_PRODUCT_URL_SEGMENTS)
+
 
 def _rrf_score(rank: int, k: int = config.RRF_K) -> float:
     """Vypočítá RRF skóre pro danou pozici v pořadovém seznamu."""
@@ -211,6 +250,21 @@ def hybrid_search(
 
     # Seřadíme podle boosted skóre
     ranked = sorted(boosted, key=lambda x: x[1], reverse=True)
+
+    if _is_product_like_query(query_profile) and query_profile.preferred_url_contains:
+        preferred_count = sum(1 for doc, _score in ranked if _matches_preferred_url(doc, query_profile))
+        if preferred_count:
+            before = len(ranked)
+            ranked = [
+                (doc, score)
+                for doc, score in ranked
+                if _matches_preferred_url(doc, query_profile) or not _is_strong_bad_product_url(doc)
+            ]
+            if len(ranked) != before:
+                logger.info(
+                    "Product URL cleanup: removed strongly bad non-preferred URLs "
+                    f"{before} → {len(ranked)} (preferred_count={preferred_count})"
+                )
 
     pricing_row_candidates = [(doc, score) for doc, score in ranked if doc.metadata.get("chunk_type") == "pricing_row"]
     logger.info(

@@ -2769,7 +2769,11 @@ class BankingRAGChain:
                 **ux,
                 "timing_ms": {"retrieval": 0, "total": round(total_ms), "llm": 0},
             }
-        elif (soft_intent_pre := _soft_guidance_intent(question)) and _soft_guidance_answer(soft_intent_pre):
+        elif (
+            (soft_intent_pre := _soft_guidance_intent(question))
+            and _soft_guidance_answer(soft_intent_pre)
+            and "pricing" not in classify_query(question).labels
+        ):
             soft_answer_pre = _soft_guidance_answer(soft_intent_pre)
             total_ms = (time.perf_counter() - t_ask) * 1000
             ux = _ux_meta("medium", f"soft guidance for {soft_intent_pre}", confidence_factors={"soft_guidance_used": True})

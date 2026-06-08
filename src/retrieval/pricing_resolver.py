@@ -24,7 +24,7 @@ _CANONICAL_QUICK_TERMS: dict[str, tuple[str, ...]] = {
     "podnikatelsky_ucet":    ("podnikatel", "business", "osvc", "ekonto"),
     "firemni_ucet":          ("firemni", "firma", "firmy", "corporate"),
     "kreditni_karta":        ("kredit", "credit"),
-    "rb_premium_karta":      ("kredit", "credit", "private"),
+    "rb_premium_karta":      ("kredit", "credit", "premium", "rb premium"),
     "easy_karta":            ("kredit", "credit"),
     "style_karta":           ("kredit", "credit"),
     "visa_gold_karta":       ("kredit", "credit", "visa"),
@@ -323,6 +323,8 @@ def pricing_priority_score(row: dict, query: str, profile: QueryProfile, canonic
     """Deterministic canonical pricing priority score."""
     score, reasons = _score_row(row, query, profile)
     source_type = pricing_source_type(row)
+    q_norm = _norm(query)
+    row_text_norm = _norm(_row_text(row))
     score += SOURCE_PRIORITY[source_type] / 10.0
     reasons.append(f"pricing_source_type={source_type}")
 
@@ -336,6 +338,21 @@ def pricing_priority_score(row: dict, query: str, profile: QueryProfile, canonic
     if canonical_product and _row_matches_canonical(row, canonical_product):
         score += 5.0
         reasons.append("exact_canonical_product_match")
+
+    explicit_credit_card_query = (
+        canonical_product in {"rb_premium_karta", "easy_karta", "style_karta", "visa_gold_karta", "o2_rb_karta", "kreditni_karta"}
+        or ("kreditni karta" in q_norm or "kreditka" in q_norm or "credit card" in q_norm)
+    )
+    if explicit_credit_card_query:
+        if any(token in row_text_norm for token in ("kreditni karta", "hlavni karta", "mastercard", "visa", "world elite", "rb premium")):
+            score += 4.0
+            reasons.append("explicit_credit_card_row_boost")
+        if any(token in row_text_norm for token in ("private banking", "ucet private banking", "bezny ucet", "vedeni uctu", "ucet premium")):
+            score -= 12.0
+            reasons.append("private_banking_or_account_penalty_for_card_query")
+        if "ucet" in row_text_norm and "karta" not in row_text_norm and "credit" not in row_text_norm and "kredit" not in row_text_norm:
+            score -= 8.0
+            reasons.append("account_row_penalty_for_explicit_card_query")
 
     if is_primary_account_fee_query(query):
         primary_reason = is_primary_account_fee_row(row)
