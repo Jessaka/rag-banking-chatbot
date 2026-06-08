@@ -160,6 +160,9 @@ SOFT_GUIDANCE_FAQ_PATTERNS = (
     (re.compile(r"asset[\s.]*management|spr[aá]v[aá][\s\w]*portfolia|portfolio[\s.]*management|slu[žz]by[\s\w]*náro[čc]n|wealth[\s.]*management|privátní[\s\w]*bankovnictv|private[\s.]*banking", re.I), "investice_sluzby_narocne"),
     (re.compile(r"pravidelné?\s*investic|investov[\s\w]*pravidelné?", re.I), "investice_pravidelne"),
     (re.compile(r"podílov[éý][\s\w]*fond|fond[\s\w]*invest", re.I), "investice_fondy"),
+    # Konkrétní produkty — pojištění k půjčkám a kartám (PŘED catalog_pojisteni)
+    (re.compile(r"poji[sš]t[eě]n[íi].{0,20}p[ůu]j[čc]|poji[sš]t[eě]n[íi].{0,20}[uú]v[eě]r|pojistit.{0,20}p[ůu]j[čc]|pojistit.{0,20}[uú]v[eě]r|schopnost.{0,30}spl[aá]cet.{0,20}p[ůu]j[čc]|reko.{0,15}poji[sš]t|poji[sš]t.{0,15}reko", re.I), "pojisteni_pujcka"),
+    (re.compile(r"poji[sš]t[eě]n[íi].{0,20}ke\s+kart|poji[sš]t[eě]n[íi].{0,20}kreditn[íi]\s+kart|pojistit.{0,20}kart", re.I), "pojisteni_karta"),
     # Catalog overview patterns (obecné dotazy na celé kategorie)
     (re.compile(r"druh\w*.{0,10}spo[rř]|jak[eé]\w*.{0,25}spo[rř]|spo[rř][íi]c[íi].{0,10}produkt|typ\w*.{0,10}spo[rř]|možnosti.{0,10}spořen|moznosti.{0,10}sporen|ulo[žz]it.{0,20}pen[íi]z|ulozit.{0,20}pen|naspořit|nasporit|ukládat.{0,15}pen|ukladat.{0,15}pen", re.I), "catalog_sporeni"),
     (re.compile(r"jak[eé]\w*.{0,10}invest|druh\w*.{0,10}invest|investičn\w*.{0,10}produkt|co.*invest\w+", re.I), "catalog_investice"),
@@ -782,6 +785,20 @@ SOFT_GUIDANCE_ANSWERS: dict[str, str] = {
         "Poskytovatel: UNIQA pojišťovna ve spolupráci s Raiffeisenbank.\n"
         "Sjednání: online nebo na pobočce.\n\n"
         "Více informací: https://www.rb.cz/osobni/pojisteni/dalsi-pojisteni/majetkove-pojisteni"
+    ),
+    "pojisteni_pujcka": (
+        "Pojištění schopnosti splácet půjčku Raiffeisenbank:\n\n"
+        "- Kryje: ztrátu zaměstnání, pracovní neschopnost, invaliditu, smrt\n"
+        "- Lze sjednat k: Minutové půjčce, RekoPůjčce, AutoPůjčce\n"
+        "- Sjednání: online nebo na pobočce při uzavření půjčky\n\n"
+        "Více: https://www.rb.cz/osobni/pojisteni/pojisteni-k-produktum"
+    ),
+    "pojisteni_karta": (
+        "Pojištění ke kreditním kartám Raiffeisenbank — Osobní strážce:\n\n"
+        "- Kryje: nemoc, úraz, ztrátu zaměstnání, hospitalizaci\n"
+        "- Automaticky zahrnuto: cestovní pojištění u EXKLUZIVNÍHO účtu a RB PREMIUM karty\n"
+        "- Sjednání: v mobilní aplikaci nebo na pobočce\n\n"
+        "Více: https://www.rb.cz/osobni/pojisteni/pojisteni-k-produktum"
     ),
     # Účty — konkrétní produkty
     "ucet_exkluzivni": (
