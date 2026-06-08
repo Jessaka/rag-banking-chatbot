@@ -118,7 +118,7 @@ GUIDED_FLOW_PATTERNS = (
     (re.compile(r"(co\s+m[aá]m\s+d[eě]lat|neoprávněn|neopravnen|podezřel).*(platb|transakc|karta)", re.I), "complaint"),
     (re.compile(r"(jak\s+zadat|údaje|udaje|iban|bic).*(sepa|swift|zahraničn|zahranicn)", re.I), "sepa_swift"),
     (re.compile(r"(rb\s+klíč|rb\s+klic).*(aktiv|nefung|odblok|přen|pren|telefon|mobil)", re.I), "rb_key"),
-    (re.compile(r"(jak\s+požádat|jak\s+pozadat|chci|vyřídit|vyridit).*(hypot[eé]k)", re.I), "mortgage"),
+    (re.compile(r"(jak\s+(?:požádat|pozadat|vyřídit|vyridit)|chci|pot[řr]ebuj[ui]|potřebuju|mám\s+zájem|mam\s+zajem|zajímám\s+se|potrebuju).*(hypot[eé]k)", re.I), "mortgage"),
     (re.compile(r"poplatek.*výběr|poplatky.*výběr|výběr.*bankomat.*poplatek|kolik.*výběr|cena.*výběr", re.I), "atm_fees"),
     (re.compile(r"kde.*(bankomat|pobočk|pobock)|najít.*(bankomat|pobočk)|hledat.*(bankomat|pobočk)|pobočk\w*|pobocek|^bankomat", re.I), "branch_atm"),
     (re.compile(r"(jak\s+)?(zru[šs]it|zru[šs]en[íi]|uzav[řr][íi]t|uzav[řr]en[íi]|cancel|close).*(ú[čc]et|ucet|account)", re.I), "account_closure"),
@@ -194,6 +194,9 @@ SOFT_GUIDANCE_FAQ_PATTERNS = (
     (re.compile(r"jak[\s\w]{0,15}založ\w*[\s\w]{0,10}(?:účet|ucet)|založ\w*[\s\w]{0,10}(?:účet|ucet)|zalo[žz]\w*[\s\w]{0,10}(?:účet|ucet)|otevř\w*[\s\w]{0,10}(?:účet|ucet)|zřídit[\s\w]{0,10}(?:účet|ucet)|chci[\s\w]{0,10}(?:si\s+)?(?:nový\s+)?(?:účet|ucet)|podmínk\w*[\s\w]{0,20}(?:účtu|uctu|účet|ucet)|co[\s\w]{0,10}pot[řr]ebuji[\s\w]{0,15}(?:účet|ucet|k\s+otev[řr])|jak\s+si\s+otev[řr]\w*|jak\s+si\s+z[řr][íi]d[íi][mt]?\w*[\s\w]{0,10}(?:účet|ucet)|dokument\w*[\s\w]{0,10}(?:účet|ucet)|co[\s\w]{0,10}mus[íi][mt]?[\s\w]{0,10}(?:účet|ucet)|po[žz]adavk\w*[\s\w]{0,10}(?:účet|ucet)|co[\s\w]{0,5}k[\s\w]{0,10}(?:účtu|uctu)|pot[řr]ebuji[\s\w]{0,5}k[\s\w]{0,10}(?:účtu|uctu)|doklad\w*[\s\w]{0,10}(?:účet|ucet)", re.I), "ucet_zalozeni_online"),
     (re.compile(r"lep[sš][íi]\w*[\s\w]{0,15}banka|výhod\w*[\s\w]{0,15}(?:rb|raiffeisen)|(?:rb|raiffeisen)[\s\w]{0,15}výhod|pro[čc][\s\w]{0,15}(?:rb|raiffeisen)|[čc][íi]m[\s\w]{0,15}(?:rb|raiffeisen)|výhod\w*[\s\w]{0,15}oproti|oproti[\s\w]{0,15}(?:jiné|ostatní|konkurenc|jinýmh?)\w*[\s\w]{0,10}bank", re.I), "rb_vyhody"),
     (re.compile(r"kdo\s+jste|co\s+jste\s+za\s+bank|o\s+raiffeisen(?:bank)?|kdy\s+byla\s+zalo[žz]ena|rok\s+zalo[žz]en[íi]|histori\w*[\s\w]{0,10}bank|kdo\s+je\s+raiffeisen", re.I), "rb_o_bance"),
+    # Hypotéka — předčasné splacení, výše úvěru
+    (re.compile(r"p[řr]ed[čc]asn\w+[\s\w]{0,15}splac|splac\w+[\s\w]{0,15}p[řr]ed[čc]asn|p[řr]ed[čc]asn\w+[\s\w]{0,10}hypot|podmínk\w*[\s\w]{0,15}(?:p[řr]ed[čc]asn|splace)", re.I), "hypoteka_predcasne_splaceni"),
+    (re.compile(r"kolik[\s\w]{0,20}(?:si\s+)?(?:mohu|mogu|mam|mám)\s+p[ůu]j[čc]|kolik[\s\w]{0,15}(?:dostanu|získám|ziskam)[\s\w]{0,10}hypot|výše[\s\w]{0,10}(?:hypot|p[ůu]j[čc])|jak[\s\w]{0,15}vysok\w*[\s\w]{0,10}hypot|na\s+kolik[\s\w]{0,10}(?:hypot|p[ůu]j[čc])", re.I), "hypoteka_vyse_uveru"),
     # Karta — odblokování, zrušení, rozdíl debet/kredit
     (re.compile(r"odblok\w+[\s\w]{0,15}kart|kart\w*[\s\w]{0,10}odblok|jak[\s\w]{0,10}odblok\w+", re.I), "karta_odblok"),
     (re.compile(r"zru[šs]it[\s\w]{0,15}(?:platební\s+)?kart|kart\w*[\s\w]{0,10}zru[šs]it|jak[\s\w]{0,10}zru[šs][íi][mt]?\w*[\s\w]{0,10}kart|ukončit[\s\w]{0,10}kart", re.I), "karta_zrusit"),
@@ -589,6 +592,23 @@ SOFT_GUIDANCE_ANSWERS: dict[str, str] = {
         "Výhoda: nepotřebujete zástavní právo — rychlejší sjednání, bez ocenění nemovitosti.\n"
         "Vhodné pro: rekonstrukce, modernizace, vybavení.\n\n"
         "Více informací: https://www.rb.cz/osobni/hypoteky/nabidka-hypotek/rekopujcka"
+    ),
+    "hypoteka_predcasne_splaceni": (
+        "Předčasné splacení hypotéky u Raiffeisenbank:\n\n"
+        "- **Zdarma**: až 25 % jistiny ročně mimo fixační období\n"
+        "- **V době fixace**: poplatek dle zákona (max. 1 % z předčasně splacené částky, max. 50 000 Kč)\n"
+        "- **Při refixaci**: mimořádná splátka zdarma\n"
+        "- **Při prodeji nemovitosti**: zvláštní podmínky — doporučujeme konzultaci\n\n"
+        "Více: https://www.rb.cz/osobni/hypoteky/sluzby-k-hypotekam"
+    ),
+    "hypoteka_vyse_uveru": (
+        "Výše hypotéky závisí na více faktorech:\n\n"
+        "- **LTV** (poměr úvěru k hodnotě nemovitosti): standardně max. 80 % hodnoty nemovitosti\n"
+        "- **Mladí do 36 let**: až 90 % LTV\n"
+        "- **Příjmy**: banka posuzuje vaši bonitu a schopnost splácet\n"
+        "- **Typ nemovitosti**: nová stavba vs. starší nemovitost\n\n"
+        "Spočítejte si orientačně: https://www.rb.cz/osobni/hypoteky/hypotecni-kalkulacka\n"
+        "Nebo kontaktujte hypotečního specialistu: 800 900 900"
     ),
     "hypoteka_refinancovani": (
         "Refinancování hypotéky umožňuje převést hypotéku od jiné banky k Raiffeisenbank za výhodnějších podmínek.\n\n"

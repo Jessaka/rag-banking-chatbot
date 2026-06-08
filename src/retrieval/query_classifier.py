@@ -875,8 +875,12 @@ def source_priority(doc: Document, profile: QueryProfile) -> tuple[float, list[s
         if needle in url or needle in title:
             score -= 0.060; reasons.append(f"penalized {needle}")
 
-    if any(seg in url for seg in ("/pro-media/", "/tiskove-zpravy/", "/aktuality/", "/esg/novinky/", "/informacni-servis/pro-media")):
-        score -= 3.0; reasons.append("press/news URL penalty")
+    if "/tiskove-zpravy/" in url or "/o-nas/ruzne/odeslano" in url:
+        score -= 4.0; reasons.append("press release/form URL penalty -4.0")
+    elif "/informacni-servis/aktuality/" in url:
+        score -= 3.5; reasons.append("aktuality URL penalty -3.5")
+    elif any(seg in url for seg in ("/pro-media/", "/aktuality/", "/esg/novinky/", "/informacni-servis/pro-media", "/informacni-servis/esg/")):
+        score -= 3.0; reasons.append("press/news URL penalty -3.0")
 
     if any(seg in url for seg in ("/podnikatele/", "/private-banking/", "/firmy/", "/korporace/")):
         score -= 0.5; reasons.append("non-retail URL global penalty")
@@ -912,6 +916,10 @@ def source_priority(doc: Document, profile: QueryProfile) -> tuple[float, list[s
         mortgage_terms = ("hypotéka", "hypoteka", "hypoteční", "hypotecni", "úvěr na bydlení", "uver na bydleni", "refinancování", "refinancovani")
         if any(k in hay for k in mortgage_terms):
             score += 0.240; reasons.append("mortgage metadata/content boost")
+        if "/osobni/hypoteky/" in url:
+            score += 1.0; reasons.append("hypoteky product page URL boost +1.0")
+        elif "/attachments/pi/hypoteky" in url:
+            score += 0.5; reasons.append("hypoteky attachment URL boost +0.5")
         if "uniqa" in hay or "pojišťovna" in hay:
             score -= 0.180; reasons.append("cross-domain insurance penalty for mortgage overview")
     if "investment_overview" in profile.labels:
