@@ -127,7 +127,7 @@ GUIDED_FLOW_PATTERNS = (
 # --- Priority 3: Procedural flow patterns ---
 # These run before retrieval (like guided flows) for deterministic how-to answers.
 PROCEDURAL_FLOW_PATTERNS = (
-    (re.compile(r"apple\s*pay|google\s*pay|garmin\s*pay|fitbit\s*pay|mobiln[íi]\s+pla[ct]|platit\s+telefonem|hodinkami\s+plat|platba\s+hodinkami|jak\s+aktiv\w+\s+(?:apple|google|garmin)", re.I), "mobilni_platby"),
+    (re.compile(r"apple\s*pay|google\s*pay|garmin\s*pay|fitbit\s*pay|mobiln[íi]\s+pla[ct]|platit\s+telefonem|hodinkami\s+plat|platba\s+hodinkami|jak\s+aktiv\w+\s+(?:apple|google|garmin)|p[řr]idat.{0,20}wallet|apple\s+wallet|google\s+wallet|kartu\s+do.{0,15}pay", re.I), "mobilni_platby"),
     (re.compile(r"(jak\s+)?(aktiv[uo]j|aktivovat|aktivac[ei]\w*|zapnout|zapni|zač[íi]t\s+pou[žz][íi]v[aá]t).*(kart\w*|plateb)|(kart\w*|plateb)[\s\w]{0,20}aktivac[ei]\w*|před[\s\w]{0,20}pou[žz]i\w*[\s\w]{0,10}kart|prvn[íi]\w*[\s\w]{0,10}pou[žz]i\w*|co[\s\w]{0,20}ud[eě]lat[\s\w]{0,20}kart|nová\s+karta\s+co|p[řr]i[šs]la[\s\w]{0,10}kart|dostal\w*[\s\w]{0,15}kart", re.I), "activation_flow"),
     (re.compile(r"(jak\s+)?(zv[ýy][šs][íi][mtš]|zv[ýy][šs]it|nav[ýy][šs][íi][mtš]|nav[ýy][šs]it|sn[íi][žz][íi][mtš]|sn[íi][žz]it).*(limit|kart|v[ýy]b[eě]r)", re.I), "card_limit_flow"),
     (re.compile(r"(jak\s+)?(zm[eě]n[íi]t|zm[eě]n[aá]|nastav[íi]t|nastavit).*(limit).*(kart\w*)?|(jak\s+)?limit.*(zm[eě]n[íi]t|nastavit)", re.I), "card_limit_flow"),
@@ -151,6 +151,7 @@ SOFT_GUIDANCE_FAQ_PATTERNS = (
     (re.compile(r"limit\w*\s+(?:karet|kar[taeoůám]\w*)|limit\w*[\s\w]{0,20}(?:platb\w*|v[ýy]b[eě]r)|(?:jak[éý]\w*|jak\s+vysoké?\w*|kolik|výše?)[\s\w]{0,15}limit\w*[\s\w]{0,15}kar\w+|limit\w*[\s\w]{0,10}(?:debetní|kreditní|platební)", re.I), "karta_limity_info"),
     (re.compile(r"(jak\s+)?funguje\s+(plateb|kart|limit|v[ýy]b[eě]r|mobil)", re.I), "card_how_it_works"),
     (re.compile(r"(co\s+)?je\s+(to\s+)?(kredit|debet|limit|disponibil|z[ůu]statek)", re.I), "card_what_is"),
+    (re.compile(r"vybrat.{0,30}termínovan|termínovan.{0,30}p[řr]ed[čc]asn|p[řr]ed[čc]asn.{0,20}v[ýy]b[eě]r.{0,20}vklad|zru[šs]it.{0,20}termínovan", re.I), "terminovany_vklad_predcasne"),
     (re.compile(r"(jak\s+)?(m[ůu][žz]u|mohu|lze|jde)\s+(pou[žz][íi]t|platit|v[ýy]brat)", re.I), "card_usage_can_i"),
     (re.compile(r"(pot[řr]ebuju|potrebuju|chci|mus[íi]m).*(kart|platit|limit)", re.I), "card_need_help"),
     (re.compile(r"poji[sš]t[eě]n[íi].*(vozidel|auto)|poji[sš]ten[ií].*(vozidel|auto)|povinné?\s+ru[čc]en|povinné?\s+ruceni|havarijní|havarijni\s+poji", re.I), "vehicle_insurance"),
@@ -160,7 +161,8 @@ SOFT_GUIDANCE_FAQ_PATTERNS = (
     (re.compile(r"asset[\s.]*management|spr[aá]v[aá][\s\w]*portfolia|portfolio[\s.]*management|slu[žz]by[\s\w]*náro[čc]n|wealth[\s.]*management|privátní[\s\w]*bankovnictv|private[\s.]*banking", re.I), "investice_sluzby_narocne"),
     (re.compile(r"pravidelné?\s*investic|investov[\s\w]*pravidelné?", re.I), "investice_pravidelne"),
     (re.compile(r"podílov[éý][\s\w]*fond|fond[\s\w]*invest", re.I), "investice_fondy"),
-    # Konkrétní produkty — pojištění k půjčkám a kartám (PŘED catalog_pojisteni)
+    # Konkrétní produkty — pojištění k hypotéce, půjčkám a kartám (PŘED catalog_pojisteni)
+    (re.compile(r"poji[sš]t[eě]n[íi].{0,30}hypot[eé]ku|pojistit.{0,30}hypot[eé]ku|schopnost.{0,30}spl[aá]cet.{0,20}hypot", re.I), "pojisteni_hypoteka"),
     (re.compile(r"poji[sš]t[eě]n[íi].{0,20}p[ůu]j[čc]|poji[sš]t[eě]n[íi].{0,20}[uú]v[eě]r|pojistit.{0,20}p[ůu]j[čc]|pojistit.{0,20}[uú]v[eě]r|schopnost.{0,30}spl[aá]cet.{0,20}p[ůu]j[čc]|reko.{0,15}poji[sš]t|poji[sš]t.{0,15}reko", re.I), "pojisteni_pujcka"),
     (re.compile(r"poji[sš]t[eě]n[íi].{0,20}ke\s+kart|poji[sš]t[eě]n[íi].{0,20}kreditn[íi]\s+kart|pojistit.{0,20}kart", re.I), "pojisteni_karta"),
     # Catalog overview patterns (obecné dotazy na celé kategorie)
@@ -172,7 +174,7 @@ SOFT_GUIDANCE_FAQ_PATTERNS = (
     # Konkrétní produkty — hypotéky
     (re.compile(r"odpov[eě]dn[aá][\s\w]*hypot|hypot[\s\w]*ekologick", re.I), "hypoteka_odpovedna"),
     (re.compile(r"americk[aá][\s\w]*hypot|hypot[\s\w]*(cokoliv|na\s+cokoliv)", re.I), "hypoteka_americka"),
-    (re.compile(r"hypot[\s\w]*pron[aá]jem|pron[aá]jem[\s\w]*hypot", re.I), "hypoteka_pronajem"),
+    (re.compile(r"hypot.{0,30}pron[aá]j|pron[aá]j.{0,20}hypot|investičn[íi]\s+nemovit.{0,20}hypot|hypot.{0,20}investičn[íi]\s+nemovit", re.I), "hypoteka_pronajem"),
     (re.compile(r"rekop[ůu]j[čc]k|p[ůu]j[čc]k[\s\w]*rekonstrukc|rekonstrukc[\s\w]*p[ůu]j[čc]k", re.I), "hypoteka_rekopujcka"),
     (re.compile(r"refinancov[\s\w]*hypot|hypot[\s\w]*refinancov", re.I), "hypoteka_refinancovani"),
     (re.compile(r"[úu]rokov[aá][\s\w]{0,15}sazba[\s\w]{0,15}hypot|sazba[\s\w]{0,15}hypot|hypot[\s\w]{0,15}sazba|hypote[čc]n[íi][\s\w]{0,15}sazb|[úu]rok[\s\w]{0,15}hypot", re.I), "hypoteka_sazby"),
@@ -189,6 +191,7 @@ SOFT_GUIDANCE_FAQ_PATTERNS = (
     (re.compile(r"životní[\s\w]*pojist|pojist[\s\w]*život", re.I), "pojisteni_zivotni"),
     (re.compile(r"majetkov[éé][\s\w]*pojist|pojist[\s\w]*majetek|pojist[\s\w]*majetkov", re.I), "pojisteni_majetkove"),
     # Konkrétní produkty — účty
+    (re.compile(r"výhod\w*.{0,25}aktivn[íi][\s\w]*(?:účet|ucet|účtu|uctu)|aktivn[íi][\s\w]*(?:účet|ucet|účtu|uctu).{0,25}výhod|jak[eé]\w*.{0,10}aktivn[íi][\s\w]*(?:účet|ucet|účtu|uctu)|co\b.{0,15}aktivn[íi][\s\w]*(?:účet|ucet|účtu|uctu)|aktivn[íi][\s\w]*(?:účet|ucet|účtu|uctu).{0,10}co\b", re.I), "ucet_aktivni"),
     (re.compile(r"rozd[íi]l[\s\w]{0,20}\b[uú][cč](?:et|t)\w*|porovn\w*[\s\w]{0,15}\b[uú][cč](?:et|t)\w*|kter[ýýaé]\w*[\s\w]{0,20}\b[uú][cč](?:et|t)\w*[\s\w]{0,20}(?:vybrat|vhodn|lep[sš]|doporu[cč])|jak[ýé]\w*[\s\w]{0,15}\b[uú][cč](?:et|t)\w*[\s\w]{0,15}(?:vybrat|vhodn|doporu[cč]|zvolit)|chytr[ýéaů]\w*[\s\w]{0,15}aktiv[ní]\w*|aktiv[ní]\w*[\s\w]{0,15}chytr[ýéaů]\w*|chytr[ýéaů]\w*[\s\w]{0,15}exkluziv|lep[sš][íi]\w*[\s\w]{0,20}\b[uú][cč](?:et|t)\w*|\bdoporu[cč]\w*[\s\w]{0,20}\b[uú][cč](?:et|t)\w*|\b[uú][cč](?:et|t)\w*[\s\w]{0,20}doporu[cč]", re.I), "ucet_srovnani"),
     (re.compile(r"p[řr]ejít[\s\w]{0,10}na[\s\w]{0,5}aktivn|upgrade\w*[\s\w]{0,10}(?:účet|ucet)|zm[eě]nit[\s\w]{0,10}(?:účet|ucet)[\s\w]{0,5}na|chci[\s\w]{0,10}aktivn[íi][\s\w]{0,10}m[íi]sto|p[řr]epnout[\s\w]{0,10}(?:účet|ucet)|zm[eě]na[\s\w]{0,5}(?:účtu|uctu|účet|ucet)", re.I), "ucet_upgrade"),
     (re.compile(r"chytr[ýéaý][\s\w]*účet|bezn[ýéaý][\s\w]*účet[\s\w]*zdarma|účet[\s\w]*zdarma[\s\w]*bez\s*podmínek", re.I), "ucet_chytry"),
@@ -201,6 +204,9 @@ SOFT_GUIDANCE_FAQ_PATTERNS = (
     (re.compile(r"jak[\s\w]{0,15}založ\w*[\s\w]{0,10}(?:účet|ucet)|založ\w*[\s\w]{0,10}(?:účet|ucet)|zalo[žz]\w*[\s\w]{0,10}(?:účet|ucet)|otevř\w*[\s\w]{0,10}(?:účet|ucet)|zřídit[\s\w]{0,10}(?:účet|ucet)|chci[\s\w]{0,10}(?:si\s+)?(?:nový\s+)?(?:účet|ucet)|podmínk\w*[\s\w]{0,20}(?:účtu|uctu|účet|ucet)|co[\s\w]{0,10}pot[řr]ebuji[\s\w]{0,15}(?:účet|ucet|k\s+otev[řr])|jak\s+si\s+otev[řr]\w*|jak\s+si\s+z[řr][íi]d[íi][mt]?\w*[\s\w]{0,10}(?:účet|ucet)|dokument\w*[\s\w]{0,10}(?:účet|ucet)|co[\s\w]{0,10}mus[íi][mt]?[\s\w]{0,10}(?:účet|ucet)|po[žz]adavk\w*[\s\w]{0,10}(?:účet|ucet)|co[\s\w]{0,5}k[\s\w]{0,10}(?:účtu|uctu)|pot[řr]ebuji[\s\w]{0,5}k[\s\w]{0,10}(?:účtu|uctu)|doklad\w*[\s\w]{0,10}(?:účet|ucet)", re.I), "ucet_zalozeni_online"),
     (re.compile(r"lep[sš][íi]\w*[\s\w]{0,15}banka|výhod\w*[\s\w]{0,15}(?:rb|raiffeisen)|(?:rb|raiffeisen)[\s\w]{0,15}výhod|pro[čc][\s\w]{0,15}(?:rb|raiffeisen)|[čc][íi]m[\s\w]{0,15}(?:rb|raiffeisen)|výhod\w*[\s\w]{0,15}oproti|oproti[\s\w]{0,15}(?:jiné|ostatní|konkurenc|jinýmh?)\w*[\s\w]{0,10}bank", re.I), "rb_vyhody"),
     (re.compile(r"kdo\s+jste|co\s+jste\s+za\s+bank|o\s+raiffeisen(?:bank)?|kdy\s+byla\s+zalo[žz]ena|rok\s+zalo[žz]en[íi]|histori\w*[\s\w]{0,10}bank|kdo\s+je\s+raiffeisen", re.I), "rb_o_bance"),
+    (re.compile(r"rb\s*club|rbclub|v[eě]rnostn[íi]\s+program[\s\w]{0,15}(?:rb|raiffeisen)|výhod\w*.{0,25}(?:rb\s*)?club\b|(?:rb\s*)?club\b.{0,25}výhod|jak\s+funguje[\s\w]{0,10}rb\s*club", re.I), "rb_club"),
+    (re.compile(r"multim[eě]na|multimena|platby.{0,30}ciz[íi]\s+m[eě]n|ciz[íi]\s+m[eě]n.{0,25}bez\s+poplatk|konverz.{0,25}m[eě]n[\s\w]*(?:bez|zdarma|poplatk)", re.I), "multimena"),
+    (re.compile(r"více\s+[uú][cč]t[ůu]|víc[e]?\s+[uú][cč]t|druh[ýéý]\s+[uú][cč]et|dal[šs][íi]\s+[uú][cč]et|mít\s+dva\s+[uú][cč]ty|mam\s+dva\s+[uú][cč]ty|otevřít\s+dal[šs][íi]\s+[uú][cč]et", re.I), "vice_uctu"),
     # Hypotéka — předčasné splacení, výše úvěru
     (re.compile(r"p[řr]ed[čc]asn\w+[\s\w]{0,15}splac|splac\w+[\s\w]{0,15}p[řr]ed[čc]asn|p[řr]ed[čc]asn\w+[\s\w]{0,10}hypot|podmínk\w*[\s\w]{0,15}(?:p[řr]ed[čc]asn|splace)", re.I), "hypoteka_predcasne_splaceni"),
     (re.compile(r"kolik[\s\w]{0,20}(?:si\s+)?(?:mohu|mogu|mam|mám)\s+p[ůu]j[čc]|kolik[\s\w]{0,15}(?:dostanu|získám|ziskam)[\s\w]{0,10}hypot|výše[\s\w]{0,10}(?:hypot|p[ůu]j[čc])|jak[\s\w]{0,15}vysok\w*[\s\w]{0,10}hypot|na\s+kolik[\s\w]{0,10}(?:hypot|p[ůu]j[čc])", re.I), "hypoteka_vyse_uveru"),
@@ -603,10 +609,11 @@ SOFT_GUIDANCE_ANSWERS: dict[str, str] = {
         "Více informací: https://www.rb.cz/osobni/hypoteky/nabidka-hypotek/americka-hypoteka"
     ),
     "hypoteka_pronajem": (
-        "Hypotéka na pronájem je určena pro koupi nemovitosti k pronájmu.\n\n"
-        "Vhodné pro: investory kupující byt nebo dům za účelem pronájmu.\n"
-        "Příjem z pronájmu lze zahrnout do bonity při posuzování žádosti.\n\n"
-        "Více informací: https://www.rb.cz/osobni/hypoteky/nabidka-hypotek/hypoteka-na-pronajem"
+        "Hypotéka na pronájem Raiffeisenbank:\n\n"
+        "- Určena pro koupi nemovitosti k pronajímání\n"
+        "- Financování až do 60–70 % hodnoty nemovitosti (LTV)\n"
+        "- Příjem z pronájmu lze zohlednit při posuzování bonity\n\n"
+        "Více: https://www.rb.cz/osobni/hypoteky/nabidka-hypotek/hypoteka-na-pronajem"
     ),
     "hypoteka_rekopujcka": (
         "RekoPůjčka je půjčka na rekonstrukci BEZ zástavy nemovitosti.\n\n"
@@ -720,6 +727,13 @@ SOFT_GUIDANCE_ANSWERS: dict[str, str] = {
         "- Pevná sazba po celou dobu vkladu\n\n"
         "Více: https://www.rb.cz/osobni/zhodnoceni-uspor/sporeni/terminovany-vklad"
     ),
+    "terminovany_vklad_predcasne": (
+        "Termínovaný vklad Raiffeisenbank — předčasný výběr:\n\n"
+        "- Lze vybrat až **20 % vkladu zdarma** před splatností\n"
+        "- Zbývající část: poplatek za předčasné ukončení dle ceníku\n"
+        "- Doporučujeme počkat na splatnost pro maximální výnos\n\n"
+        "Více: https://www.rb.cz/osobni/zhodnoceni-uspor/sporeni/terminovany-vklad"
+    ),
     "sporeni_stavebni": (
         "Stavební spoření Raiffeisenbank (Raiffeisen stavební spořitelna):\n\n"
         "- Garantovaná úroková sazba: 3,3 % p.a.\n"
@@ -798,6 +812,13 @@ SOFT_GUIDANCE_ANSWERS: dict[str, str] = {
         "- Kryje: nemoc, úraz, ztrátu zaměstnání, hospitalizaci\n"
         "- Automaticky zahrnuto: cestovní pojištění u EXKLUZIVNÍHO účtu a RB PREMIUM karty\n"
         "- Sjednání: v mobilní aplikaci nebo na pobočce\n\n"
+        "Více: https://www.rb.cz/osobni/pojisteni/pojisteni-k-produktum"
+    ),
+    "pojisteni_hypoteka": (
+        "Pojištění schopnosti splácet hypotéku Raiffeisenbank:\n\n"
+        "- Kryje: smrt, invaliditu III. stupně, pracovní neschopnost, ztrátu zaměstnání\n"
+        "- Splátky hradí pojišťovna po dobu platnosti pojistné události\n"
+        "- Sjednání: při uzavření hypotéky nebo kdykoli během splácení\n\n"
         "Více: https://www.rb.cz/osobni/pojisteni/pojisteni-k-produktum"
     ),
     # Účty — konkrétní produkty
@@ -961,6 +982,28 @@ SOFT_GUIDANCE_ANSWERS: dict[str, str] = {
         "- Zákaznická linka: 412 440 000 (Po-Ne 7-22 hod)\n\n"
         "Více: https://www.rb.cz/o-nas"
     ),
+    "rb_club": (
+        "RB Club — věrnostní program Raiffeisenbank:\n\n"
+        "- Sbírejte body za platby kartou\n"
+        "- Body vyměňte za slevy, zboží nebo dárkové poukazy\n"
+        "- Přístupný pro držitele debetní i kreditní karty RB\n\n"
+        "Více: https://www.rb.cz/rbclub"
+    ),
+    "multimena": (
+        "Multiměna Raiffeisenbank:\n\n"
+        "- Platby kartou v cizí měně **bez poplatku za konverzi**\n"
+        "- Dostupná na AKTIVNÍM a EXKLUZIVNÍM účtu\n"
+        "- Automaticky aktivní — není třeba nic nastavovat\n"
+        "- Výhodný kurz RB místo drahých kurzů karetních asociací\n\n"
+        "Více: https://www.rb.cz/osobni/ucty/bezne-ucty/aktivni-ucet"
+    ),
+    "vice_uctu": (
+        "Ano, u Raiffeisenbank můžete mít více účtů:\n\n"
+        "- Každý typ účtu (CHYTRÝ, AKTIVNÍ, EXKLUZIVNÍ) lze mít pouze jeden\n"
+        "- Ale lze kombinovat různé typy účtů\n"
+        "- Např. CHYTRÝ pro každodenní platby + spořicí účet\n\n"
+        "Více: zákaznická linka 800 900 900"
+    ),
     "rb_vyhody": (
         "Raiffeisenbank nabízí tyto klíčové výhody:\n"
         "- CHYTRÝ účet zdarma — vedení, výběry, platby bez poplatků\n"
@@ -1066,6 +1109,15 @@ SOFT_GUIDANCE_ANSWERS: dict[str, str] = {
         "Přechod z CHYTRÉHO na AKTIVNÍ nebo EXKLUZIVNÍ je možný kdykoliv.\n"
         "Nové výhody jsou dostupné okamžitě po změně.\n\n"
         "Více: https://www.rb.cz/osobni/ucty/bezne-ucty"
+    ),
+    "ucet_aktivni": (
+        "AKTIVNÍ účet Raiffeisenbank — 49 Kč/měsíc:\n\n"
+        "- Dvě debetní karty (Mastercard + Visa)\n"
+        "- **Multiměna**: platby v cizí měně bez poplatku za konverzi\n"
+        "- Výběry z cizích bankomatů v ČR 2× měsíčně zdarma\n"
+        "- Povolený debet (přečerpání) automaticky\n"
+        "- Výběry ze zahraničních bankomatů bez poplatku RB\n\n"
+        "Více: https://www.rb.cz/osobni/ucty/bezne-ucty/aktivni-ucet"
     ),
     "kreditni_karty_srovnani": (
         "Srovnání kreditních karet Raiffeisenbank:\n\n"
