@@ -1,7 +1,7 @@
 import requests
 import json
 
-BACKEND = "http://91.98.85.129:8000"
+BACKEND = "http://localhost:8000"
 
 questions = [
     # ZÁKLADNÍ PRODUKTY
