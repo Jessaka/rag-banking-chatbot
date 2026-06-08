@@ -15,6 +15,8 @@ _NORMALIZE_REPLACEMENTS: tuple[tuple[str, str], ...] = (
     ("exclusive", "exkluzivní"),
     ("exklusive", "exkluzivní"),
     ("exkluzivni", "exkluzivní"),
+    ("exkluziv ucet", "exkluzivní účet"),
+    ("exkluziv ", "exkluzivní "),
     ("aktivni", "aktivní"),
     ("chytry", "chytrý"),
     # Slovesné formy půjčit bez diakritiky → s diakritikou
@@ -30,6 +32,7 @@ _NORMALIZE_REPLACEMENTS: tuple[tuple[str, str], ...] = (
     ("pojisteni", "pojištění"),
     ("reklamace", "reklamace"),
     ("ucet", "účet"),
+    ("účet exkluziv", "exkluzivní účet"),
 )
 
 

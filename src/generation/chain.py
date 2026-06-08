@@ -186,6 +186,7 @@ SOFT_GUIDANCE_FAQ_PATTERNS = (
     # Konkrétní produkty — účty
     (re.compile(r"rozd[íi]l[\s\w]{0,20}\b[uú][cč](?:et|t)\w*|porovn\w*[\s\w]{0,15}\b[uú][cč](?:et|t)\w*|kter[ýýaé]\w*[\s\w]{0,20}\b[uú][cč](?:et|t)\w*[\s\w]{0,20}(?:vybrat|vhodn|lep[sš]|doporu[cč])|jak[ýé]\w*[\s\w]{0,15}\b[uú][cč](?:et|t)\w*[\s\w]{0,15}(?:vybrat|vhodn|doporu[cč]|zvolit)|chytr[ýéaů]\w*[\s\w]{0,15}aktiv[ní]\w*|aktiv[ní]\w*[\s\w]{0,15}chytr[ýéaů]\w*|chytr[ýéaů]\w*[\s\w]{0,15}exkluziv|lep[sš][íi]\w*[\s\w]{0,20}\b[uú][cč](?:et|t)\w*|\bdoporu[cč]\w*[\s\w]{0,20}\b[uú][cč](?:et|t)\w*|\b[uú][cč](?:et|t)\w*[\s\w]{0,20}doporu[cč]", re.I), "ucet_srovnani"),
     (re.compile(r"chytr[ýéaý][\s\w]*účet|bezn[ýéaý][\s\w]*účet[\s\w]*zdarma|účet[\s\w]*zdarma[\s\w]*bez\s*podmínek", re.I), "ucet_chytry"),
+    (re.compile(r"exkluzivn[íi][\s\w]*(?:účet|ucet)|(?:účet|ucet)[\s\w]*exkluzivn[íi]|kolik[\s\w]{0,15}exkluzivn[íi]", re.I), "ucet_exkluzivni"),
     (re.compile(r"dětský[\s\w]*účet|účet[\s\w]*dět|účet[\s\w]*dítě", re.I), "ucet_detsky"),
     (re.compile(r"studentsk\w*[\s\w]*(?:účet|ucet)|(?:účet|ucet)[\s\w]*studentsk", re.I), "ucet_studentsky"),
     # Odměna / akce za založení účtu
@@ -765,6 +766,16 @@ SOFT_GUIDANCE_ANSWERS: dict[str, str] = {
         "Více informací: https://www.rb.cz/osobni/pojisteni/dalsi-pojisteni/majetkove-pojisteni"
     ),
     # Účty — konkrétní produkty
+    "ucet_exkluzivni": (
+        "EXKLUZIVNÍ účet Raiffeisenbank — 299 Kč/měsíc (podmíněně zdarma):\n\n"
+        "- Vedení účtu: 299 Kč/měsíc, nebo **zdarma** při splnění podmínek\n"
+        "- Zlaté debetní karty Mastercard / Visa\n"
+        "- Výběry ze všech bankomatů v ČR i zahraničí zdarma\n"
+        "- Cestovní pojištění až 10 mil. Kč\n"
+        "- Přístup do letištních salónků Priority Pass\n"
+        "- Povolený debet, Multiměna, dvě karty zdarma\n\n"
+        "Více: https://www.rb.cz/osobni/ucty/bezne-ucty/exkluzivni-ucet"
+    ),
     "ucet_chytry": (
         "CHYTRÝ účet Raiffeisenbank je bezpodmínečně zdarma:\n\n"
         "- Vedení účtu: 0 Kč (zdarma napořád, bez podmínek)\n"
