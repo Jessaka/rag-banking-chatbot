@@ -3,6 +3,66 @@ import json
 
 BACKEND = "http://localhost:8000"
 
+RB_WEB_QUESTIONS = [
+    # ÚČTY
+    "Co je CHYTRÝ účet a kolik stojí?",
+    "Jaké jsou výhody AKTIVNÍHO účtu?",
+    "Za jakých podmínek je EXKLUZIVNÍ účet zdarma?",
+    "Jak si otevřu dětský účet pro dítě mladší 15 let?",
+    "Jak funguje studentský účet pro studenty 18+?",
+    "Co je RB Club a jak fungují výhody?",
+    "Co je Multiměna a k čemu slouží?",
+    "Jaký je poplatek za výběr z bankomatu v zahraničí?",
+    "Mohu mít u RB více účtů najednou?",
+    "Co je povolené přečerpání účtu a jak ho získám?",
+    # KARTY
+    "Jaké debetní karty nabízíte k účtům?",
+    "Jaký je rozdíl mezi Mastercard a Visa kartou?",
+    "Co je kreditní karta O2 RB a jaké má výhody?",
+    "Jak funguje splátkový program ke kreditní kartě?",
+    "Jaká je maximální výše kreditního limitu?",
+    "Co jsou doplňkové služby ke kartám?",
+    "Jak přidám kartu do Apple Wallet?",
+    "Jak platím kartou bezkontaktně?",
+    "Jak funguje Garmin Pay?",
+    "Co dělám když mi karta skončí platnost?",
+    # PŮJČKY
+    "Co je Minutová půjčka a jak ji sjednám?",
+    "Jaká je minimální a maximální výše půjčky?",
+    "Co je RePůjčka a jak funguje sloučení půjček?",
+    "Mohu si půjčit na auto u Raiffeisenbank?",
+    "Co je PlatímPak a jak funguje odložená platba?",
+    "Jak zjistím zda mám nárok na půjčku?",
+    "Jak rychle dostanu peníze z půjčky?",
+    # HYPOTÉKY
+    "Co je Hypotéka naruby?",
+    "Co je Odpovědná hypotéka a pro koho je vhodná?",
+    "Jak funguje Hypotéka na cokoliv?",
+    "Mohu si vzít hypotéku na pronajímaný byt?",
+    "Co je RekoPůjčka a jak se liší od hypotéky?",
+    "Jak probíhá refinancování hypotéky?",
+    "Jaká je minimální výše hypotéky?",
+    "Co jsou Hypodny?",
+    # SPOŘENÍ A INVESTICE
+    "Jak funguje bonusový spořicí účet?",
+    "Mohu vybrat peníze z termínovaného vkladu předčasně?",
+    "Co je stavební spoření a kdo ho poskytuje?",
+    "Jak fungují pravidelné investice?",
+    "Co jsou podílové fondy a jak si vybrat?",
+    "Co je DIP a jakou daňovou úlevu mi dá?",
+    "Co jsou Služby pro náročné investory?",
+    "Kde najdu investiční analýzy RB?",
+    # POJIŠTĚNÍ
+    "Jaké pojištění mohu sjednat ke kreditní kartě?",
+    "Co kryje cestovní pojištění NAPLNO?",
+    "Co je pojištění OPORA?",
+    "Mohu si pojistit auto u Raiffeisenbank?",
+    "Co je pojištění schopnosti splácet hypotéku?",
+    # DIGITÁLNÍ SLUŽBY
+    "Co je Bankovní identita a k čemu ji použiji?",
+    "Jak funguje mobilní aplikace Raiffeisen bankovnictví?",
+]
+
 WEB_RB_QUESTIONS = [
     # ÚČTY
     "Kolik stojí CHYTRÝ účet?",
@@ -118,7 +178,7 @@ EXPECTED = {
     "sporici ucet sazba": "4,2",
 }
 
-all_questions = questions + WEB_RB_QUESTIONS
+all_questions = questions + WEB_RB_QUESTIONS + RB_WEB_QUESTIONS
 
 results = []
 for q in all_questions:
