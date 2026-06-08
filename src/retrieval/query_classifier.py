@@ -51,6 +51,7 @@ PERSONAL_ACCOUNT_TERMS = (
     "běžný účet", "běžného účtu", "bezny ucet", "bezneho uctu",
     "osobní účet", "osobního účtu", "osobni ucet", "aktivní účet", "aktivni ucet",
     "aktivního účtu", "aktivniho uctu", "ekonto", "ekonta", "chytrý účet", "chytry ucet",
+    "studentsk",
 )
 
 PERSONAL_SOURCE_TERMS = ("osobni", "osobní", "cenik-pi", "ekonto", "aktivni-ucet", "bezny-ucet")
@@ -413,7 +414,7 @@ def classify_query(query: str) -> QueryProfile:
         labels.add("supported_domain")
     if any(k in q for k in ("půjčk", "pujck", "půjčit", "pujcit", "půjčím", "pujcim", "půjčí", "pujci", "si půjč", "si pujc", "úvěr", "uver", "kontokorent", "spotřebitelský", "spotrebitelsky", "refinancov", "rpsn")):
         labels.add("loans")
-    if any(k in q for k in ("spoření", "sporeni", "spořicí", "sporici", "termínovaný vklad", "terminovany vklad", "stavební spoření", "stavebni sporeni", "úrok", "urok", "zhodnocení", "zhodnoceni", "vklad")):
+    if any(k in q for k in ("spoření", "sporeni", "spořicí", "sporici", "termínovaný vklad", "terminovany vklad", "stavební spoření", "stavebni sporeni", "úrok", "urok", "úroci", "uroci", "zhodnocení", "zhodnoceni", "vklad", "uložit", "ulozit", "naspořit", "nasporit", "uspořit", "usporit", "ukládat", "ukladat")):
         labels.add("savings")
         labels.add("supported_domain")
     if any(k in q for k in ("invest", "fond", "dip", "akcie", "dluhopis")):

@@ -34,7 +34,7 @@ from src.generation.confidence_semantics import (
     resolve_confidence_semantics,
 )
 from src.generation.pricing_response_formatter import format_conditional_fee, format_tiered_pricing
-from src.retrieval.query_classifier import classify_query
+from src.retrieval.query_classifier import classify_query, normalize_query
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -100,13 +100,21 @@ RESILIENCE_RESPONSES = {
     ),
 }
 
+BLOCKED_RESPONSES = {
+    "blocked_illegal": "Tuto akci nemohu pomoci provést.",
+    "blocked_privacy": (
+        "PIN ke kartě jsou soukromé bezpečnostní údaje. "
+        "Nemohu pomoci zjistit nebo získat PIN patřící jiné osobě."
+    ),
+}
+
 EKONTO_CLARIFICATION = (
     "Upřesněte prosím, zda myslíte osobní eKonto, nebo podnikatelské eKonto. "
     "Stačí odpovědět například „osobní“ nebo „podnikatelské“."
 )
 
 GUIDED_FLOW_PATTERNS = (
-    (re.compile(r"(ztratil|ztratila|ztrata|ztráta|ukrad|odcizen).*(kart\w*)|blokac[ei]\w*\s+kart\w*|zablok\w+.*kart\w*|kart\w+.*zablok\w*", re.I), "card_blocking"),
+    (re.compile(r"(ztratil|ztratila|ztrata|ztráta|ukrad|odcizen).*(kart\w*)|blokac[ei]\w*\s+kart\w*|zablok\w+.*kart\w*|kart\w+.*zablok\w*|\bbloknu\b.*kart|\bblokni\b.*kart|\bblokovat\b.*kart", re.I), "card_blocking"),
     (re.compile(r"(co\s+m[aá]m\s+d[eě]lat|neoprávněn|neopravnen|podezřel).*(platb|transakc|karta)", re.I), "complaint"),
     (re.compile(r"(jak\s+zadat|údaje|udaje|iban|bic).*(sepa|swift|zahraničn|zahranicn)", re.I), "sepa_swift"),
     (re.compile(r"(rb\s+klíč|rb\s+klic).*(aktiv|nefung|odblok|přen|pren|telefon|mobil)", re.I), "rb_key"),
@@ -152,7 +160,7 @@ SOFT_GUIDANCE_FAQ_PATTERNS = (
     (re.compile(r"pravidelné?\s*investic|investov[\s\w]*pravidelné?", re.I), "investice_pravidelne"),
     (re.compile(r"podílov[éý][\s\w]*fond|fond[\s\w]*invest", re.I), "investice_fondy"),
     # Catalog overview patterns (obecné dotazy na celé kategorie)
-    (re.compile(r"druh\w*.{0,10}spo[rř]|jak[eé]\w*.{0,10}spo[rř]|spo[rř][íi]c[íi].{0,10}produkt|typ\w*.{0,10}spo[rř]", re.I), "catalog_sporeni"),
+    (re.compile(r"druh\w*.{0,10}spo[rř]|jak[eé]\w*.{0,25}spo[rř]|spo[rř][íi]c[íi].{0,10}produkt|typ\w*.{0,10}spo[rř]|možnosti.{0,10}spořen|moznosti.{0,10}sporen|ulo[žz]it.{0,20}pen[íi]z|ulozit.{0,20}pen|naspořit|nasporit|ukládat.{0,15}pen|ukladat.{0,15}pen", re.I), "catalog_sporeni"),
     (re.compile(r"jak[eé]\w*.{0,10}invest|druh\w*.{0,10}invest|investičn\w*.{0,10}produkt|co.*invest\w+", re.I), "catalog_investice"),
     (re.compile(r"jak[eé]\w*.{0,10}poji[sš]t|druh\w*.{0,10}poji[sš]t|typ\w*.{0,10}poji[sš]t|nab[íi]z[íi]\w*.{0,10}poji[sš]t", re.I), "catalog_pojisteni"),
     (re.compile(r"jak[eé]\w*.{0,10}hypot|druh\w*.{0,10}hypot|typ\w*.{0,10}hypot|nab[íi]z[íi]\w*.{0,10}hypot", re.I), "catalog_hypoteky"),
@@ -179,13 +187,17 @@ SOFT_GUIDANCE_FAQ_PATTERNS = (
     (re.compile(r"rozd[íi]l[\s\w]{0,20}\b[uú][cč](?:et|t)\w*|porovn\w*[\s\w]{0,15}\b[uú][cč](?:et|t)\w*|kter[ýýaé]\w*[\s\w]{0,20}\b[uú][cč](?:et|t)\w*[\s\w]{0,20}(?:vybrat|vhodn|lep[sš]|doporu[cč])|jak[ýé]\w*[\s\w]{0,15}\b[uú][cč](?:et|t)\w*[\s\w]{0,15}(?:vybrat|vhodn|doporu[cč]|zvolit)|chytr[ýéaů]\w*[\s\w]{0,15}aktiv[ní]\w*|aktiv[ní]\w*[\s\w]{0,15}chytr[ýéaů]\w*|chytr[ýéaů]\w*[\s\w]{0,15}exkluziv|lep[sš][íi]\w*[\s\w]{0,20}\b[uú][cč](?:et|t)\w*|\bdoporu[cč]\w*[\s\w]{0,20}\b[uú][cč](?:et|t)\w*|\b[uú][cč](?:et|t)\w*[\s\w]{0,20}doporu[cč]", re.I), "ucet_srovnani"),
     (re.compile(r"chytr[ýéaý][\s\w]*účet|bezn[ýéaý][\s\w]*účet[\s\w]*zdarma|účet[\s\w]*zdarma[\s\w]*bez\s*podmínek", re.I), "ucet_chytry"),
     (re.compile(r"dětský[\s\w]*účet|účet[\s\w]*dět|účet[\s\w]*dítě", re.I), "ucet_detsky"),
-    (re.compile(r"studentský[\s\w]*účet|účet[\s\w]*student", re.I), "ucet_studentsky"),
+    (re.compile(r"studentsk\w*[\s\w]*(?:účet|ucet)|(?:účet|ucet)[\s\w]*studentsk", re.I), "ucet_studentsky"),
     # Odměna / akce za založení účtu
     (re.compile(r"odměn[au]\b[\s\w]{0,20}\b[uú][cč]\w+|\bbonus\b[\s\w]{0,15}\b[uú][cč]\w+|akc[ei]\b[\s\w]{0,15}\b[uú][cč]\w+|cashback[\s\w]{0,15}\b[uú][cč]\w+|\b500[\s\w]{0,10}(?:kč|korun)[\s\w]{0,10}\b[uú][cč]\w+|\b[uú][cč]\w+[\s\w]{0,15}odměn|\b[uú][cč]\w+[\s\w]{0,10}\bbonus\w*", re.I), "ucet_odmena_akce"),
     # Založení účtu online
     (re.compile(r"jak[\s\w]{0,15}založ\w*[\s\w]{0,10}(?:účet|ucet)|založ\w*[\s\w]{0,10}(?:účet|ucet)|zalo[žz]\w*[\s\w]{0,10}(?:účet|ucet)|otevř\w*[\s\w]{0,10}(?:účet|ucet)|zřídit[\s\w]{0,10}(?:účet|ucet)|chci[\s\w]{0,10}(?:si\s+)?(?:nový\s+)?(?:účet|ucet)|podmínk\w*[\s\w]{0,20}(?:účtu|uctu|účet|ucet)|co[\s\w]{0,10}pot[řr]ebuji[\s\w]{0,15}(?:účet|ucet|k\s+otev[řr])|jak\s+si\s+otev[řr]\w*|jak\s+si\s+z[řr][íi]d[íi][mt]?\w*[\s\w]{0,10}(?:účet|ucet)|dokument\w*[\s\w]{0,10}(?:účet|ucet)|co[\s\w]{0,10}mus[íi][mt]?[\s\w]{0,10}(?:účet|ucet)|po[žz]adavk\w*[\s\w]{0,10}(?:účet|ucet)|co[\s\w]{0,5}k[\s\w]{0,10}(?:účtu|uctu)|pot[řr]ebuji[\s\w]{0,5}k[\s\w]{0,10}(?:účtu|uctu)|doklad\w*[\s\w]{0,10}(?:účet|ucet)", re.I), "ucet_zalozeni_online"),
     (re.compile(r"lep[sš][íi]\w*[\s\w]{0,15}banka|výhod\w*[\s\w]{0,15}(?:rb|raiffeisen)|(?:rb|raiffeisen)[\s\w]{0,15}výhod|pro[čc][\s\w]{0,15}(?:rb|raiffeisen)|[čc][íi]m[\s\w]{0,15}(?:rb|raiffeisen)|výhod\w*[\s\w]{0,15}oproti|oproti[\s\w]{0,15}(?:jiné|ostatní|konkurenc|jinýmh?)\w*[\s\w]{0,10}bank", re.I), "rb_vyhody"),
     (re.compile(r"kdo\s+jste|co\s+jste\s+za\s+bank|o\s+raiffeisen(?:bank)?|kdy\s+byla\s+zalo[žz]ena|rok\s+zalo[žz]en[íi]|histori\w*[\s\w]{0,10}bank|kdo\s+je\s+raiffeisen", re.I), "rb_o_bance"),
+    # Karta — odblokování, zrušení, rozdíl debet/kredit
+    (re.compile(r"odblok\w+[\s\w]{0,15}kart|kart\w*[\s\w]{0,10}odblok|jak[\s\w]{0,10}odblok\w+", re.I), "karta_odblok"),
+    (re.compile(r"zru[šs]it[\s\w]{0,15}(?:platební\s+)?kart|kart\w*[\s\w]{0,10}zru[šs]it|jak[\s\w]{0,10}zru[šs][íi][mt]?\w*[\s\w]{0,10}kart|ukončit[\s\w]{0,10}kart", re.I), "karta_zrusit"),
+    (re.compile(r"rozd[íi]l[\s\w]{0,20}(?:debetní|kreditní|debet|kredit)|(?:debetní|kreditní)[\s\w]{0,20}(?:vs\.?|versus|nebo|oproti)[\s\w]{0,20}(?:debetní|kreditní|debet|kredit)", re.I), "debet_kredit_rozdil"),
 )
 
 
@@ -376,6 +388,17 @@ def _guided_flow_intent(question: str) -> str | None:
     for pattern, intent in GUIDED_FLOW_PATTERNS:
         if pattern.search(question or ""):
             return intent
+    return None
+
+
+def _blocked_intent(question: str) -> str | None:
+    q = (question or "").lower()
+    if re.search(r'falšovat|zfalšovat|falsovat|zfalsovat|paděl|padělat', q):
+        return "blocked_illegal"
+    if re.search(r'pin[\s\w]{0,20}(jiné\s+osoby|jiné\s+osobě|ciz[íi]\s+kart|cizím?\s+kart|jiného\s+člov|jiná\s+osoba)', q):
+        return "blocked_privacy"
+    if re.search(r'(jiné\s+osoby|jiné\s+osobě|ciz[íi])[\s\w]{0,20}pin', q):
+        return "blocked_privacy"
     return None
 
 
@@ -938,12 +961,45 @@ SOFT_GUIDANCE_ANSWERS: dict[str, str] = {
         "Upřesněte prosím, s čím konkrétně potřebujete poradit – "
         "např. aktivace karty, limit, mobilní platby nebo blokace."
     ),
+    "karta_odblok": (
+        "Jak odblokovat platební kartu Raiffeisenbank:\n\n"
+        "Karta se zablokuje po třech neúspěšných zadáních PINu.\n"
+        "Odblokování:\n"
+        "1. Proveďte úspěšnou chip transakci se správným PINem (platba na terminálu nebo výběr z bankomatu)\n"
+        "2. Nebo přihlaste se do internetového bankovnictví a nastavte nový PIN\n"
+        "3. Nebo kontaktujte zákaznickou linku: 412 440 000 (Po–Ne 7–22 hod)\n\n"
+        "Pokud PIN zapomněli, nastavte nový přes internetové bankovnictví nebo pobočku."
+    ),
+    "karta_zrusit": (
+        "Jak zrušit platební kartu Raiffeisenbank:\n\n"
+        "1. **Internetové bankovnictví**: sekce Karty → vybrat kartu → Zrušit kartu\n"
+        "2. **Mobilní aplikace**: Karty → Správa karty → Zrušit\n"
+        "3. **Pobočka**: s platným dokladem totožnosti\n"
+        "4. **Zákaznická linka**: 412 440 000 (Po–Ne 7–22 hod)\n\n"
+        "Po zrušení karty zůstává účet aktivní — karta je pouze deaktivována.\n"
+        "Nová karta přijde poštou do cca 5–10 pracovních dní."
+    ),
+    "debet_kredit_rozdil": (
+        "Rozdíl mezi debetní a kreditní kartou:\n\n"
+        "**Debetní karta** (standardní karta k účtu):\n"
+        "- Čerpá z vašich vlastních peněz na běžném účtu\n"
+        "- Zaplatíte jen to, co máte na účtu (+ případný povolený debet)\n"
+        "- Bez úroků — peníze jsou vaše\n"
+        "- Raiffeisenbank nabízí: Visa Debit nebo Mastercard Debit\n\n"
+        "**Kreditní karta** (karta s úvěrovým limitem):\n"
+        "- Banka vám půjčí peníze do výše stanoveného limitu\n"
+        "- Při splacení do bezúročného období (typicky 45–55 dní): žádné úroky\n"
+        "- Při nesplacení: účtují se úroky\n"
+        "- Výhody: cashback, pojištění, nákupy na splátky\n\n"
+        "Více o kreditních kartách: https://www.rb.cz/osobni/karty/kreditni-karty"
+    ),
 }
 
 
 def _soft_guidance_intent(question: str) -> str | None:
+    q = normalize_query(question) if question else ""
     for pattern, intent in SOFT_GUIDANCE_FAQ_PATTERNS:
-        if pattern.search(question or ""):
+        if pattern.search(q):
             return intent
     return None
 
@@ -2512,6 +2568,23 @@ class BankingRAGChain:
             self.last_canonical_product = raw_resolved[1]
             self.unresolved_product = None
             self.clarification_candidates = None
+        elif (raw_blocked_intent := _blocked_intent(question)):
+            total_ms = (time.perf_counter() - t_ask) * 1000
+            ux = _ux_meta("low", f"blocked request: {raw_blocked_intent}", unsupported_reason=raw_blocked_intent)
+            return {
+                "answer": BLOCKED_RESPONSES.get(raw_blocked_intent, "Tuto akci nemohu pomoci provést."),
+                "sources": [],
+                "rewritten_query": question,
+                "retrieval_debug": _debug_with_ux([{
+                    "retrieval_route": "blocked",
+                    "retrieval_skipped": True,
+                    "blocked_intent": raw_blocked_intent,
+                }], ux),
+                "answer_strategy": "blocked_direct",
+                "answer_confidence": "low",
+                **ux,
+                "timing_ms": {"retrieval": 0, "total": round(total_ms), "llm": 0},
+            }
         elif _identity_intent(question):
             total_ms = (time.perf_counter() - t_ask) * 1000
             ux = _ux_meta("high", "deterministic assistant identity route")
