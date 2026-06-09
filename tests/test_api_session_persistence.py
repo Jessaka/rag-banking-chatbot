@@ -184,6 +184,58 @@ def test_collect_restore_chain_session_state_mirrors_chat_history_and_current_pr
     assert restored.session_context["current_product"] == "osobni_ucet"
 
 
+def test_collect_restore_chain_session_state_mirrors_resolved_product() -> None:
+    chain = SimpleNamespace(
+        resolved_product="exkluzivni_ucet",
+        resolved_intent="pricing",
+        last_canonical_product=None,
+        unresolved_product=None,
+        unresolved_product_type=None,
+        pending_clarification=None,
+        clarification_candidates=None,
+        current_domain=None,
+        current_intent=None,
+        current_product=None,
+        chat_history=[],
+        session_context={
+            "current_domain": "retail",
+            "current_product": "osobni_ucet",
+            "current_intent": "pricing",
+            "resolved_product": "exkluzivni_ucet",
+        },
+    )
+
+    state = api_main._collect_chain_session_state(chain)
+
+    assert state["resolved_product"] == "exkluzivni_ucet"
+    assert state["session_context"]["resolved_product"] == "exkluzivni_ucet"
+
+    restored = SimpleNamespace(
+        resolved_product=None,
+        resolved_intent=None,
+        last_canonical_product=None,
+        unresolved_product=None,
+        unresolved_product_type=None,
+        pending_clarification=None,
+        clarification_candidates=None,
+        current_domain=None,
+        current_intent=None,
+        current_product=None,
+        chat_history=[],
+        session_context={
+            "current_domain": None,
+            "current_product": None,
+            "current_intent": None,
+            "resolved_product": None,
+        },
+    )
+
+    api_main._restore_chain_session_state(restored, state)
+
+    assert restored.resolved_product == "exkluzivni_ucet"
+    assert restored.session_context["resolved_product"] == "exkluzivni_ucet"
+
+
 def test_chat_and_stream_persist_followup_state(monkeypatch) -> None:
     client = TestClient(api_main.app)
     fake_store = _FakeSessionStore()

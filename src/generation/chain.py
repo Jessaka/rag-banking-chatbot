@@ -1198,6 +1198,55 @@ def _normalize_answer_text(answer: str, *, answer_strategy: str) -> str:
     return text
 
 
+def _should_rewrite_exclusive_free_followup(q_norm: str) -> bool:
+    phrases = (
+        "podminky zdarma",
+        "kdy je zdarma",
+        "aby byl zdarma",
+        "jake jsou podminky",
+    )
+    return (
+        "zdarma" in q_norm
+        or "podminky" in q_norm
+        or any(phrase in q_norm for phrase in phrases)
+    )
+
+
+def _rewrite_inherited_followup_query(
+    retrieval_query: str,
+    inherited_product: str | None,
+) -> tuple[str, str | None]:
+    q_norm = normalize_query(retrieval_query)
+    anchored_resolved_product: str | None = None
+
+    if inherited_product == "kreditni_karta":
+        if "premium" in q_norm and "karta" not in q_norm and "ucet" not in q_norm and "hypotek" not in q_norm:
+            return "Kolik stojí kreditní karta RB Premium?", None
+        if "easy" in q_norm and "karta" not in q_norm and "ucet" not in q_norm:
+            return "Kolik stojí kreditní karta EASY?", None
+        return retrieval_query, None
+
+    if inherited_product == "osobni_ucet":
+        if ("aktivní" in q_norm or "aktivni" in q_norm) and "ucet" not in q_norm and "karta" not in q_norm and "hypotek" not in q_norm:
+            return "Kolik stojí Aktivní účet?", None
+        if "nejdražší" in q_norm or "nejdrazsi" in q_norm:
+            return "Kolik stojí EXKLUZIVNÍ účet?", "exkluzivni_ucet"
+        if "nejlevnější" in q_norm or "nejlevnejsi" in q_norm:
+            return "Kolik stojí CHYTRÝ účet?", None
+        return retrieval_query, None
+
+    if inherited_product == "exkluzivni_ucet":
+        if _should_rewrite_exclusive_free_followup(q_norm):
+            return "Jaké jsou podmínky vedení EXKLUZIVNÍHO účtu zdarma?", None
+        return retrieval_query, None
+
+    if inherited_product == "hypoteky":
+        if any(token in q_norm for token in ("sazba", "úrok", "urok")) and "hypotek" not in q_norm:
+            return "Jaká je sazba hypotéky?", None
+
+    return retrieval_query, anchored_resolved_product
+
+
 def _extract_fee_value_from_text(text: str) -> str:
     patterns = (
         r"\bzdarma\b",
@@ -1659,6 +1708,29 @@ def _format_account_overview_answer(docs: list[Document]) -> str | None:
         "Více: https://www.rb.cz/osobni/ucty/bezne-ucty\n\n"
         f"Zdroj: {source}"
     )
+
+
+def _format_exclusive_account_free_conditions_answer() -> tuple[str, Document]:
+    source_url = "https://www.rb.cz/osobni/ucty/bezne-ucty/exkluzivni-ucet"
+    answer = (
+        "EXKLUZIVNÍ účet je veden zdarma, pokud splníte alespoň jednu z těchto podmínek:\n"
+        "- máte u Raiffeisenbank alespoň 1 500 000 Kč v depozitech a investicích,\n"
+        "- nebo provedete 10 plateb kartou za měsíc a zároveň vám na běžný účet přijde alespoň 50 000 Kč "
+        "(počítají se dvě nejvyšší příchozí platby).\n\n"
+        "Pokud podmínku nesplníte, vedení účtu stojí 299 Kč měsíčně.\n\n"
+        f"Zdroj: {source_url}"
+    )
+    source = Document(
+        page_content="",
+        metadata={
+            "source_url": source_url,
+            "title": "EXKLUZIVNÍ účet",
+            "human_title": "EXKLUZIVNÍ účet",
+            "document_type": "product_page",
+            "section_title": "Co je aktivní využívání účtu?",
+        },
+    )
+    return answer, source
 
 
 def _format_mortgage_overview_answer(docs: list[Document]) -> str | None:
@@ -3063,22 +3135,43 @@ class BankingRAGChain:
             logger.info(
                 f"Session context inherited: product={inherited_product}, intent={inherited_intent}"
             )
-            q_norm = normalize_query(retrieval_query)
-            if inherited_product == "kreditni_karta":
-                if "premium" in q_norm and "karta" not in q_norm and "ucet" not in q_norm and "hypotek" not in q_norm:
-                    retrieval_query = "Kolik stojí kreditní karta RB Premium?"
-                elif "easy" in q_norm and "karta" not in q_norm and "ucet" not in q_norm:
-                    retrieval_query = "Kolik stojí kreditní karta EASY?"
-            elif inherited_product == "osobni_ucet":
-                if ("aktivní" in q_norm or "aktivni" in q_norm) and "ucet" not in q_norm and "karta" not in q_norm and "hypotek" not in q_norm:
-                    retrieval_query = "Kolik stojí Aktivní účet?"
-                elif "nejdražší" in q_norm or "nejdrazsi" in q_norm:
-                    retrieval_query = "Kolik stojí EXKLUZIVNÍ účet?"
-                elif "nejlevnější" in q_norm or "nejlevnejsi" in q_norm:
-                    retrieval_query = "Kolik stojí CHYTRÝ účet?"
-            elif inherited_product == "hypoteky":
-                if any(token in q_norm for token in ("sazba", "úrok", "urok")) and "hypotek" not in q_norm:
-                    retrieval_query = "Jaká je sazba hypotéky?"
+            retrieval_query, anchored_resolved_product = _rewrite_inherited_followup_query(
+                retrieval_query,
+                inherited_product,
+            )
+            if anchored_resolved_product is not None:
+                self.resolved_product = anchored_resolved_product
+            if (
+                inherited_product == "exkluzivni_ucet"
+                and retrieval_query == "Jaké jsou podmínky vedení EXKLUZIVNÍHO účtu zdarma?"
+            ):
+                answer_text, source_doc = _format_exclusive_account_free_conditions_answer()
+                total_ms = (time.perf_counter() - t_ask) * 1000
+                ux = _ux_meta("high", "deterministic exclusive account free-conditions follow-up")
+                if self.conversational:
+                    self.chat_history.append(HumanMessage(content=question))
+                    self.chat_history.append(AIMessage(content=answer_text))
+                    limit = config.CONVERSATION_HISTORY_LIMIT
+                    if len(self.chat_history) > limit * 2:
+                        self.chat_history = self.chat_history[-(limit * 2):]
+                if hasattr(self, "session_context") and isinstance(self.session_context, dict):
+                    self.session_context["resolved_product"] = "exkluzivni_ucet"
+                    self.session_context["current_intent"] = "pricing"
+                logger.info("Answer strategy: exclusive_account_free_conditions_direct (LLM skipped)")
+                return {
+                    "answer": answer_text,
+                    "sources": [source_doc],
+                    "rewritten_query": retrieval_query,
+                    "answer_strategy": "exclusive_account_free_conditions_direct",
+                    "answer_confidence": "high",
+                    "retrieval_debug": _debug_with_ux([{
+                        "retrieval_route": "session_followup_direct",
+                        "retrieval_skipped": True,
+                        "resolved_product": "exkluzivni_ucet",
+                    }], ux),
+                    **ux,
+                    "timing_ms": {"retrieval": 0, "total": round(total_ms), "llm": 0},
+                }
 
         # 2. Retrieval
         t_retrieval = time.perf_counter()
@@ -3915,6 +4008,11 @@ class BankingRAGChain:
 
         q = normalize_query(question or "")
         word_count = len((question or "").strip().split())
+        resolved_product = self.session_context.get("resolved_product")
+        exclusive_free_followup = (
+            resolved_product == "exkluzivni_ucet"
+            and _should_rewrite_exclusive_free_followup(q)
+        )
 
         follow_up_detected = (
             word_count <= 4
@@ -3931,6 +4029,7 @@ class BankingRAGChain:
             or "sazba" in q
             or "úrok" in q
             or "urok" in q
+            or exclusive_free_followup
         )
 
         explicit_new_topic_markers = (

@@ -11,7 +11,7 @@ Covers:
 
 from __future__ import annotations
 
-from src.generation.chain import BankingRAGChain
+from src.generation.chain import BankingRAGChain, _rewrite_inherited_followup_query
 
 
 # ======================================================================
@@ -60,6 +60,20 @@ class TestSessionContextSafety:
         assert debug.get("session_context_used") is True
         assert debug.get("inherited_intent") == "card_overview"
         assert "inherited_product" not in debug
+
+    def test_check_inheritance_detects_exclusive_free_followup(self) -> None:
+        chain = BankingRAGChain.__new__(BankingRAGChain)
+        chain.chat_history = ["dummy"]
+        chain.session_context = {
+            "current_domain": "retail",
+            "current_product": "osobni_ucet",
+            "current_intent": "pricing",
+            "last_clarification": None,
+            "resolved_product": "exkluzivni_ucet",
+            "resolved_segment": None,
+        }
+        result = chain._check_session_inheritance("Jaké jsou podmínky, aby byl zdarma?")
+        assert result == ("exkluzivni_ucet", "pricing")
 
 
 # ======================================================================
@@ -140,6 +154,40 @@ class TestSessionContextPopulation:
         chain._update_session_context(None)
         assert chain.session_context["resolved_product"] == "eKonto"
         assert chain.session_context["current_intent"] == "pricing"
+
+
+class TestInheritedFollowupRewrite:
+    def test_rewrite_most_expensive_account_anchors_exclusive_product(self) -> None:
+        rewritten, anchored = _rewrite_inherited_followup_query(
+            "A ten nejdražší?",
+            "osobni_ucet",
+        )
+        assert rewritten == "Kolik stojí EXKLUZIVNÍ účet?"
+        assert anchored == "exkluzivni_ucet"
+
+    def test_rewrite_exclusive_free_followup_conditions(self) -> None:
+        rewritten, anchored = _rewrite_inherited_followup_query(
+            "Jaké jsou podmínky, aby byl zdarma?",
+            "exkluzivni_ucet",
+        )
+        assert rewritten == "Jaké jsou podmínky vedení EXKLUZIVNÍHO účtu zdarma?"
+        assert anchored is None
+
+    def test_credit_card_followup_remains_unchanged(self) -> None:
+        rewritten, anchored = _rewrite_inherited_followup_query(
+            "A kolik stojí ta Premium?",
+            "kreditni_karta",
+        )
+        assert rewritten == "Kolik stojí kreditní karta RB Premium?"
+        assert anchored is None
+
+    def test_hypoteka_followup_remains_unchanged(self) -> None:
+        rewritten, anchored = _rewrite_inherited_followup_query(
+            "Jaké jsou podmínky hypotéky?",
+            "hypoteky",
+        )
+        assert rewritten == "Jaké jsou podmínky hypotéky?"
+        assert anchored is None
 
 
 # ======================================================================
