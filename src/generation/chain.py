@@ -3073,7 +3073,9 @@ class BankingRAGChain:
                 if ("aktivní" in q_norm or "aktivni" in q_norm) and "ucet" not in q_norm and "karta" not in q_norm and "hypotek" not in q_norm:
                     retrieval_query = "Kolik stojí Aktivní účet?"
                 elif "nejdražší" in q_norm or "nejdrazsi" in q_norm:
-                    retrieval_query = "Který běžný účet je nejdražší a kolik stojí?"
+                    retrieval_query = "Kolik stojí EXKLUZIVNÍ účet?"
+                elif "nejlevnější" in q_norm or "nejlevnejsi" in q_norm:
+                    retrieval_query = "Kolik stojí CHYTRÝ účet?"
             elif inherited_product == "hypoteky":
                 if any(token in q_norm for token in ("sazba", "úrok", "urok")) and "hypotek" not in q_norm:
                     retrieval_query = "Jaká je sazba hypotéky?"
