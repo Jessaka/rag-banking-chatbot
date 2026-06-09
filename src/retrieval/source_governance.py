@@ -66,6 +66,17 @@ _PRIMARY_BLOCKED_TYPES = frozenset({
     "historical_pdf",
 })
 
+_RETAIL_ONLY_BLOCKED_URL_PARTS = (
+    "/podnikatele/",
+    "/firmy/",
+    "/private-banking/",
+)
+
+
+def _is_non_retail_source(doc: Document) -> bool:
+    source_url = str(doc.metadata.get("source_url") or doc.metadata.get("url") or "").lower()
+    return any(part in source_url for part in _RETAIL_ONLY_BLOCKED_URL_PARTS)
+
 
 # ---------------------------------------------------------------------------
 # P1 — Hard Source Suppression
@@ -141,6 +152,18 @@ def apply_source_suppression(
                             "suppression_reason": "Historical pricing blocked — current pricing exists for the same product.",
                         })
                         break
+
+    # Rule 2b: Retail-only chatbot must never use business/corporate/private-banking URLs
+    for idx, doc in enumerate(docs):
+        if idx in suppressed_keys:
+            continue
+        if _is_non_retail_source(doc):
+            suppressed_keys.add(idx)
+            suppression_log.append({
+                "rule": "retail_only_source_filter",
+                "suppressed_idx": idx,
+                "suppression_reason": "Business/corporate/private-banking source suppressed — retail-only chatbot policy.",
+            })
 
     # Rule 3: Migration notices NEVER primary source
     # (They're allowed as secondary/context, but not as the top result)

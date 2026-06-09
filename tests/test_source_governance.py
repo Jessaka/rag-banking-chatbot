@@ -135,6 +135,48 @@ _FAQ_ARCHIVED = Document(
     },
 )
 
+_BUSINESS_DOC = Document(
+    page_content="Podnikatelský účet a služby pro podnikatele.",
+    metadata={
+        "source_url": "https://www.rb.cz/podnikatele/ucty-a-platebni-styk",
+        "title": "Podnikatelské účty",
+        "document_type": "product_page",
+        "category": "corporate",
+        "chunk_type": "section_text",
+        "file_name": "podnikatele.html",
+        "document_year": "2026",
+        "is_archived": False,
+    },
+)
+
+_FIRMY_DOC = Document(
+    page_content="Firemní financování a účty pro malé a střední firmy.",
+    metadata={
+        "source_url": "https://www.rb.cz/firmy/financovani",
+        "title": "Firemní financování",
+        "document_type": "product_page",
+        "category": "corporate",
+        "chunk_type": "section_text",
+        "file_name": "firmy.html",
+        "document_year": "2026",
+        "is_archived": False,
+    },
+)
+
+_PRIVATE_BANKING_DOC = Document(
+    page_content="Private banking služby a investiční produkty.",
+    metadata={
+        "source_url": "https://www.rb.cz/private-banking/produkty-a-sluzby",
+        "title": "Private Banking",
+        "document_type": "product_page",
+        "category": "corporate",
+        "chunk_type": "section_text",
+        "file_name": "private-banking.html",
+        "document_year": "2026",
+        "is_archived": False,
+    },
+)
+
 
 # ======================================================================
 # P1 — Hard Source Suppression Tests
@@ -207,6 +249,26 @@ class TestHardSourceSuppression:
         filtered, suppression_log = apply_source_suppression(docs)
         assert len(filtered) == 1
         assert filtered[0].metadata.get("suppression_applied") is False
+
+    def test_retail_only_suppresses_podnikatele_url(self):
+        filtered, suppression_log = apply_source_suppression([_BUSINESS_DOC])
+        assert filtered == []
+        assert any(s["rule"] == "retail_only_source_filter" for s in suppression_log)
+
+    def test_retail_only_suppresses_firmy_url(self):
+        filtered, suppression_log = apply_source_suppression([_FIRMY_DOC])
+        assert filtered == []
+        assert any(s["rule"] == "retail_only_source_filter" for s in suppression_log)
+
+    def test_retail_only_suppresses_private_banking_url(self):
+        filtered, suppression_log = apply_source_suppression([_PRIVATE_BANKING_DOC])
+        assert filtered == []
+        assert any(s["rule"] == "retail_only_source_filter" for s in suppression_log)
+
+    def test_retail_only_keeps_retail_url(self):
+        filtered, suppression_log = apply_source_suppression([_CURRENT_DOC])
+        assert len(filtered) == 1
+        assert suppression_log == []
 
 
 # ======================================================================
@@ -429,6 +491,12 @@ class TestGovernancePipeline:
         assert len(result) == 1
         assert meta["suppressed_count"] == 0
         assert meta["output_count"] == 1
+
+    def test_pipeline_removes_business_sources(self):
+        result, meta = apply_governance_pipeline([_BUSINESS_DOC, _FIRMY_DOC, _CURRENT_DOC])
+        assert len(result) == 1
+        assert result[0].metadata["source_url"] == _CURRENT_DOC.metadata["source_url"]
+        assert meta["suppressed_count"] >= 2
 
     def test_pipeline_lineage_respected(self):
         """Pipeline prefers newest lineage member."""
