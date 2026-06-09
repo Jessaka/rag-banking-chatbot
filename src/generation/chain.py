@@ -3057,6 +3057,27 @@ class BankingRAGChain:
                         "timing_ms": {"retrieval": 0, "total": round(total_ms), "llm": 0},
                     }
 
+        # Priority 4: Session context — inherit for follow-up queries before retrieval
+        inherited_product, inherited_intent = self._check_session_inheritance(retrieval_query)
+        if inherited_product or inherited_intent:
+            logger.info(
+                f"Session context inherited: product={inherited_product}, intent={inherited_intent}"
+            )
+            q_norm = normalize_query(retrieval_query)
+            if inherited_product == "kreditni_karta":
+                if "premium" in q_norm and "karta" not in q_norm and "ucet" not in q_norm and "hypotek" not in q_norm:
+                    retrieval_query = "Kolik stojí kreditní karta RB Premium?"
+                elif "easy" in q_norm and "karta" not in q_norm and "ucet" not in q_norm:
+                    retrieval_query = "Kolik stojí kreditní karta EASY?"
+            elif inherited_product == "osobni_ucet":
+                if ("aktivní" in q_norm or "aktivni" in q_norm) and "ucet" not in q_norm and "karta" not in q_norm and "hypotek" not in q_norm:
+                    retrieval_query = "Kolik stojí Aktivní účet?"
+                elif "nejdražší" in q_norm or "nejdrazsi" in q_norm:
+                    retrieval_query = "Který běžný účet je nejdražší a kolik stojí?"
+            elif inherited_product == "hypoteky":
+                if any(token in q_norm for token in ("sazba", "úrok", "urok")) and "hypotek" not in q_norm:
+                    retrieval_query = "Jaká je sazba hypotéky?"
+
         # 2. Retrieval
         t_retrieval = time.perf_counter()
         try:
@@ -3207,13 +3228,6 @@ class BankingRAGChain:
                 "timing_ms": {"retrieval": round(retrieval_ms), "total": round(total_ms), "llm": 0},
             }
 
-        # Priority 4: Session context — inherit from previous turn for short follow-ups
-        inherited_product, inherited_intent = self._check_session_inheritance(retrieval_query)
-        if inherited_product or inherited_intent:
-            logger.info(
-                f"Session context inherited: product={inherited_product}, intent={inherited_intent}"
-            )
-
         query_profile = classify_query(retrieval_query)
         # Update session context with current query profile
         self._update_session_context(query_profile)
@@ -3243,6 +3257,14 @@ class BankingRAGChain:
                 total_ms = (time.perf_counter() - t_ask) * 1000
                 ux = _ux_meta("medium", "supported account overview route with safe overview")
                 logger.info("Answer strategy: account_overview_direct (LLM skipped)")
+                if self.conversational:
+                    self.chat_history.append(HumanMessage(content=question))
+                    self.chat_history.append(AIMessage(content=overview_answer))
+                    limit = config.CONVERSATION_HISTORY_LIMIT
+                    if len(self.chat_history) > limit * 2:
+                        self.chat_history = self.chat_history[-(limit * 2):]
+                if hasattr(self, "session_context") and isinstance(self.session_context, dict):
+                    self.session_context["current_product"] = "osobni_ucet"
                 _account_overview_source = Document(
                     page_content="",
                     metadata={
@@ -3384,6 +3406,14 @@ class BankingRAGChain:
                 total_ms = (time.perf_counter() - t_ask) * 1000
                 logger.info("Answer strategy: credit_card_catalog_direct (LLM skipped)")
                 ux = _ux_meta("high", "deterministic product catalog answer from credit-card sources")
+                if self.conversational:
+                    self.chat_history.append(HumanMessage(content=question))
+                    self.chat_history.append(AIMessage(content=catalog_answer))
+                    limit = config.CONVERSATION_HISTORY_LIMIT
+                    if len(self.chat_history) > limit * 2:
+                        self.chat_history = self.chat_history[-(limit * 2):]
+                if hasattr(self, "session_context") and isinstance(self.session_context, dict):
+                    self.session_context["current_product"] = "kreditni_karta"
                 return {
                     "answer": catalog_answer,
                     "sources": source_docs,
@@ -3878,10 +3908,37 @@ class BankingRAGChain:
         # Guard against uninitialized session_context
         if not hasattr(self, "session_context") or not self.session_context:
             return None, None
-        # If the question is very short (1-3 words) and we have previous context,
-        # it's likely a follow-up
-        word_count = len(question.strip().split())
-        if word_count <= 4 and self.chat_history:
+        if not self.chat_history:
+            return None, None
+
+        q = normalize_query(question or "")
+        word_count = len((question or "").strip().split())
+
+        follow_up_detected = (
+            word_count <= 4
+            or q.startswith("a ")
+            or "kolik stojí" in q
+            or "kolik stoji" in q
+            or "ta premium" in q
+            or "ten premium" in q
+            or " premium" in f" {q}"
+            or "aktivní" in q
+            or "aktivni" in q
+            or "nejdražší" in q
+            or "nejdrazsi" in q
+            or "sazba" in q
+            or "úrok" in q
+            or "urok" in q
+        )
+
+        explicit_new_topic_markers = (
+            "počasí", "pocasi", "bitcoin", "akcie", "pojištění", "pojisteni",
+            "hypotéka", "hypoteka", "hypotek", "hypotéky", "účet", "ucet", "karta", "karty", "investice",
+        )
+        if any(marker in q for marker in explicit_new_topic_markers):
+            follow_up_detected = False
+
+        if follow_up_detected:
             inherited_product = self.session_context.get("resolved_product") or self.session_context.get("current_product")
             inherited_intent = self.session_context.get("current_intent")
             if inherited_product or inherited_intent:
