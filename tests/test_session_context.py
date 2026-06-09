@@ -11,7 +11,7 @@ Covers:
 
 from __future__ import annotations
 
-from src.generation.chain import BankingRAGChain, _is_reference_followup, _rewrite_inherited_followup_query
+from src.generation.chain import BankingRAGChain, _is_mortgage_documents_query, _is_reference_followup, _rewrite_inherited_followup_query
 
 
 # ======================================================================
@@ -185,6 +185,17 @@ class TestSessionContextPopulation:
 
 
 class TestInheritedFollowupRewrite:
+    def test_mortgage_documents_query_detector_positive(self) -> None:
+        assert _is_mortgage_documents_query("jaké jsou potřeba dokumenty k projednání úvěru?") is True
+        assert _is_mortgage_documents_query("jaké dokumenty potřebuji k hypotéce?") is True
+        assert _is_mortgage_documents_query("jaké doklady potřebuji k hypotéce?") is True
+        assert _is_mortgage_documents_query("potřebuji potvrzení o příjmu k hypotéce?") is True
+
+    def test_mortgage_documents_query_detector_negative(self) -> None:
+        assert _is_mortgage_documents_query("jaké jsou podmínky půjčky?") is False
+        assert _is_mortgage_documents_query("jaké úvěry nabízíte?") is False
+        assert _is_mortgage_documents_query("kolik si můžu půjčit?") is False
+
     def test_reference_followup_detector(self) -> None:
         assert _is_reference_followup("je k nim pojištění") is True
         assert _is_reference_followup("a co pojištění") is True

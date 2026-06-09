@@ -591,7 +591,7 @@ def classify_query(query: str) -> QueryProfile:
         rerank_min_score = -10.0
     if "mortgage_overview" in labels:
         preferred_categories.extend(["mortgages", "hypoteky"])
-        preferred_urls.extend(["/osobni/hypoteky/", "hypoteky", "hypoteka"])
+        preferred_urls.extend(["/osobni/hypoteky/", "hypoteky", "hypoteka", "dokumenty-k-hypotece"])
         preferred_chunk_types.extend(["section_text", "html", "faq", "pdf_text"])
         bm25_weight = max(bm25_weight, 0.50)
         vector_weight = min(vector_weight, 0.50)
@@ -638,7 +638,7 @@ def classify_query(query: str) -> QueryProfile:
         rerank_min_score = -10.0
     if "mortgages" in labels:
         preferred_categories.append("mortgages")
-        preferred_urls.append("/hypotek")
+        preferred_urls.extend(["/hypotek", "dokumenty-k-hypotece"])
     if "loans" in labels:
         preferred_categories.extend(["loans", "pujcky"])
         preferred_urls.extend(["/osobni/pujcky/", "/podnikatele/financovani/", "/pujcky", "/uvery", "pujcka"])

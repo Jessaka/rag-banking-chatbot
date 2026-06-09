@@ -34,6 +34,7 @@ from src.generation.confidence_semantics import (
     resolve_confidence_semantics,
 )
 from src.generation.pricing_response_formatter import format_conditional_fee, format_tiered_pricing
+from src.retrieval.bm25_retriever import bm25_search
 from src.retrieval.query_classifier import classify_query, normalize_query
 from src.utils.logger import get_logger
 
@@ -1332,6 +1333,35 @@ def _session_anchor_for_soft_intent(intent: str) -> tuple[str | None, str | None
         "catalog_pujcky": ("pujcky", "product_overview"),
     }
     return mapping.get(intent, (None, None))
+
+
+def _is_mortgage_documents_query(q_norm: str) -> bool:
+    has_documents = any(token in q_norm for token in ("dokumenty", "doklady"))
+    has_mortgage = "hypot" in q_norm
+    if has_documents and has_mortgage:
+        return True
+    if "dokumenty" in q_norm and any(token in q_norm for token in ("úvěr", "uver")):
+        return True
+    if any(phrase in q_norm for phrase in (
+        "projednání úvěru",
+        "projednani uveru",
+        "potvrzení o příjmu",
+        "potvrzeni o prijmu",
+        "žádost o hypotéku",
+        "zadost o hypoteku",
+    )):
+        return True
+    return False
+
+
+def _retrieve_mortgage_documents_docs(query: str, *, top_k: int = 10) -> list[Document]:
+    target_url = "https://www.rb.cz/osobni/hypoteky/sluzby-k-hypotekam/dokumenty-k-hypotece"
+    docs = bm25_search(query, top_k=top_k)
+    exact_docs = [
+        doc for doc in docs
+        if str(doc.metadata.get("source_url") or doc.metadata.get("url") or "") == target_url
+    ]
+    return exact_docs or docs
 
 
 def _rewrite_inherited_followup_query(
@@ -3077,6 +3107,14 @@ class BankingRAGChain:
                         logger.debug(f"Context guard: '{original_rq}' → '{retrieval_query}'")
                         break
 
+            if _is_mortgage_documents_query(normalize_query(retrieval_query)):
+                retrieval_query = (
+                    "Dokumenty k hypotéce dokumenty k projednání úvěru "
+                    "žádost o hypotéku potvrzení o příjmu"
+                )
+
+        mortgage_documents_query = _is_mortgage_documents_query(normalize_query(retrieval_query))
+
         rewrite_ms = (time.perf_counter() - t_rewrite) * 1000
         if self.chat_history:  # rewriting probíhá jen pokud existuje historie
             logger.info(f"⏱ Query rewriting: {rewrite_ms:.0f}ms")
@@ -3316,7 +3354,10 @@ class BankingRAGChain:
         # 2. Retrieval
         t_retrieval = time.perf_counter()
         try:
-            source_docs: list[Document] = self._retriever.invoke(retrieval_query)
+            if mortgage_documents_query:
+                source_docs = _retrieve_mortgage_documents_docs(retrieval_query)
+            else:
+                source_docs = self._retriever.invoke(retrieval_query)
         except TimeoutError:
             retrieval_ms = (time.perf_counter() - t_retrieval) * 1000
             total_ms = (time.perf_counter() - t_ask) * 1000
