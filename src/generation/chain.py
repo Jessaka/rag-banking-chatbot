@@ -1212,9 +1212,133 @@ def _should_rewrite_exclusive_free_followup(q_norm: str) -> bool:
     )
 
 
+def _is_reference_followup(q_norm: str) -> bool:
+    reference_phrases = (
+        "k nim",
+        "k tomu",
+        "k němu",
+        "k nemu",
+        "k ni",
+        "k ní",
+        "a co",
+        "a jaké",
+        "a jake",
+        "a jaký",
+        "a jaky",
+        "a kolik",
+        "a mají",
+        "a maji",
+        "a má",
+        "a ma",
+        "je k nim",
+        "je k tomu",
+        "mají k tomu",
+        "maji k tomu",
+        "mají k nim",
+        "maji k nim",
+    )
+    return any(phrase in q_norm for phrase in reference_phrases)
+
+
+def _reference_followup_aspect(q_norm: str) -> str | None:
+    if any(token in q_norm for token in ("pojist", "pojišt")):
+        return "insurance"
+    if any(token in q_norm for token in ("poplat", "kolik stojí", "kolik stoji", "a kolik")):
+        return "pricing"
+    if any(token in q_norm for token in ("podmink", "podmínk")):
+        return "conditions"
+    if any(token in q_norm for token in ("vyhod", "výhod", "maji vyhody", "mají výhody")):
+        return "benefits"
+    if "limit" in q_norm:
+        return "limits"
+    if any(token in q_norm for token in ("sazb", "urok", "úrok")):
+        return "rates"
+    return None
+
+
+def _resolve_reference_followup_query(
+    question: str,
+    inherited_product: str | None,
+    resolved_product: str | None,
+    current_intent: str | None,
+) -> tuple[str, str | None]:
+    q_norm = normalize_query(question)
+    if not _is_reference_followup(q_norm):
+        return question, None
+
+    aspect = _reference_followup_aspect(q_norm)
+    active_product = resolved_product or inherited_product
+    if not active_product or not aspect:
+        return question, None
+
+    query_map: dict[str, dict[str, str]] = {
+        "osobni_ucet": {
+            "insurance": "Jaké pojištění nebo doplňkové služby jsou k osobním účtům?",
+            "pricing": "Jaké jsou poplatky k osobním účtům?",
+            "conditions": "Jaké jsou podmínky osobních účtů?",
+            "benefits": "Jaké výhody mají osobní účty?",
+        },
+        "kreditni_karta": {
+            "insurance": "Jaké pojištění nebo doplňkové služby jsou ke kreditním kartám?",
+            "pricing": "Jaké jsou poplatky ke kreditním kartám?",
+            "limits": "Jaké limity mají kreditní karty?",
+            "benefits": "Jaké výhody mají kreditní karty?",
+        },
+        "hypoteky": {
+            "conditions": "Jaké jsou podmínky hypotéky?",
+            "rates": "Jaká je sazba hypotéky?",
+            "insurance": "Jaké pojištění lze sjednat k hypotéce?",
+            "pricing": "Jaké jsou poplatky u hypotéky?",
+        },
+        "investice": {
+            "pricing": "Jaké jsou poplatky u investic?",
+            "conditions": "Jaké jsou podmínky investičních produktů?",
+            "benefits": "Jaké výhody mají investiční produkty?",
+        },
+        "sporeni": {
+            "pricing": "Jaké jsou poplatky u spoření?",
+            "conditions": "Jaké jsou podmínky spořicích produktů?",
+            "rates": "Jaké jsou sazby spořicích produktů?",
+            "benefits": "Jaké výhody mají spořicí produkty?",
+        },
+        "pujcky": {
+            "pricing": "Jaké jsou poplatky u půjček?",
+            "conditions": "Jaké jsou podmínky půjčky?",
+            "insurance": "Jaké pojištění lze sjednat k půjčce?",
+            "benefits": "Jaké výhody mají půjčky?",
+        },
+        "rb_premium_karta": {
+            "insurance": "Jaké pojištění nebo doplňkové služby jsou ke kartě RB Premium?",
+            "pricing": "Jaké jsou poplatky ke kartě RB Premium?",
+            "limits": "Jaké limity má karta RB Premium?",
+            "benefits": "Jaké výhody má karta RB Premium?",
+        },
+    }
+
+    rewritten = query_map.get(active_product, {}).get(aspect)
+    if rewritten:
+        return rewritten, None
+
+    if current_intent == "pricing" and aspect == "pricing":
+        return question, None
+    return question, None
+
+
+def _session_anchor_for_soft_intent(intent: str) -> tuple[str | None, str | None]:
+    mapping = {
+        "catalog_hypoteky": ("hypoteky", "product_overview"),
+        "catalog_investice": ("investice", "product_overview"),
+        "catalog_sporeni": ("sporeni", "product_overview"),
+        "catalog_pujcky": ("pujcky", "product_overview"),
+    }
+    return mapping.get(intent, (None, None))
+
+
 def _rewrite_inherited_followup_query(
     retrieval_query: str,
     inherited_product: str | None,
+    resolved_product: str | None = None,
+    current_intent: str | None = None,
 ) -> tuple[str, str | None]:
     q_norm = normalize_query(retrieval_query)
     anchored_resolved_product: str | None = None
@@ -1224,7 +1348,6 @@ def _rewrite_inherited_followup_query(
             return "Kolik stojí kreditní karta RB Premium?", None
         if "easy" in q_norm and "karta" not in q_norm and "ucet" not in q_norm:
             return "Kolik stojí kreditní karta EASY?", None
-        return retrieval_query, None
 
     if inherited_product == "osobni_ucet":
         if ("aktivní" in q_norm or "aktivni" in q_norm) and "ucet" not in q_norm and "karta" not in q_norm and "hypotek" not in q_norm:
@@ -1233,18 +1356,21 @@ def _rewrite_inherited_followup_query(
             return "Kolik stojí EXKLUZIVNÍ účet?", "exkluzivni_ucet"
         if "nejlevnější" in q_norm or "nejlevnejsi" in q_norm:
             return "Kolik stojí CHYTRÝ účet?", None
-        return retrieval_query, None
 
     if inherited_product == "exkluzivni_ucet":
         if _should_rewrite_exclusive_free_followup(q_norm):
             return "Jaké jsou podmínky vedení EXKLUZIVNÍHO účtu zdarma?", None
-        return retrieval_query, None
 
     if inherited_product == "hypoteky":
         if any(token in q_norm for token in ("sazba", "úrok", "urok")) and "hypotek" not in q_norm:
             return "Jaká je sazba hypotéky?", None
 
-    return retrieval_query, anchored_resolved_product
+    return _resolve_reference_followup_query(
+        retrieval_query,
+        inherited_product,
+        resolved_product,
+        current_intent,
+    )
 
 
 def _extract_fee_value_from_text(text: str) -> str:
@@ -2850,6 +2976,18 @@ class BankingRAGChain:
             total_ms = (time.perf_counter() - t_ask) * 1000
             ux = _ux_meta("medium", f"soft guidance for {soft_intent_pre}", confidence_factors={"soft_guidance_used": True})
             logger.info(f"Answer strategy: soft_guidance_direct ({soft_intent_pre}, pre-retrieval)")
+            if self.conversational and soft_answer_pre:
+                self.chat_history.append(HumanMessage(content=question))
+                self.chat_history.append(AIMessage(content=soft_answer_pre))
+                limit = config.CONVERSATION_HISTORY_LIMIT
+                if len(self.chat_history) > limit * 2:
+                    self.chat_history = self.chat_history[-(limit * 2):]
+            anchor_product, anchor_intent = _session_anchor_for_soft_intent(soft_intent_pre)
+            if hasattr(self, "session_context") and isinstance(self.session_context, dict):
+                if anchor_product:
+                    self.session_context["current_product"] = anchor_product
+                if anchor_intent:
+                    self.session_context["current_intent"] = anchor_intent
             return {
                 "answer": soft_answer_pre,
                 "sources": [],
@@ -3138,6 +3276,8 @@ class BankingRAGChain:
             retrieval_query, anchored_resolved_product = _rewrite_inherited_followup_query(
                 retrieval_query,
                 inherited_product,
+                self.session_context.get("resolved_product") if hasattr(self, "session_context") and isinstance(self.session_context, dict) else None,
+                self.session_context.get("current_intent") if hasattr(self, "session_context") and isinstance(self.session_context, dict) else None,
             )
             if anchored_resolved_product is not None:
                 self.resolved_product = anchored_resolved_product
@@ -4008,11 +4148,13 @@ class BankingRAGChain:
 
         q = normalize_query(question or "")
         word_count = len((question or "").strip().split())
+        session_anchor_product = self.session_context.get("resolved_product") or self.session_context.get("current_product")
         resolved_product = self.session_context.get("resolved_product")
         exclusive_free_followup = (
             resolved_product == "exkluzivni_ucet"
             and _should_rewrite_exclusive_free_followup(q)
         )
+        reference_followup = bool(session_anchor_product) and _is_reference_followup(q)
 
         follow_up_detected = (
             word_count <= 4
@@ -4030,13 +4172,14 @@ class BankingRAGChain:
             or "úrok" in q
             or "urok" in q
             or exclusive_free_followup
+            or reference_followup
         )
 
         explicit_new_topic_markers = (
             "počasí", "pocasi", "bitcoin", "akcie", "pojištění", "pojisteni",
             "hypotéka", "hypoteka", "hypotek", "hypotéky", "účet", "ucet", "karta", "karty", "investice",
         )
-        if any(marker in q for marker in explicit_new_topic_markers):
+        if any(marker in q for marker in explicit_new_topic_markers) and not reference_followup:
             follow_up_detected = False
 
         if follow_up_detected:

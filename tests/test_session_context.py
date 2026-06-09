@@ -11,7 +11,7 @@ Covers:
 
 from __future__ import annotations
 
-from src.generation.chain import BankingRAGChain, _rewrite_inherited_followup_query
+from src.generation.chain import BankingRAGChain, _is_reference_followup, _rewrite_inherited_followup_query
 
 
 # ======================================================================
@@ -74,6 +74,34 @@ class TestSessionContextSafety:
         }
         result = chain._check_session_inheritance("Jaké jsou podmínky, aby byl zdarma?")
         assert result == ("exkluzivni_ucet", "pricing")
+
+    def test_check_inheritance_detects_reference_followup_for_accounts(self) -> None:
+        chain = BankingRAGChain.__new__(BankingRAGChain)
+        chain.chat_history = ["dummy"]
+        chain.session_context = {
+            "current_domain": "retail",
+            "current_product": "osobni_ucet",
+            "current_intent": "account_overview",
+            "last_clarification": None,
+            "resolved_product": None,
+            "resolved_segment": None,
+        }
+        result = chain._check_session_inheritance("Je k nim pojištění?")
+        assert result == ("osobni_ucet", "account_overview")
+
+    def test_check_inheritance_does_not_treat_explicit_insurance_query_as_followup(self) -> None:
+        chain = BankingRAGChain.__new__(BankingRAGChain)
+        chain.chat_history = ["dummy"]
+        chain.session_context = {
+            "current_domain": "retail",
+            "current_product": "osobni_ucet",
+            "current_intent": "account_overview",
+            "last_clarification": None,
+            "resolved_product": None,
+            "resolved_segment": None,
+        }
+        result = chain._check_session_inheritance("Jaké pojištění nabízíte?")
+        assert result == (None, None)
 
 
 # ======================================================================
@@ -157,6 +185,12 @@ class TestSessionContextPopulation:
 
 
 class TestInheritedFollowupRewrite:
+    def test_reference_followup_detector(self) -> None:
+        assert _is_reference_followup("je k nim pojištění") is True
+        assert _is_reference_followup("a co pojištění") is True
+        assert _is_reference_followup("a jaké mají limity") is True
+        assert _is_reference_followup("jaké pojištění nabízíte") is False
+
     def test_rewrite_most_expensive_account_anchors_exclusive_product(self) -> None:
         rewritten, anchored = _rewrite_inherited_followup_query(
             "A ten nejdražší?",
@@ -187,6 +221,66 @@ class TestInheritedFollowupRewrite:
             "hypoteky",
         )
         assert rewritten == "Jaké jsou podmínky hypotéky?"
+        assert anchored is None
+
+    def test_accounts_reference_followup_rewrites_to_insurance_query(self) -> None:
+        rewritten, anchored = _rewrite_inherited_followup_query(
+            "Je k nim pojištění?",
+            "osobni_ucet",
+            None,
+            "account_overview",
+        )
+        assert rewritten == "Jaké pojištění nebo doplňkové služby jsou k osobním účtům?"
+        assert anchored is None
+
+    def test_accounts_reference_followup_rewrites_to_conditions_query(self) -> None:
+        rewritten, anchored = _rewrite_inherited_followup_query(
+            "A jaké jsou podmínky?",
+            "osobni_ucet",
+            None,
+            "account_overview",
+        )
+        assert rewritten == "Jaké jsou podmínky osobních účtů?"
+        assert anchored is None
+
+    def test_cards_reference_followup_rewrites_to_insurance_query(self) -> None:
+        rewritten, anchored = _rewrite_inherited_followup_query(
+            "Je k nim pojištění?",
+            "kreditni_karta",
+            None,
+            "credit_card_catalog",
+        )
+        assert rewritten == "Jaké pojištění nebo doplňkové služby jsou ke kreditním kartám?"
+        assert anchored is None
+
+    def test_cards_reference_followup_rewrites_to_limits_query(self) -> None:
+        rewritten, anchored = _rewrite_inherited_followup_query(
+            "A jaké mají limity?",
+            "kreditni_karta",
+            None,
+            "credit_card_catalog",
+        )
+        assert rewritten == "Jaké limity mají kreditní karty?"
+        assert anchored is None
+
+    def test_hypoteka_reference_followup_rewrites_to_conditions_query(self) -> None:
+        rewritten, anchored = _rewrite_inherited_followup_query(
+            "A jaké jsou podmínky?",
+            "hypoteky",
+            None,
+            "mortgage_overview",
+        )
+        assert rewritten == "Jaké jsou podmínky hypotéky?"
+        assert anchored is None
+
+    def test_investice_reference_followup_rewrites_to_pricing_query(self) -> None:
+        rewritten, anchored = _rewrite_inherited_followup_query(
+            "A jaké jsou poplatky?",
+            "investice",
+            None,
+            "investment_overview",
+        )
+        assert rewritten == "Jaké jsou poplatky u investic?"
         assert anchored is None
 
 
