@@ -243,10 +243,14 @@ def _collect_chain_session_state(chain: BankingRAGChain) -> dict[str, Any]:
         if val is not None:
             session_state[field] = val
     if hasattr(chain, "session_context") and isinstance(chain.session_context, dict):
-        session_state["session_context"] = chain.session_context
+        session_context = dict(chain.session_context)
+        session_state["session_context"] = session_context
+        for mirrored_field in ("current_domain", "current_intent", "current_product", "resolved_product"):
+            mirrored_value = session_context.get(mirrored_field)
+            if mirrored_value is not None:
+                session_state[mirrored_field] = mirrored_value
     history = _serialize_chat_history(chain)
-    if history:
-        session_state["chat_history"] = history
+    session_state["chat_history"] = history
     return session_state
 
 
@@ -257,7 +261,64 @@ def _restore_chain_session_state(chain: BankingRAGChain, state: dict[str, Any]) 
             setattr(chain, field, state.get(field))
     if isinstance(state.get("session_context"), dict):
         chain.session_context.update(state["session_context"])
+    if hasattr(chain, "session_context") and isinstance(chain.session_context, dict):
+        for mirrored_field in ("current_domain", "current_intent", "current_product", "resolved_product"):
+            mirrored_value = state.get(mirrored_field)
+            if mirrored_value is not None:
+                chain.session_context[mirrored_field] = mirrored_value
     _restore_chat_history(chain, state.get("chat_history"))
+
+
+def _hydrate_cached_session_state(chain: BankingRAGChain, question: str, result: dict[str, Any]) -> None:
+    """Populate conversational session state even for cache-hit responses.
+
+    Cache-hit paths bypass `chain.ask()`, so direct routes would otherwise never
+    append chat history nor set the minimal current_product anchor needed for
+    follow-up inheritance across requests.
+    """
+    answer = str(result.get("answer") or "").strip()
+    if getattr(chain, "conversational", False) and answer:
+        chain.chat_history.append(HumanMessage(content=question))
+        chain.chat_history.append(AIMessage(content=answer))
+        limit = config.CONVERSATION_HISTORY_LIMIT
+        if len(chain.chat_history) > limit * 2:
+            chain.chat_history = chain.chat_history[-(limit * 2):]
+
+    if not hasattr(chain, "session_context") or not isinstance(chain.session_context, dict):
+        return
+
+    strategy = str(result.get("answer_strategy") or "")
+    if strategy == "account_overview_direct":
+        chain.session_context["current_product"] = "osobni_ucet"
+        chain.session_context["current_domain"] = chain.session_context.get("current_domain") or "retail"
+        chain.session_context["current_intent"] = "account_overview"
+    elif strategy == "credit_card_catalog_direct":
+        chain.session_context["current_product"] = "kreditni_karta"
+        chain.session_context["current_intent"] = "credit_card_catalog"
+    elif strategy == "mortgage_overview_direct":
+        chain.session_context["current_product"] = "hypoteky"
+        chain.session_context["current_intent"] = "mortgage_overview"
+
+
+async def _persist_chain_session_state(session_id: str, chain: BankingRAGChain, *, reason: str) -> None:
+    """Persist current chain state to distributed session store."""
+    try:
+        session_state = _collect_chain_session_state(chain)
+        if session_state:
+            logger.debug(f"Session save start sid={_mask_session_id(session_id)} reason={reason}")
+            await asyncio.wait_for(
+                _session_store.save(
+                    session_id,
+                    session_state,
+                    ttl_seconds=SESSION_TTL_SECONDS,
+                ),
+                timeout=3.0,
+            )
+            logger.debug(f"Session save done sid={_mask_session_id(session_id)} reason={reason}")
+    except asyncio.TimeoutError:
+        logger.warning(f"Session save timeout sid={_mask_session_id(session_id)} reason={reason}")
+    except Exception as exc:
+        logger.warning(f"Session save failed sid={_mask_session_id(session_id)} reason={reason} error={exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -1196,6 +1257,8 @@ async def chat(request: ChatRequest) -> ChatResponse:
         telemetry.emit("cache_hit", request_id=request_id, session_id=session_id,
                        latency_ms=cache_check_ms, confidence_bucket=cached_result.get("confidence_bucket"))
         cached_result = _enrich_result_with_semantics(cached_result)
+        _hydrate_cached_session_state(chain, request.question, cached_result)
+        await _persist_chain_session_state(session_id, chain, reason="cache_hit")
         return ChatResponse(
             answer=cached_result["answer"],
             sources=_serialize_sources(cached_result.get("sources", [])),
@@ -1227,6 +1290,8 @@ async def chat(request: ChatRequest) -> ChatResponse:
             elapsed_ms = (time.perf_counter() - t_start) * 1000
             logger.info(f"[{request_id}] [{session_id[:8]}] Cache DEDUP HIT key={cache_key[:12]}…")
             cached_result = _enrich_result_with_semantics(cached_result)
+            _hydrate_cached_session_state(chain, request.question, cached_result)
+            await _persist_chain_session_state(session_id, chain, reason="cache_dedup_hit")
             return ChatResponse(
                 answer=cached_result["answer"],
                 sources=_serialize_sources(cached_result.get("sources", [])),
@@ -1463,6 +1528,8 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
         if cached is not None:
             _response_cache.add_debug_metadata(cached, cache_hit=True, key=cache_key)
             cached = _enrich_result_with_semantics(cached)
+            _hydrate_cached_session_state(chain, request.question, cached)
+            await _persist_chain_session_state(session_id, chain, reason="stream_cache_hit")
             sources = _serialize_sources(cached.get("sources", []))
             telemetry.emit("cache_hit", request_id=request_id, session_id=session_id,
                            route=request.question[:80])
