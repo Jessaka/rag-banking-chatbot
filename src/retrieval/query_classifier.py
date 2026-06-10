@@ -251,6 +251,7 @@ SOFT_GUIDANCE_FAQ_TERMS = (
     "je možné", "je mozne",
     "potřebuju", "potrebuju", "chci",
     "poradíte", "poradite", "doporučíte", "doporucite",
+    "doporučení", "doporuceni", "odměna za doporučení", "odmena za doporuceni", "bonus za doporučení", "bonus za doporuceni",
     "máte", "mate",
     # Procedural
     "jak zvýš", "jak zvys", "jak sníž", "jak sniz",

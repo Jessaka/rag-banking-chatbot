@@ -156,6 +156,7 @@ SOFT_GUIDANCE_FAQ_PATTERNS = (
     (re.compile(r"(jak\s+)?(m[ůu][žz]u|mohu|lze|jde)\s+(pou[žz][íi]t|platit|v[ýy]brat)", re.I), "card_usage_can_i"),
     (re.compile(r"(pot[řr]ebuju|potrebuju|chci|mus[íi]m).*(kart|platit|limit)", re.I), "card_need_help"),
     (re.compile(r"poji[sš]t[eě]n[íi].*(vozidel|auto)|poji[sš]ten[ií].*(vozidel|auto)|povinné?\s+ru[čc]en|povinné?\s+ruceni|havarijní|havarijni\s+poji", re.I), "vehicle_insurance"),
+    (re.compile(r"(odm[eě]n[au]|bonus).{0,20}doporu[čc]en|doporu[čc]en[íi].{0,20}(odm[eě]n|bonus)|dostanu.{0,20}za\s+doporu[čc]en|co\s+dostanu.{0,20}za\s+doporu[čc]en|doporu[čc]te\s+n[aá]s", re.I), "referral_program"),
     # Konkrétní produkty — investice (PŘED catalog, aby matchovaly dříve)
     (re.compile(r"raiffeisen\s*(dynamick|konzervativn|balancovan|progresivn|fond)|dynamick\w*[\s\w]*fond|popis[\s\w]*fond|fond[\s\w]*popis", re.I), "investice_fondy_detail"),
     (re.compile(r"\bdip\b|dlouhodob[\s\w]*investičn|investičn[\s\w]*produkt[\s\w]*dlouhodob|jak[\s\w]*funguje[\s\w]*dip", re.I), "investice_dip"),
@@ -960,6 +961,19 @@ SOFT_GUIDANCE_ANSWERS: dict[str, str] = {
         "- Online nebo na pobočce Raiffeisenbank\n"
         "- Zákaznická linka: 800 900 900\n\n"
         "Více informací: https://www.rb.cz/osobni/pojisteni/pojisteni-vozidel"
+    ),
+    "referral_program": (
+        "Ano — Raiffeisenbank má program **Odměna za doporučení**.\n\n"
+        "Aktuálně podle dostupných zdrojů můžete získat:\n"
+        "- **1 000 Kč** za doporučení osobního účtu\n"
+        "- **2 000 Kč** za doporučení podnikatelského účtu\n"
+        "- **1 000 Kč** za doporučení stavebního spoření\n\n"
+        "Jak to funguje:\n"
+        "1. V aplikaci Raiffeisen bankovnictví otevřete sekci **Nabídky → Doporučte nás**.\n"
+        "2. Sdílíte svůj unikátní odkaz známému.\n"
+        "3. Doporučený si přes odkaz zaregistruje telefonní číslo a do 30 dnů si založí produkt.\n"
+        "4. Odměna vám přijde nejpozději do 15. dne následujícího měsíce po aktivaci produktu.\n\n"
+        "Více: https://www.rb.cz/osobni/ucty/doporuceni/odmena-za-doporuceni"
     ),
     "apple_google_pay": (
         "Apple Pay a Google Pay jsou služby pro bezkontaktní platby mobilem nebo hodinkami.\n\n"
