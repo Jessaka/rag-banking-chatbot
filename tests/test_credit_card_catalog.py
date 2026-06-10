@@ -17,6 +17,7 @@ def test_credit_card_catalog_answer_lists_products_and_not_unsupported():
     assert answer
     lowered = answer.lower()
     assert "kreditní karta" in lowered
-    assert any(product in answer for product in ["Kreditní karta EASY", "Kreditní karta STYLE", "Kreditní karta RB PREMIUM", "Kreditní karta Visa Gold"])
+    assert any(product in answer for product in ["Kreditní karta EASY", "Kreditní karta STYLE", "Kreditní karta RB PREMIUM", "Kreditní karta Visa Gold", "Kreditní karta O2 RB"])
+    assert "debetní karta" not in lowered
     assert "nenalezl" not in lowered
     assert "nevím" not in lowered

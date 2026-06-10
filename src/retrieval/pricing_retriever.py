@@ -43,6 +43,23 @@ CANONICAL_PRODUCT_LABELS = {
     "basic_payment_account": "Základní platební účet",
 }
 
+_CREDIT_CARD_PRIMARY_CANONICALS = frozenset({
+    "kreditni_karta",
+    "rb_premium_karta",
+    "easy_karta",
+    "style_karta",
+    "visa_gold_karta",
+    "o2_rb_karta",
+})
+
+_CREDIT_CARD_PRIMARY_FEE_LABELS = (
+    "hlavni karta rb premium",
+    "hlavni karta style",
+    "hlavni karta easy",
+    "hlavni karta visa gold",
+    "hlavni karta o2 rb",
+)
+
 
 def _norm(text: str) -> str:
     text = text.lower()
@@ -87,6 +104,36 @@ def _row_text(row: dict) -> str:
     return " ".join(str(row.get(k) or "") for k in (
         "product_name", "fee_type", "fee_value", "currency", "period", "conditions", "title", "source_file", "category", "pricing_type"
     ))
+
+
+def _credit_card_product_name_from_fee_type(fee_type: str, product_name: str = "") -> str | None:
+    """Map generic card fee rows to the concrete credit-card product label."""
+    ft = _norm(fee_type)
+    product = _norm(product_name)
+    if "hlavni karta rb premium" in ft or (product == "kreditni karty" and "rb premium" in ft):
+        return "Kreditní karta RB PREMIUM"
+    if "hlavni karta style" in ft or (product == "kreditni karty" and "style" in ft):
+        return "Kreditní karta STYLE"
+    if "hlavni karta easy" in ft or (product == "kreditni karty" and "easy" in ft):
+        return "Kreditní karta EASY"
+    if "hlavni karta visa gold" in ft or (product == "kreditni karty" and "visa gold" in ft):
+        return "Kreditní karta Visa Gold"
+    if "hlavni karta o2 rb" in ft or (product == "kreditni karty" and "o2 rb" in ft):
+        return "Kreditní karta O2 RB"
+    return None
+
+
+def _is_primary_credit_card_fee_row(row: dict, canonical_product: str | None) -> str | None:
+    """Allow primary fee rows for credit-card maintenance queries only."""
+    if canonical_product not in _CREDIT_CARD_PRIMARY_CANONICALS:
+        return None
+    ft = _norm(str(row.get("fee_type") or ""))
+    if not ft:
+        return None
+    for label in _CREDIT_CARD_PRIMARY_FEE_LABELS:
+        if label in ft:
+            return f"primary_credit_card_fee_type={ft}"
+    return None
 
 
 # Canonical product/entity matching is intentionally retrieval-time only: the
@@ -424,6 +471,12 @@ def _normalize_pricing_metadata(row: dict) -> dict:
     is_active = not is_archived and valid_now
 
     product_name = str(out.get("product_name") or "").strip()
+    resolved_credit_card_name = _credit_card_product_name_from_fee_type(
+        str(out.get("fee_type") or ""),
+        product_name,
+    )
+    if resolved_credit_card_name:
+        product_name = resolved_credit_card_name
     fee_value = str(out.get("fee_value") or out.get("amount") or "").strip()
     currency = str(out.get("currency") or "").strip()
     if not currency:
@@ -855,6 +908,8 @@ def pricing_search(query: str, top_k: int = 5, min_score: float = 0.5) -> list[D
             filtered: list[tuple[dict, float, list[str]]] = []
             for r, s, rs in rows:
                 reason = is_primary_account_fee_row(r)
+                if reason is None:
+                    reason = _is_primary_credit_card_fee_row(r, canonical_product)
                 if reason is not None:
                     filtered.append((r, s, rs))
                     reasons.append(reason)

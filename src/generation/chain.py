@@ -1767,7 +1767,6 @@ def _minimal_structured_sources(docs: list[Document]) -> list[dict]:
 def _credit_card_products_from_docs(docs: list[Document]) -> list[str]:
     """Return the full RB payment card catalog for catalog-intent queries."""
     return [
-        "Debetní karta (k běžnému účtu)",
         "Kreditní karta EASY",
         "Kreditní karta STYLE",
         "Kreditní karta RB PREMIUM",
@@ -1780,11 +1779,9 @@ def _format_credit_card_catalog_answer(docs: list[Document]) -> str | None:
     products = _credit_card_products_from_docs(docs)
     if not products:
         return None
-    lines = ["Raiffeisenbank nabízí tyto platební karty:", ""]
+    lines = ["Raiffeisenbank nabízí tyto kreditní karty:", ""]
     for product in products:
-        if "debetní" in product.lower():
-            desc = "karta napojená na běžný účet; vydává se automaticky k eKontu (Mastercard nebo Visa)."
-        elif "easy" in product.lower():
+        if "easy" in product.lower():
             desc = "základní kreditní karta zdarma."
         elif "style" in product.lower():
             desc = "kreditní karta s cashback odměnami."
@@ -1805,6 +1802,18 @@ def _format_credit_card_catalog_answer(docs: list[Document]) -> str | None:
     source = first.metadata.get("source_url") or first.metadata.get("url") or first.metadata.get("file_name") or "rb.cz"
     lines.append(f"\nZdroj: {source}")
     return "\n".join(lines)
+
+
+def _structured_pricing_max_products(docs: list[Document], query_profile: object) -> int:
+    """Return formatter limit tuned for the current pricing route.
+
+    Generic credit-card pricing queries should list the full active portfolio,
+    while most other pricing answers stay compact.
+    """
+    labels = getattr(query_profile, "labels", set()) or set()
+    if "credit_card" in labels:
+        return 5
+    return 3
 
 
 def _format_card_overview_answer(docs: list[Document]) -> str | None:
@@ -3764,7 +3773,10 @@ class BankingRAGChain:
                         return overview_resp
 
         if answer_strategy == "pricing_row_direct" and structured_docs:
-            answer_text = format_structured_pricing_answer(structured_docs, max_products=3)
+            answer_text = format_structured_pricing_answer(
+                structured_docs,
+                max_products=_structured_pricing_max_products(structured_docs, query_profile),
+            )
             total_ms = (time.perf_counter() - t_ask) * 1000
             if self.conversational:
                 self.chat_history.append(HumanMessage(content=question))
@@ -3918,7 +3930,10 @@ class BankingRAGChain:
         if answer_strategy.startswith("pricing_") and any(marker in answer_text.lower() for marker in NO_ANSWER_MARKERS):
             structured_fallback_docs = _structured_pricing_docs(source_docs)
             if structured_fallback_docs:
-                answer_text = format_structured_pricing_answer(structured_fallback_docs, max_products=3)
+                answer_text = format_structured_pricing_answer(
+                    structured_fallback_docs,
+                    max_products=_structured_pricing_max_products(structured_fallback_docs, query_profile),
+                )
                 answer_strategy = "pricing_row_direct"
                 answer_confidence = "high"
                 logger.warning("LLM vrátil fallback apology navzdory pricing_row; použita strukturovaná odpověď")

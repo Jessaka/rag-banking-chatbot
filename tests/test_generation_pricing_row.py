@@ -4,6 +4,7 @@ from pathlib import Path
 from langchain_core.documents import Document
 
 from src.generation.chain import BankingRAGChain, extract_structured_pricing_answer, normalize_product_name
+from src.retrieval import pricing_retriever
 
 _PRICING_ROWS_PATH = Path("data/pricing/pricing_rows.jsonl")
 _REQUIRES_PRICING_DATA = pytest.mark.skipif(
@@ -241,6 +242,112 @@ def test_conditional_pricing_response_explains_active_and_inactive_fee():
     assert "eKonto SMART je zdarma při aktivním využívání účtu" in result["answer"]
     assert "Pokud podmínka splněna není, poplatek činí 99 Kč měsíčně" in result["answer"]
     assert "eKonto SMART je zdarma\n" not in result["answer"]
+
+
+def _credit_catalog_doc():
+    return Document(
+        page_content=(
+            "Kreditní karty Raiffeisenbank Kreditní karta EASY Kreditní karta STYLE "
+            "Kreditní karta RB PREMIUM Kreditní karta Visa Gold Kreditní karta O2 RB"
+        ),
+        metadata={
+            "source_url": "https://www.rb.cz/osobni/kreditni-karty",
+            "title": "Kreditní karty Raiffeisenbank",
+            "chunk_type": "section_text",
+            "category": "cards",
+            "document_type": "product_page",
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "Jaké typy kreditních karet nabízíte?",
+        "Jaké kreditní karty nabízíte?",
+    ],
+)
+def test_credit_card_catalog_queries_return_only_credit_cards(query):
+    chain = BankingRAGChain.__new__(BankingRAGChain)
+    chain.conversational = False
+    chain.chat_history = []
+    chain._llm = FailingLLM()
+    chain._retriever = FakeRetriever([_credit_catalog_doc()])
+
+    result = chain.ask(query)
+
+    lowered = result["answer"].lower()
+    assert result["answer_strategy"] == "credit_card_catalog_direct"
+    assert "kreditní karta easy" in lowered
+    assert "kreditní karta style" in lowered
+    assert "kreditní karta rb premium" in lowered
+    assert "kreditní karta visa gold" in lowered
+    assert "kreditní karta o2 rb" in lowered
+    assert "debetní karta" not in lowered
+
+
+@_REQUIRES_PRICING_DATA
+def test_generic_credit_card_pricing_query_returns_all_five_active_cards():
+    docs = pricing_retriever.pricing_search("Kolik stojí vedení kreditní karty?", top_k=10, min_score=0.0)
+    assert docs
+    assert all(not doc.metadata.get("pricing_warning", False) for doc in docs)
+
+    names = {doc.metadata.get("product_name") for doc in docs}
+    assert {
+        "Kreditní karta EASY",
+        "Kreditní karta STYLE",
+        "Kreditní karta RB PREMIUM",
+        "Kreditní karta Visa Gold",
+        "Kreditní karta O2 RB",
+    }.issubset(names)
+
+    chain = BankingRAGChain.__new__(BankingRAGChain)
+    chain.conversational = False
+    chain.chat_history = []
+    chain._llm = FailingLLM()
+    chain._retriever = FakeRetriever(docs)
+
+    result = chain.ask("Kolik stojí vedení kreditní karty?")
+
+    answer = result["answer"]
+    assert result["answer_strategy"] == "pricing_row_direct"
+    assert "Kreditní karta EASY:" in answer
+    assert "zdarma" in answer
+    assert "Kreditní karta STYLE:" in answer
+    assert "50 Kč" in answer
+    assert "Kreditní karta RB PREMIUM:" in answer
+    assert "199 Kč" in answer
+    assert "Kreditní karta Visa Gold:" in answer
+    assert "Kreditní karta O2 RB:" in answer
+    assert "89 Kč" in answer
+
+
+@_REQUIRES_PRICING_DATA
+@pytest.mark.parametrize(
+    ("query", "product_name", "fee_value"),
+    [
+        ("Kolik stojí kreditní karta EASY?", "Kreditní karta EASY", "zdarma"),
+        ("Kolik stojí kreditní karta STYLE?", "Kreditní karta STYLE", "50 Kč"),
+        ("Kolik stojí kreditní karta O2 RB?", "Kreditní karta O2 RB", "89 Kč"),
+    ],
+)
+def test_specific_credit_card_pricing_queries_return_correct_product_and_price(query, product_name, fee_value):
+    docs = pricing_retriever.pricing_search(query, top_k=5, min_score=0.0)
+    assert docs
+    assert docs[0].metadata.get("pricing_warning", False) is False
+    assert docs[0].metadata.get("product_name") == product_name
+    assert docs[0].metadata.get("fee_value") == fee_value
+
+    chain = BankingRAGChain.__new__(BankingRAGChain)
+    chain.conversational = False
+    chain.chat_history = []
+    chain._llm = FailingLLM()
+    chain._retriever = FakeRetriever(docs)
+
+    result = chain.ask(query)
+    assert result["answer_strategy"] == "pricing_row_direct"
+    assert product_name in result["answer"]
+    assert fee_value in result["answer"]
 
 
 def test_tiered_pricing_response_lists_tiers():
