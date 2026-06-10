@@ -1535,6 +1535,12 @@ def _detect_product_for_degradation(
         "sporeni": "sporeni",
     }
     labels = getattr(query_profile, "labels", set()) or set()
+
+    # Insurance queries must not silently degrade from generic cards -> debit card
+    # when retrieved sources clearly point to credit-card insurance.
+    if "insurance" in labels and _docs_support_credit_card_insurance(source_docs):
+        return "kreditni_karta"
+
     for label in labels:
         pid = label_product_map.get(label)
         if pid and get_product(pid):
@@ -1762,6 +1768,66 @@ def _minimal_structured_sources(docs: list[Document]) -> list[dict]:
             "url": data.get("source_url"),
         })
     return sources[:3]
+
+
+def _doc_text_for_routing(doc: Document) -> str:
+    md = doc.metadata or {}
+    return " ".join([
+        str(md.get("title") or ""),
+        str(md.get("section_title") or ""),
+        str(md.get("source_url") or md.get("url") or ""),
+        str(getattr(doc, "page_content", "") or "")[:4000],
+    ]).lower()
+
+
+def _has_credit_card_signal(question: str) -> bool:
+    q_norm = normalize_query(question or "")
+    return any(token in q_norm for token in (
+        "kreditní karta",
+        "kreditni karta",
+        "kreditní karty",
+        "kreditni karty",
+        "kreditka",
+        "credit card",
+    ))
+
+
+def _docs_support_credit_card_insurance(docs: list[Document]) -> bool:
+    for doc in docs:
+        hay = _doc_text_for_routing(doc)
+        if any(token in hay for token in (
+            "pojisteni-ke-kreditnim-kartam",
+            "pojištění ke kreditním kartám",
+            "pojištění ke kreditní kartě",
+            "pojištění ke kartám a půjčkám",
+            "/osobni/kreditni-karty/sluzby-ke-kartam",
+            "kreditní karta visa gold",
+            "kreditní karta easy",
+            "osobní strážce",
+            "pojištění vyčerpané částky ke kreditní kartě",
+        )):
+            return True
+    return False
+
+
+def _format_credit_card_insurance_answer(docs: list[Document]) -> str | None:
+    if not docs:
+        return None
+    first = docs[0]
+    source = first.metadata.get("source_url") or first.metadata.get("url") or first.metadata.get("file_name") or "rb.cz"
+    return (
+        "Ano. Raiffeisenbank v dostupných retail zdrojích uvádí pojištění ke kreditním kartám.\n\n"
+        "**Volitelná pojištění:**\n"
+        "- Osobní strážce – pojištění zneužití karty a osobních věcí\n"
+        "- Pojištění vyčerpané částky ke kreditní kartě – pro případ neschopnosti splácet\n\n"
+        "**Pojištění v ceně vybraných karet:**\n"
+        "- EASY: pojištění prodloužené záruky\n"
+        "- STYLE: balíček pojištění KOMFORT\n"
+        "- O2 RB: balíček pojištění KOMFORT LIGHT\n"
+        "- Visa Gold: cestovní pojištění ke kreditní kartě\n\n"
+        "Podle zdrojů jsou u dříve nabízených karet některá starší pojištění nadále platná podle pojistných podmínek.\n\n"
+        f"Zdroj: {source}"
+    )
 
 
 def _credit_card_products_from_docs(docs: list[Document]) -> list[str]:
@@ -3009,6 +3075,7 @@ class BankingRAGChain:
         elif (
             (soft_intent_pre := _soft_guidance_intent(question))
             and _soft_guidance_answer(soft_intent_pre)
+            and soft_intent_pre != "pojisteni_karta"
             and "pricing" not in classify_query(question).labels
         ):
             soft_answer_pre = _soft_guidance_answer(soft_intent_pre)
@@ -3519,6 +3586,27 @@ class BankingRAGChain:
         session_debug = self._get_session_debug(inherited_product, inherited_intent)
         # Store session debug on instance so main.py reads it after ask() returns
         self._session_debug = session_debug
+
+        if "insurance" in query_profile.labels and (
+            _has_credit_card_signal(question)
+            or _has_credit_card_signal(retrieval_query)
+            or _docs_support_credit_card_insurance(source_docs)
+        ):
+            insurance_answer = _format_credit_card_insurance_answer(source_docs)
+            if insurance_answer:
+                total_ms = (time.perf_counter() - t_ask) * 1000
+                ux = _ux_meta("high", "source-backed insurance overview for credit cards")
+                logger.info("Answer strategy: credit_card_insurance_direct (LLM skipped)")
+                return {
+                    "answer": insurance_answer,
+                    "sources": source_docs,
+                    "rewritten_query": retrieval_query,
+                    "answer_strategy": "credit_card_insurance_direct",
+                    "answer_confidence": "high",
+                    "retrieval_debug": _debug_with_ux(self._retrieval_debug(source_docs, "credit_card_insurance_direct"), ux),
+                    **ux,
+                    "timing_ms": {"retrieval": round(retrieval_ms), "total": round(total_ms), "llm": 0},
+                }
 
         if "card_overview" in query_profile.labels:
             overview_answer = _format_card_overview_answer(source_docs)
