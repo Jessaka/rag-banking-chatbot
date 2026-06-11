@@ -103,6 +103,118 @@ class TestSessionContextSafety:
         result = chain._check_session_inheritance("Jaké pojištění nabízíte?")
         assert result == (None, None)
 
+    def test_check_inheritance_explicit_platimpak_overrides_mortgage_context(self) -> None:
+        chain = BankingRAGChain.__new__(BankingRAGChain)
+        chain.chat_history = ["dummy"]
+        chain.session_context = {
+            "current_domain": "retail",
+            "current_product": "hypoteky",
+            "current_intent": "mortgage_overview",
+            "last_clarification": None,
+            "resolved_product": "hypoteky",
+            "resolved_segment": None,
+        }
+        result = chain._check_session_inheritance("Co je PlatímPak?")
+        assert result == (None, None)
+
+    def test_check_inheritance_explicit_rb_premium_overrides_mortgage_context(self) -> None:
+        chain = BankingRAGChain.__new__(BankingRAGChain)
+        chain.chat_history = ["dummy"]
+        chain.session_context = {
+            "current_domain": "retail",
+            "current_product": "hypoteky",
+            "current_intent": "mortgage_overview",
+            "last_clarification": None,
+            "resolved_product": "hypoteky",
+            "resolved_segment": None,
+        }
+        result = chain._check_session_inheritance("Co je RB Premium?")
+        assert result == (None, None)
+
+    def test_check_inheritance_explicit_visa_gold_overrides_mortgage_context(self) -> None:
+        chain = BankingRAGChain.__new__(BankingRAGChain)
+        chain.chat_history = ["dummy"]
+        chain.session_context = {
+            "current_domain": "retail",
+            "current_product": "hypoteky",
+            "current_intent": "mortgage_overview",
+            "last_clarification": None,
+            "resolved_product": "hypoteky",
+            "resolved_segment": None,
+        }
+        result = chain._check_session_inheritance("Co je Visa Gold?")
+        assert result == (None, None)
+
+    def test_check_inheritance_explicit_aktivni_ucet_overrides_mortgage_context(self) -> None:
+        chain = BankingRAGChain.__new__(BankingRAGChain)
+        chain.chat_history = ["dummy"]
+        chain.session_context = {
+            "current_domain": "retail",
+            "current_product": "hypoteky",
+            "current_intent": "mortgage_overview",
+            "last_clarification": None,
+            "resolved_product": "hypoteky",
+            "resolved_segment": None,
+        }
+        result = chain._check_session_inheritance("Co je Aktivní účet?")
+        assert result == (None, None)
+
+    def test_check_inheritance_keeps_generic_pricing_followup_in_mortgage_context(self) -> None:
+        chain = BankingRAGChain.__new__(BankingRAGChain)
+        chain.chat_history = ["dummy"]
+        chain.session_context = {
+            "current_domain": "retail",
+            "current_product": "hypoteky",
+            "current_intent": "mortgage_overview",
+            "last_clarification": None,
+            "resolved_product": "hypoteky",
+            "resolved_segment": None,
+        }
+        result = chain._check_session_inheritance("A kolik stojí?")
+        assert result == ("hypoteky", "mortgage_overview")
+
+    def test_check_inheritance_keeps_reference_followup_in_mortgage_context(self) -> None:
+        chain = BankingRAGChain.__new__(BankingRAGChain)
+        chain.chat_history = ["dummy"]
+        chain.session_context = {
+            "current_domain": "retail",
+            "current_product": "hypoteky",
+            "current_intent": "mortgage_overview",
+            "last_clarification": None,
+            "resolved_product": "hypoteky",
+            "resolved_segment": None,
+        }
+        result = chain._check_session_inheritance("Je k nim pojištění?")
+        assert result == ("hypoteky", "mortgage_overview")
+
+    def test_check_inheritance_explicit_platimpak_overrides_credit_card_context(self) -> None:
+        chain = BankingRAGChain.__new__(BankingRAGChain)
+        chain.chat_history = ["dummy"]
+        chain.session_context = {
+            "current_domain": "retail",
+            "current_product": "kreditni_karta",
+            "current_intent": "credit_card_catalog",
+            "last_clarification": None,
+            "resolved_product": "kreditni_karta",
+            "resolved_segment": None,
+        }
+        result = chain._check_session_inheritance("Co je PlatímPak?")
+        assert result == (None, None)
+
+    def test_check_inheritance_explicit_rb_premium_overrides_investment_context(self) -> None:
+        chain = BankingRAGChain.__new__(BankingRAGChain)
+        chain.chat_history = ["dummy"]
+        chain.session_context = {
+            "current_domain": "retail",
+            "current_product": "investice",
+            "current_intent": "investment_overview",
+            "last_clarification": None,
+            "resolved_product": "investice",
+            "resolved_segment": None,
+        }
+        result = chain._check_session_inheritance("Co je RB Premium?")
+        assert result == (None, None)
+
 
 # ======================================================================
 # Session context initialization with __init__

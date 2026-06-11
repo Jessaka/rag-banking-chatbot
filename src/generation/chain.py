@@ -35,6 +35,7 @@ from src.generation.confidence_semantics import (
 )
 from src.generation.pricing_response_formatter import format_conditional_fee, format_tiered_pricing
 from src.retrieval.bm25_retriever import bm25_search
+from src.retrieval.pricing_retriever import _QUERY_PRODUCT_SYNONYMS
 from src.retrieval.query_classifier import classify_query, normalize_query
 from src.utils.logger import get_logger
 
@@ -1225,6 +1226,53 @@ def _should_rewrite_exclusive_free_followup(q_norm: str) -> bool:
         or "podminky" in q_norm
         or any(phrase in q_norm for phrase in phrases)
     )
+
+
+_ENTITY_TRANSLATION = str.maketrans("áčďéěíňóřšťúůýž", "acdeeinorstuuyz")
+
+
+def _normalize_entity_text(text: str) -> str:
+    return normalize_query(text or "").translate(_ENTITY_TRANSLATION)
+
+
+_EXPLICIT_PRODUCT_ENTITY_ALIASES: tuple[str, ...] = tuple(dict.fromkeys(
+    alias
+    for aliases in _QUERY_PRODUCT_SYNONYMS.values()
+    for alias in aliases
+)) + (
+    "platimpak",
+    "platim pak",
+    "odlozena platba",
+    "chytry ucet",
+    "chytreho uctu",
+    "stavebni sporeni",
+    "stavebniho sporeni",
+    "osobni strazce",
+)
+
+
+def contains_explicit_product_mention(question: str) -> bool:
+    """Return True when a query explicitly names an RB product/service entity.
+
+    This guard is intentionally broader than detect_query_product(): it protects
+    session inheritance even for supported entities the canonical resolver does
+    not currently map (e.g. PlatímPak, Chytrý účet, Osobní strážce).
+    """
+    q_norm = _normalize_entity_text(question)
+    if not q_norm:
+        return False
+
+    for alias in _EXPLICIT_PRODUCT_ENTITY_ALIASES:
+        alias_norm = _normalize_entity_text(alias)
+        if not alias_norm:
+            continue
+        if " " in alias_norm:
+            if alias_norm in q_norm:
+                return True
+            continue
+        if re.search(rf"(?<!\w){re.escape(alias_norm)}(?!\w)", q_norm):
+            return True
+    return False
 
 
 def _is_reference_followup(q_norm: str) -> bool:
@@ -4341,6 +4389,8 @@ class BankingRAGChain:
             follow_up_detected = False
 
         if follow_up_detected:
+            if contains_explicit_product_mention(question):
+                return None, None
             inherited_product = self.session_context.get("resolved_product") or self.session_context.get("current_product")
             inherited_intent = self.session_context.get("current_intent")
             if inherited_product or inherited_intent:
